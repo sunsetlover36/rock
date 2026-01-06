@@ -1,4 +1,4 @@
-use std::{env, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     Router,
@@ -15,20 +15,25 @@ use tokio::{net::TcpListener, sync::mpsc};
 
 use crate::{
     actor::{
-        gamemode::{GameMode, WorldEvent},
-        indexer::IndexerActor,
+        gamemode::{GameMode, GameModeCallback},
         ws::{
             client_message::{ClientMessage, create_client_message_actor},
             server_message::{ServerMessageHandle, create_server_message_actor},
         },
     },
+    router::CommitRouter,
     runtime::Runtime,
-    socket::adapter::SocketAdapter,
+    socket_adapter::SocketAdapter,
+    state::WorldState,
+    world::create_world_actor,
 };
 
 mod actor;
+mod router;
 mod runtime;
-mod socket;
+mod socket_adapter;
+mod state;
+mod world;
 
 #[derive(Clone)]
 struct AppState {
@@ -51,35 +56,44 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 async fn main() -> Result<()> {
     dotenv().ok();
 
-    let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
+    let world_state = WorldState::new();
 
-    let (world_event_tx, world_event_rx) = mpsc::channel::<WorldEvent>(1024);
+    let (gamemode_callback_tx, gamemode_callback_rx) = mpsc::channel::<GameModeCallback>(1024);
 
-    let (server_messenger_handle, server_messenger_actor, propagator) =
+    let (server_messenger_handle, server_messenger_actor, broadcaster) =
         create_server_message_actor(1024);
     let server_messenger_handle = Arc::new(server_messenger_handle);
 
     let (client_messenger_tx, client_messenger_actor) =
-        create_client_message_actor(1024, world_event_tx.clone());
+        create_client_message_actor(1024, gamemode_callback_tx.clone());
+
+    let commit_router = CommitRouter::new(broadcaster.clone());
+    let (game_intent_tx, world_actor, world_getters) =
+        create_world_actor(2048, commit_router, world_state);
 
     // Redis
     /*
     let redis_url = env::var("REDIS_URL").expect("REDIS_URL not set");
     let indexer_actor = IndexerActor {
-        world_event_tx: world_event_tx.clone(),
+        game_intent_tx: game_intent_tx.clone(),
         redis_url,
     };
     */
+
     let gamemode = GameMode {
-        propagator,
-        world_event_rx,
+        broadcaster,
+        gamemode_callback_rx,
+        game_intent_tx,
+        world_getters,
     };
 
     // Runtime
-    // 1. Listen for client messages
-    // 2. Set up broadcaster
-    // 3. Listen for world events
+    // 1. Set up world actor (global game intents listener)
+    // 2. Set up ws server-to-clients broadcast channel
+    // 3. Route ws client messages to gamemode callbacks channel
+    // 4. Gamemode starts listening for orders (e.g., client messages)
     Runtime::new()
+        .with(world_actor)
         .with(server_messenger_actor)
         .with(client_messenger_actor)
         .with(gamemode)
@@ -95,6 +109,7 @@ async fn main() -> Result<()> {
         .route("/ws", any(ws_handler))
         .with_state(state);
 
+    let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
     println!("Server is listening on 127.0.0.1:3000!");
     axum::serve(listener, app).await.unwrap();
 

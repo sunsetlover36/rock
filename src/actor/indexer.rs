@@ -1,13 +1,13 @@
 use std::time::Duration;
 
-use crate::{actor::gamemode::WorldEvent, runtime::actor::Actor};
+use crate::{actor::gamemode::GameModeCallback, runtime::actor::Actor};
 use color_eyre::eyre::Result;
 use futures_util::StreamExt;
 use shared::{IndexerEvent, RedisChannel};
 use tokio::sync::mpsc;
 
 pub struct IndexerActor {
-    pub world_event_tx: mpsc::Sender<WorldEvent>,
+    pub gamemode_callback_tx: mpsc::Sender<GameModeCallback>,
     pub redis_url: String,
 }
 
@@ -24,7 +24,10 @@ impl IndexerActor {
             let json = serde_json::from_str::<IndexerEvent>(&payload);
             match json {
                 Ok(event) => {
-                    let _ = self.world_event_tx.send(WorldEvent::Indexer(event)).await;
+                    let _ = self
+                        .gamemode_callback_tx
+                        .send(GameModeCallback::Indexer(event))
+                        .await;
                 }
                 Err(err) => {
                     eprintln!("[indexer] event listener error: {}", err);

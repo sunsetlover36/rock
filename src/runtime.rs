@@ -1,4 +1,5 @@
-use crate::runtime::actor::Actor;
+use actor::Actor;
+pub mod actor;
 
 pub struct Runtime {
     actors: Vec<Box<dyn Actor>>,

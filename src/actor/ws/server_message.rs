@@ -10,6 +10,8 @@ pub enum ServerMessage {
     TileExplored { tile: Tile },
     TileRemoved { tx_hash: String, x: i64, y: i64 },
     GameTick { timestamp: u64 },
+
+    PlayerMoved { fid: u32, x: i32, y: i32 },
 }
 
 pub struct ServerMessageActor {
