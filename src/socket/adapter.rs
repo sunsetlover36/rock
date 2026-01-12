@@ -3,12 +3,13 @@ use futures_util::{
     SinkExt, StreamExt,
     stream::{SplitSink, SplitStream},
 };
+use shared::ServerMessage;
 use tokio::sync::{
     broadcast::{self, error::RecvError},
     mpsc,
 };
 
-use crate::actor::ws::{client_message::ClientMessage, server_message::ServerMessage};
+use crate::actor::ws::client_message::ClientMessage;
 
 pub struct SocketAdapter {
     ws_tx: SplitSink<WebSocket, Message>,

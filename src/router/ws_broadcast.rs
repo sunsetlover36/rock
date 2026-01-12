@@ -1,20 +1,23 @@
-use shared::GameCommitEphemeral;
+use shared::{OutgoingPacket, WorldCommit, WorldPacket};
 use tokio::sync::mpsc;
 
-use crate::actor::ws::server_message::ServerMessage;
-
 pub struct WsBroadcastRouter {
-    pub broadcaster: mpsc::Sender<ServerMessage>,
+    pub ws_broadcast_tx: mpsc::Sender<OutgoingPacket>,
 }
 
 impl WsBroadcastRouter {
-    pub fn publish(&self, commit: GameCommitEphemeral) {
+    pub fn publish(&self, commit: WorldCommit) {
         match commit {
-            GameCommitEphemeral::PlayerMoved { fid, x, y } => {
-                let _ = self
-                    .broadcaster
-                    .send(ServerMessage::PlayerMoved { fid, x, y });
+            WorldCommit::PlayerMoved { fid, x, y } => {
+                let _ =
+                    self.ws_broadcast_tx
+                        .send(OutgoingPacket::World(WorldPacket::PlayerMoved {
+                            fid,
+                            x,
+                            y,
+                        }));
             }
+            WorldCommit::BiomeExplored => {}
         }
     }
 }

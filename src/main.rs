@@ -23,15 +23,16 @@ use crate::{
     },
     router::CommitRouter,
     runtime::Runtime,
-    socket_adapter::SocketAdapter,
+    socket::SocketAdapter,
     state::WorldState,
     world::create_world_actor,
 };
 
 mod actor;
+mod player_pool;
 mod router;
 mod runtime;
-mod socket_adapter;
+mod socket;
 mod state;
 mod world;
 

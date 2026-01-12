@@ -1,29 +1,18 @@
-use serde::{Deserialize, Serialize};
-use shared::Tile;
+use shared::OutgoingPacket;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::runtime::actor::Actor;
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ServerMessage {
-    TileExplored { tile: Tile },
-    TileRemoved { tx_hash: String, x: i64, y: i64 },
-    GameTick { timestamp: u64 },
-
-    PlayerMoved { fid: u32, x: i32, y: i32 },
-}
+use crate::actor::types::Actor;
 
 pub struct ServerMessageActor {
-    propagator_rx: mpsc::Receiver<ServerMessage>,
-    broadcaster: broadcast::Sender<ServerMessage>,
+    broadcast_rx: mpsc::Receiver<OutgoingPacket>,
+    broadcaster: broadcast::Sender<OutgoingPacket>,
 }
 
 #[async_trait::async_trait]
 impl Actor for ServerMessageActor {
     async fn run(mut self: Box<Self>) {
-        while let Some(msg) = self.propagator_rx.recv().await {
-            println!("[broadcast] socket sent: {:?}", msg);
+        while let Some(msg) = self.broadcast_rx.recv().await {
+            println!("[ws server] socket sent: {:?}", msg);
             let _ = self.broadcaster.send(msg);
         }
     }
@@ -31,10 +20,10 @@ impl Actor for ServerMessageActor {
 
 #[derive(Clone)]
 pub struct ServerMessageHandle {
-    broadcaster: broadcast::Sender<ServerMessage>,
+    broadcaster: broadcast::Sender<OutgoingPacket>,
 }
 impl ServerMessageHandle {
-    pub fn subscribe(&self) -> broadcast::Receiver<ServerMessage> {
+    pub fn subscribe(&self) -> broadcast::Receiver<OutgoingPacket> {
         self.broadcaster.subscribe()
     }
 }
@@ -44,18 +33,18 @@ pub fn create_server_message_actor(
 ) -> (
     ServerMessageHandle,
     ServerMessageActor,
-    mpsc::Sender<ServerMessage>,
+    mpsc::Sender<OutgoingPacket>,
 ) {
-    let (broadcaster, _) = broadcast::channel::<ServerMessage>(buffer);
-    let (propagator_tx, propagator_rx) = mpsc::channel::<ServerMessage>(buffer);
+    let (broadcaster, _) = broadcast::channel::<OutgoingPacket>(buffer);
+    let (broadcast_tx, broadcast_rx) = mpsc::channel::<OutgoingPacket>(buffer);
 
     let handle = ServerMessageHandle {
         broadcaster: broadcaster.clone(),
     };
     let actor = ServerMessageActor {
         broadcaster,
-        propagator_rx,
+        broadcast_rx,
     };
 
-    (handle, actor, propagator_tx)
+    (handle, actor, broadcast_tx)
 }

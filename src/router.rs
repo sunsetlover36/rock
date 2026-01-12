@@ -2,9 +2,7 @@ mod ws_broadcast;
 use tokio::sync::mpsc;
 use ws_broadcast::WsBroadcastRouter;
 
-use shared::GameCommit;
-
-use crate::actor::ws::server_message::ServerMessage;
+use shared::{OutgoingPacket, WorldCommit};
 
 pub struct CommitRouter {
     // db: DatabaseSystem
@@ -13,21 +11,12 @@ pub struct CommitRouter {
 }
 
 impl CommitRouter {
-    pub fn new(ws_broadcaster: mpsc::Sender<ServerMessage>) -> Self {
+    pub fn new(ws_broadcast_tx: mpsc::Sender<OutgoingPacket>) -> Self {
         Self {
-            ws_broadcast: WsBroadcastRouter {
-                broadcaster: ws_broadcaster,
-            },
+            ws_broadcast: WsBroadcastRouter { ws_broadcast_tx },
         }
     }
-    pub fn emit(&self, commit: GameCommit) {
-        match commit {
-            GameCommit::Ephemeral(e) => {
-                self.ws_broadcast.publish(e);
-            }
-            GameCommit::Durable(d) => {
-                // Every method here should be sync, not async (don't block the execution of this thread)
-            }
-        }
+    pub fn emit(&self, commit: WorldCommit) {
+        self.ws_broadcast.publish(commit);
     }
 }

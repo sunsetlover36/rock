@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use shared::{GameCommit, GameCommitEphemeral, MovementDirection, Position};
+use shared::{MovementDirection, Position, WorldCommit, WorldCommitEphemeral};
 use tokio::sync::mpsc;
 
-use crate::{router::CommitRouter, runtime::actor::Actor, state::WorldState};
+use crate::{actor::types::Actor, router::CommitRouter, state::WorldState};
 
 pub enum GameIntent {
     MovePlayer(MovementDirection),
@@ -39,8 +39,8 @@ impl Actor for World {
                 GameIntent::MovePlayer(direction) => {
                     println!("[world] game intent: move direction = {:?}", direction);
 
-                    self.commit_router.emit(GameCommit::Ephemeral(
-                        GameCommitEphemeral::PlayerMoved { fid: 0, x: 0, y: 0 },
+                    self.commit_router.emit(WorldCommit::Ephemeral(
+                        WorldCommitEphemeral::PlayerMoved { fid: 0, x: 0, y: 0 },
                     ));
                 }
             }

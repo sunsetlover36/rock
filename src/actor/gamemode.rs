@@ -1,16 +1,14 @@
-use shared::IndexerEvent;
+pub mod default_event_listener;
+pub mod types;
+pub use types::*;
+
 use tokio::sync::mpsc;
 
 use crate::{
-    actor::ws::{client_message::ClientMessage, server_message::ServerMessage},
+    actor::ws::client_message::ClientMessage,
     runtime::actor::Actor,
     world::{GameIntent, WorldGetters},
 };
-
-pub enum GameModeCallback {
-    Client(ClientMessage),
-    Indexer(IndexerEvent),
-}
 
 pub struct GameMode {
     // TODO: implement a Broadcaster trait with broadcast and send_private methods
@@ -23,6 +21,7 @@ pub struct GameMode {
 impl GameMode {
     fn handle_client_message(&self, client_msg: ClientMessage) {
         println!("[gamemode] new client message: {:?}", client_msg);
+        self.broadcaster.send()
     }
 }
 
