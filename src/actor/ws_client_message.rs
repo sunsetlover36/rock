@@ -1,7 +1,7 @@
 use shared::ClientMessage;
 use tokio::sync::mpsc;
 
-use crate::{actor::gamemode::GameModeCallback, actor::types::Actor};
+use crate::actor::{Actor, gamemode::GameModeCallback};
 
 pub struct ClientMessageActor {
     rx: mpsc::Receiver<ClientMessage>,

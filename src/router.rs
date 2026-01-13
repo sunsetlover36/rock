@@ -1,9 +1,7 @@
 mod ws_broadcast;
 use ws_broadcast::WsCommitRouter;
 
-use shared::WorldCommit;
-
-use crate::socket::session_registry::SessionSender;
+use crate::{socket::session_registry::SessionSender, world::WorldCommit};
 
 pub struct CommitRouter {
     // db: DatabaseSystem

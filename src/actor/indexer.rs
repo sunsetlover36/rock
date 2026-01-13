@@ -1,10 +1,12 @@
 use std::time::Duration;
 
-use crate::{actor::gamemode::GameModeCallback, actor::types::Actor};
+use crate::actor::{Actor, gamemode::GameModeCallback};
 use color_eyre::eyre::Result;
 use futures_util::StreamExt;
-use shared::{IndexerEvent, RedisChannel};
 use tokio::sync::mpsc;
+
+pub mod protocol;
+pub use protocol::*;
 
 pub struct IndexerActor {
     pub gamemode_callback_tx: mpsc::Sender<GameModeCallback>,

@@ -2,11 +2,14 @@
 // A unified WebSocket session and delivery layer
 
 use dashmap::DashMap;
-use shared::{OutgoingPacket, PlayerKey, Recipient, ServerMessage};
+use shared::{OutgoingPacket, PlayerKey};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::player_pool::PlayerPool;
+use crate::{
+    player_pool::PlayerPool,
+    socket::protocol::{Recipient, ServerMessage},
+};
 
 #[derive(Debug)]
 pub enum SessionSendError {

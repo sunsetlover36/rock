@@ -1,6 +1,12 @@
-use shared::{OutgoingPacket, Recipient, ServerMessage, WorldCommit, WorldPacket};
+use shared::{OutgoingPacket, WorldPacket};
 
-use crate::socket::session_registry::SessionSender;
+use crate::{
+    socket::{
+        protocol::{Recipient, ServerMessage},
+        session_registry::SessionSender,
+    },
+    world::WorldCommit,
+};
 
 pub struct WsCommitRouter {
     pub ws_session_sender: SessionSender,

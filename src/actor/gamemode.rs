@@ -1,14 +1,18 @@
-pub mod default_event_listener;
-pub mod types;
 use shared::ClientMessage;
-pub use types::*;
-
 use tokio::sync::mpsc;
 
 use crate::{
-    actor::types::Actor,
+    actor::Actor,
     world::{GameIntent, WorldGetters},
 };
+
+pub mod default_event_listener;
+pub mod protocol;
+pub use protocol::*;
+
+pub trait GameModeEventListener: Send + Sync {
+    fn on_emit(&self, event: GameModeEvent);
+}
 
 pub struct GameMode {
     pub gamemode_event_listener: Box<dyn GameModeEventListener>,

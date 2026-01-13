@@ -1,13 +1,17 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use shared::{MovementDirection, Position, WorldCommit};
+use shared::{MovementDirection, Position};
 use tokio::sync::mpsc;
 
-use crate::{actor::types::Actor, router::CommitRouter, state::WorldState};
+use crate::{actor::Actor, router::CommitRouter, state::WorldState};
 
 pub enum GameIntent {
     MovePlayer(MovementDirection),
+}
+pub enum WorldCommit {
+    PlayerMoved { fid: u32, x: i32, y: i32 },
+    BiomeExplored,
 }
 
 pub struct WorldGetters {

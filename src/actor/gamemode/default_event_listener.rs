@@ -1,8 +1,11 @@
-use shared::{ChatPacket, OutgoingPacket, Recipient, ServerMessage};
+use shared::{ChatPacket, OutgoingPacket};
 
 use crate::{
-    actor::gamemode::types::{GameModeEvent, GameModeEventListener},
-    socket::session_registry::SessionSender,
+    actor::gamemode::{GameModeEventListener, protocol::GameModeEvent},
+    socket::{
+        protocol::{Recipient, ServerMessage},
+        session_registry::SessionSender,
+    },
 };
 
 pub struct GameModeDefaultEventListener {

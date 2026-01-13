@@ -1,8 +1,6 @@
-use shared::{ClientMessage, IndexerEvent, PlayerKey};
+use shared::{ClientMessage, PlayerKey};
 
-pub trait GameModeEventListener: Send + Sync {
-    fn on_emit(&self, event: GameModeEvent);
-}
+use crate::actor::indexer::protocol::IndexerEvent;
 
 pub enum GameModeEvent {
     SendClientMessage { pk: PlayerKey, text: String },
