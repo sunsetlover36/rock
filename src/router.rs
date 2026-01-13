@@ -1,5 +1,5 @@
-mod ws_broadcast;
-use ws_broadcast::WsCommitRouter;
+mod ws;
+use ws::WsCommitRouter;
 
 use crate::{socket::session_registry::SessionSender, world::WorldCommit};
 
