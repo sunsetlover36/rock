@@ -11,7 +11,20 @@ pub struct PlayerPool {
     slots: Vec<Slot>,
     free: BinaryHeap<Reverse<u32>>,
 }
+
+impl Default for PlayerPool {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            free: BinaryHeap::new(),
+        }
+    }
+}
 impl PlayerPool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn claim(&mut self) -> PlayerKey {
         if let Some(Reverse(i)) = self.free.pop() {
             let s = &mut self.slots[i as usize];

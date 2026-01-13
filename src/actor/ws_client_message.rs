@@ -1,14 +1,7 @@
-use serde::{Deserialize, Serialize};
-use shared::MovementDirection;
+use shared::ClientMessage;
 use tokio::sync::mpsc;
 
-use crate::{actor::gamemode::GameModeCallback, runtime::actor::Actor};
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ClientMessage {
-    OnMove(MovementDirection),
-}
+use crate::{actor::gamemode::GameModeCallback, actor::types::Actor};
 
 pub struct ClientMessageActor {
     rx: mpsc::Receiver<ClientMessage>,

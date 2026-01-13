@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::{
     Router,
     extract::{
@@ -11,19 +9,23 @@ use axum::{
 };
 use color_eyre::eyre::Result;
 use dotenvy::dotenv;
+use shared::ClientMessage;
 use tokio::{net::TcpListener, sync::mpsc};
 
 use crate::{
     actor::{
-        gamemode::{GameMode, GameModeCallback},
-        ws::{
-            client_message::{ClientMessage, create_client_message_actor},
-            server_message::{ServerMessageHandle, create_server_message_actor},
+        gamemode::{
+            GameMode, GameModeCallback, default_event_listener::GameModeDefaultEventListener,
         },
+        ws_client_message::create_client_message_actor,
     },
+    player_pool::PlayerPool,
     router::CommitRouter,
     runtime::Runtime,
-    socket::SocketAdapter,
+    socket::{
+        adapter::SocketAdapter,
+        session_registry::{SessionRegistrar, SessionRegistry},
+    },
     state::WorldState,
     world::create_world_actor,
 };
@@ -38,7 +40,7 @@ mod world;
 
 #[derive(Clone)]
 struct AppState {
-    server_messenger_handle: Arc<ServerMessageHandle>,
+    session_registrar: SessionRegistrar,
     client_messenger_tx: mpsc::Sender<ClientMessage>,
 }
 
@@ -46,11 +48,13 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Resp
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 async fn handle_socket(socket: WebSocket, state: AppState) {
-    let server_message_rx = state.server_messenger_handle.subscribe();
-
-    SocketAdapter::new(socket, server_message_rx, state.client_messenger_tx)
-        .activate()
-        .await;
+    SocketAdapter::new(
+        socket,
+        state.session_registrar.register(),
+        state.client_messenger_tx.clone(),
+    )
+    .activate()
+    .await;
 }
 
 #[tokio::main]
@@ -61,28 +65,21 @@ async fn main() -> Result<()> {
 
     let (gamemode_callback_tx, gamemode_callback_rx) = mpsc::channel::<GameModeCallback>(1024);
 
-    let (server_messenger_handle, server_messenger_actor, broadcaster) =
-        create_server_message_actor(1024);
-    let server_messenger_handle = Arc::new(server_messenger_handle);
-
     let (client_messenger_tx, client_messenger_actor) =
         create_client_message_actor(1024, gamemode_callback_tx.clone());
 
-    let commit_router = CommitRouter::new(broadcaster.clone());
+    let session_registry = SessionRegistry::new(1024, 64, PlayerPool::new());
+    let session_registrar = session_registry.registrar();
+    let session_sender = session_registry.sender();
+
+    let commit_router = CommitRouter::new(session_sender.clone());
     let (game_intent_tx, world_actor, world_getters) =
         create_world_actor(2048, commit_router, world_state);
 
-    // Redis
-    /*
-    let redis_url = env::var("REDIS_URL").expect("REDIS_URL not set");
-    let indexer_actor = IndexerActor {
-        game_intent_tx: game_intent_tx.clone(),
-        redis_url,
-    };
-    */
-
     let gamemode = GameMode {
-        broadcaster,
+        gamemode_event_listener: Box::new(GameModeDefaultEventListener {
+            ws_session_sender: session_sender.clone(),
+        }),
         gamemode_callback_rx,
         game_intent_tx,
         world_getters,
@@ -95,15 +92,14 @@ async fn main() -> Result<()> {
     // 4. Gamemode starts listening for orders (e.g., client messages)
     Runtime::new()
         .with(world_actor)
-        .with(server_messenger_actor)
         .with(client_messenger_actor)
         .with(gamemode)
         .start();
 
     // Process dictator: Axum HTTP/WS API
     let state = AppState {
-        server_messenger_handle,
-        client_messenger_tx: client_messenger_tx.clone(),
+        session_registrar,
+        client_messenger_tx,
     };
     let app = Router::new()
         .route("/", get(async || "Hello, World!"))

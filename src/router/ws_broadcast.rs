@@ -1,21 +1,19 @@
-use shared::{OutgoingPacket, WorldCommit, WorldPacket};
-use tokio::sync::mpsc;
+use shared::{OutgoingPacket, Recipient, ServerMessage, WorldCommit, WorldPacket};
 
-pub struct WsBroadcastRouter {
-    pub ws_broadcast_tx: mpsc::Sender<OutgoingPacket>,
+use crate::socket::session_registry::SessionSender;
+
+pub struct WsCommitRouter {
+    pub ws_session_sender: SessionSender,
 }
 
-impl WsBroadcastRouter {
+impl WsCommitRouter {
     pub fn publish(&self, commit: WorldCommit) {
         match commit {
             WorldCommit::PlayerMoved { fid, x, y } => {
-                let _ =
-                    self.ws_broadcast_tx
-                        .send(OutgoingPacket::World(WorldPacket::PlayerMoved {
-                            fid,
-                            x,
-                            y,
-                        }));
+                let _ = self.ws_session_sender.send_ephemeral(ServerMessage {
+                    recipient: Recipient::All,
+                    packet: OutgoingPacket::World(WorldPacket::PlayerMoved { fid, x, y }),
+                });
             }
             WorldCommit::BiomeExplored => {}
         }

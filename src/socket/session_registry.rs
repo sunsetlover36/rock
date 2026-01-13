@@ -2,7 +2,7 @@
 // A unified WebSocket session and delivery layer
 
 use dashmap::DashMap;
-use shared::{Delivery, OutgoingPacket, PlayerKey, Recipient, ServerMessage};
+use shared::{OutgoingPacket, PlayerKey, Recipient, ServerMessage};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
@@ -29,111 +29,148 @@ impl From<mpsc::error::SendError<OutgoingPacket>> for SessionSendError {
     }
 }
 
-pub struct SessionRegistry {
+struct RegistryInner {
     player_pool: parking_lot::Mutex<PlayerPool>,
-    ws_channel_buffer: usize,
-    ws_broadcast_hub: broadcast::Sender<OutgoingPacket>,
-    inner: DashMap<PlayerKey, mpsc::Sender<OutgoingPacket>>,
+    broadcast_hub: broadcast::Sender<OutgoingPacket>,
+    unicast_channel_buffer: usize,
+    sessions: DashMap<PlayerKey, mpsc::Sender<OutgoingPacket>>,
+}
+pub struct SessionRegistry {
+    inner: Arc<RegistryInner>,
 }
 impl SessionRegistry {
     pub fn new(
-        ws_channel_buffer: usize,
-        ws_broadcast_hub: broadcast::Sender<OutgoingPacket>,
+        broadcast_hub_buffer: usize,
+        unicast_channel_buffer: usize,
         player_pool: PlayerPool,
     ) -> Self {
         let sessions = DashMap::new();
+        let (broadcast_hub, _) = broadcast::channel::<OutgoingPacket>(broadcast_hub_buffer);
 
         Self {
-            player_pool: parking_lot::Mutex::new(player_pool),
-            ws_channel_buffer,
-            ws_broadcast_hub,
-            inner: sessions,
+            inner: Arc::new(RegistryInner {
+                player_pool: parking_lot::Mutex::new(player_pool),
+                broadcast_hub,
+                unicast_channel_buffer,
+                sessions,
+            }),
         }
     }
 
-    pub fn register(
-        &self,
-    ) -> (
-        PlayerKey,
-        mpsc::Receiver<OutgoingPacket>,
-        broadcast::Receiver<OutgoingPacket>,
-    ) {
-        let pk = {
-            let mut pool = self.player_pool.lock();
-            pool.claim()
-        };
-        let (tx, rx) = mpsc::channel::<OutgoingPacket>(self.ws_channel_buffer);
-
-        self.inner.insert(pk, tx);
-        (pk, rx, self.ws_broadcast_hub.subscribe())
+    pub fn registrar(&self) -> SessionRegistrar {
+        SessionRegistrar {
+            inner: self.inner.clone(),
+        }
     }
-    pub fn unregister(&self, pk: &PlayerKey) {
-        self.inner.remove(pk);
-        self.player_pool.lock().release(pk);
-    }
-
-    fn get_channel(&self, pk: &PlayerKey) -> Option<mpsc::Sender<OutgoingPacket>> {
-        self.inner.get(pk).map(|tx| tx.value().clone())
-    }
-
-    pub async fn send(&self, message: ServerMessage) -> Result<(), SessionSendError> {
-        // Cases:
-        // -> 1. message.delivery == Reliable and message.recipient == All -> Prohibited (can't guarantee it right now)
-        // -> 2. message.delivery == Ephemeral and message.recipient == All -> Sync [broadcast]
-        // -> 3. message.delivery == Reliable and message.recipient != All -> Async [unicast: send().await]
-        // -> 4. message.delivery == Ephemeral and message.recipient != All -> Sync [unicast: try_send()]
-        // -> 5. message.delivery == Reliable and message.recipient == Except -> Prohibited (can't guarantee it right now)
-        //
-        // TODO: Add a timeout for slow consumers with a forced disconnection opportunity
-        // -> To prevent blocking a thread
-        // -> Required for a reliable message delivery to multiple recipients
-        match message.delivery {
-            Delivery::Ephemeral => match message.recipient {
-                Recipient::All => self.broadcast_tx.try_send(message.packet),
-                Recipient::Single(pk) => {
-                    let tx = self
-                        .get_channel(&pk)
-                        .ok_or(SessionSendError::NoSuchSession)?;
-                    tx.try_send(message.packet);
-                }
-                Recipient::List(pks) => {
-                    for pk in pks {
-                        if let Some(tx) = self.get_channel(&pk) {
-                            tx.try_send(message.packet.clone());
-                        }
-                    }
-                }
-                Recipient::Except(except_pk) => {
-                    for entry in self.inner.iter() {
-                        let pk = *entry.key();
-                        if pk == except_pk {
-                            continue;
-                        }
-
-                        let tx = entry.value().clone();
-                        tx.try_send(message.packet.clone());
-                    }
-                }
-            },
-            Delivery::Reliable => match message.recipient {
-                Recipient::All => Err(SessionSendError::Prohibited),
-                Recipient::Single(pk) => {
-                    let tx = self
-                        .get_channel(&pk)
-                        .ok_or(SessionSendError::NoSuchSession)?;
-                    tx.send(message.packet).await?;
-                }
-                Recipient::List(pks) => {
-                    for pk in pks {
-                        if let Some(tx) = self.get_channel(&pk) {
-                            tx.send(message.packet.clone()).await?;
-                        }
-                    }
-                }
-                Recipient::Except(except_pk) => Err(SessionSendError::Prohibited),
-            },
+    pub fn sender(&self) -> SessionSender {
+        SessionSender {
+            inner: self.inner.clone(),
         }
     }
 }
 
-pub type SharedSessionRegistry = Arc<SessionRegistry>;
+pub struct Session {
+    pub pk: PlayerKey,
+    pub unicast_rx: mpsc::Receiver<OutgoingPacket>,
+    pub broadcast_rx: broadcast::Receiver<OutgoingPacket>,
+}
+
+#[derive(Clone)]
+pub struct SessionRegistrar {
+    inner: Arc<RegistryInner>,
+}
+impl SessionRegistrar {
+    pub fn register(&self) -> Session {
+        let pk = {
+            let mut pool = self.inner.player_pool.lock();
+            pool.claim()
+        };
+        let (tx, rx) = mpsc::channel::<OutgoingPacket>(self.inner.unicast_channel_buffer);
+
+        self.inner.sessions.insert(pk, tx);
+        Session {
+            pk,
+            unicast_rx: rx,
+            broadcast_rx: self.inner.broadcast_hub.subscribe(),
+        }
+    }
+    pub fn unregister(&self, pk: &PlayerKey) {
+        self.inner.sessions.remove(pk);
+        self.inner.player_pool.lock().release(pk);
+    }
+}
+
+#[derive(Clone)]
+pub struct SessionSender {
+    inner: Arc<RegistryInner>,
+}
+impl SessionSender {
+    fn get_channel(&self, pk: &PlayerKey) -> Option<mpsc::Sender<OutgoingPacket>> {
+        self.inner.sessions.get(pk).map(|tx| tx.value().clone())
+    }
+
+    // Cases:
+    // -> 1. message.delivery == Reliable and message.recipient == All -> Prohibited (can't guarantee it right now)
+    // -> 2. message.delivery == Ephemeral and message.recipient == All -> Sync [broadcast]
+    // -> 3. message.delivery == Reliable and message.recipient != All -> Async [unicast: send().await]
+    // -> 4. message.delivery == Ephemeral and message.recipient != All -> Sync [unicast: try_send()]
+    // -> 5. message.delivery == Reliable and message.recipient == Except -> Prohibited (can't guarantee it right now)
+    //
+    // TODO: Add a timeout for slow consumers with a forced disconnection opportunity
+    // -> To prevent blocking a thread
+    // -> Required for a reliable message delivery to multiple recipients
+    pub fn send_ephemeral(&self, message: ServerMessage) -> Result<(), SessionSendError> {
+        match message.recipient {
+            Recipient::All => {
+                let _ = self.inner.broadcast_hub.send(message.packet);
+            }
+            Recipient::Single(pk) => {
+                let tx = self
+                    .get_channel(&pk)
+                    .ok_or(SessionSendError::NoSuchSession)?;
+                let _ = tx.try_send(message.packet);
+            }
+            Recipient::List(pks) => {
+                for pk in pks {
+                    if let Some(tx) = self.get_channel(&pk) {
+                        let _ = tx.try_send(message.packet.clone());
+                    }
+                }
+            }
+            Recipient::Except(except_pk) => {
+                for entry in self.inner.sessions.iter() {
+                    let pk = *entry.key();
+                    if pk == except_pk {
+                        continue;
+                    }
+
+                    let tx = entry.value().clone();
+                    let _ = tx.try_send(message.packet.clone());
+                }
+            }
+        }
+
+        Ok(())
+    }
+    pub async fn send_reliable(&self, message: ServerMessage) -> Result<(), SessionSendError> {
+        match message.recipient {
+            Recipient::All => return Err(SessionSendError::Prohibited),
+            Recipient::Single(pk) => {
+                let tx = self
+                    .get_channel(&pk)
+                    .ok_or(SessionSendError::NoSuchSession)?;
+                tx.send(message.packet).await?;
+            }
+            Recipient::List(pks) => {
+                for pk in pks {
+                    if let Some(tx) = self.get_channel(&pk) {
+                        tx.send(message.packet.clone()).await?;
+                    }
+                }
+            }
+            Recipient::Except(_) => return Err(SessionSendError::Prohibited),
+        }
+
+        Ok(())
+    }
+}

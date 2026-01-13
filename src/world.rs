@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use shared::{MovementDirection, Position, WorldCommit, WorldCommitEphemeral};
+use shared::{MovementDirection, Position, WorldCommit};
 use tokio::sync::mpsc;
 
 use crate::{actor::types::Actor, router::CommitRouter, state::WorldState};
@@ -26,7 +26,6 @@ impl WorldGetters {
 
 pub struct World {
     game_intent_rx: mpsc::Receiver<GameIntent>,
-    // Game commit bus: send ephemeral / durable commits, push commits further in the bus (fan-out)
     commit_router: CommitRouter,
     state: Arc<ArcSwap<WorldState>>,
 }
@@ -39,9 +38,11 @@ impl Actor for World {
                 GameIntent::MovePlayer(direction) => {
                     println!("[world] game intent: move direction = {:?}", direction);
 
-                    self.commit_router.emit(WorldCommit::Ephemeral(
-                        WorldCommitEphemeral::PlayerMoved { fid: 0, x: 0, y: 0 },
-                    ));
+                    // TODO: change state
+                    // self.state.store()
+
+                    self.commit_router
+                        .emit(WorldCommit::PlayerMoved { fid: 0, x: 0, y: 0 });
                 }
             }
         }

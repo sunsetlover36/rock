@@ -1,19 +1,26 @@
-use std::sync::Arc;
+use shared::{ChatPacket, OutgoingPacket, Recipient, ServerMessage};
 
 use crate::{
     actor::gamemode::types::{GameModeEvent, GameModeEventListener},
-    socket::session_registry::SessionRegistry,
+    socket::session_registry::SessionSender,
 };
 
 pub struct GameModeDefaultEventListener {
-    pub session_registry: Arc<SessionRegistry>,
+    pub ws_session_sender: SessionSender,
 }
 
-#[async_trait::async_trait]
 impl GameModeEventListener for GameModeDefaultEventListener {
-    async fn on_emit(&self, event: GameModeEvent) {
+    fn on_emit(&self, event: GameModeEvent) {
         match event {
-            GameModeEvent::SendClientMessage { pk, text } => {}
+            GameModeEvent::SendClientMessage { pk, text } => {
+                let _ = self.ws_session_sender.send_ephemeral(ServerMessage {
+                    recipient: Recipient::Single(pk),
+                    packet: OutgoingPacket::Chat(ChatPacket::Message {
+                        message: text,
+                        color: String::from("#FFFFFF"),
+                    }),
+                });
+            }
             GameModeEvent::Broadcast { text } => {}
             GameModeEvent::Log { text } => {}
         }

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{actor::gamemode::GameModeCallback, runtime::actor::Actor};
+use crate::{actor::gamemode::GameModeCallback, actor::types::Actor};
 use color_eyre::eyre::Result;
 use futures_util::StreamExt;
 use shared::{IndexerEvent, RedisChannel};
