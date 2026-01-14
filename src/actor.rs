@@ -1,5 +1,6 @@
 pub mod gamemode;
 pub mod indexer;
+pub mod world;
 pub mod ws_client_message;
 
 #[async_trait::async_trait]

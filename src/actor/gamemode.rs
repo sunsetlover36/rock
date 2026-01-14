@@ -1,8 +1,8 @@
 use shared::ClientMessage;
 use tokio::sync::mpsc;
 
-use crate::{
-    actor::Actor,
+use crate::actor::{
+    Actor,
     world::{GameIntent, WorldGetters},
 };
 

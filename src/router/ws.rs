@@ -1,11 +1,11 @@
 use shared::{OutgoingPacket, WorldPacket};
 
 use crate::{
+    actor::world::WorldCommit,
     socket::{
         protocol::{Recipient, ServerMessage},
         session_registry::SessionSender,
     },
-    world::WorldCommit,
 };
 
 pub struct WsCommitRouter {

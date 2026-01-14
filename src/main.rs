@@ -8,7 +8,6 @@ use axum::{
     routing::{any, get},
 };
 use color_eyre::eyre::Result;
-use dotenvy::dotenv;
 use shared::ClientMessage;
 use tokio::{net::TcpListener, sync::mpsc};
 
@@ -17,6 +16,7 @@ use crate::{
         gamemode::{
             GameMode, GameModeCallback, default_event_listener::GameModeDefaultEventListener,
         },
+        world::create_world_actor,
         ws_client_message::create_client_message_actor,
     },
     player_pool::PlayerPool,
@@ -26,17 +26,14 @@ use crate::{
         adapter::SocketAdapter,
         session_registry::{SessionRegistrar, SessionRegistry},
     },
-    state::WorldState,
-    world::create_world_actor,
 };
 
 mod actor;
+mod meta_db;
 mod player_pool;
 mod router;
 mod runtime;
 mod socket;
-mod state;
-mod world;
 
 #[derive(Clone)]
 struct AppState {
@@ -59,9 +56,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv().ok();
-
-    let world_state = WorldState::new();
+    dotenvy::dotenv()?;
 
     let (gamemode_callback_tx, gamemode_callback_rx) = mpsc::channel::<GameModeCallback>(1024);
 
@@ -73,8 +68,7 @@ async fn main() -> Result<()> {
     let session_sender = session_registry.sender();
 
     let commit_router = CommitRouter::new(session_sender.clone());
-    let (game_intent_tx, world_actor, world_getters) =
-        create_world_actor(2048, commit_router, world_state);
+    let (game_intent_tx, world_actor, world_getters) = create_world_actor(2048, commit_router);
 
     let gamemode = GameMode {
         gamemode_event_listener: Box::new(GameModeDefaultEventListener {

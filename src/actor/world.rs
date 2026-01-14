@@ -4,7 +4,10 @@ use arc_swap::ArcSwap;
 use shared::{MovementDirection, Position};
 use tokio::sync::mpsc;
 
-use crate::{actor::Actor, router::CommitRouter, state::WorldState};
+use crate::{actor::Actor, router::CommitRouter};
+use state::WorldState;
+
+mod state;
 
 pub enum GameIntent {
     MovePlayer(MovementDirection),
@@ -56,11 +59,10 @@ impl Actor for World {
 pub fn create_world_actor(
     buffer: usize,
     commit_router: CommitRouter,
-    state: WorldState,
 ) -> (mpsc::Sender<GameIntent>, World, WorldGetters) {
     let (game_intent_tx, game_intent_rx) = mpsc::channel(buffer);
 
-    let state = Arc::new(ArcSwap::from_pointee(state));
+    let state = Arc::new(ArcSwap::from_pointee(WorldState::new()));
     let world_actor = World {
         game_intent_rx,
         commit_router,
