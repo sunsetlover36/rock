@@ -3,22 +3,22 @@ use futures_util::{
     SinkExt, StreamExt,
     stream::{SplitSink, SplitStream},
 };
-use shared::{ClientMessage, IncomingPacket};
+use shared::IncomingRequest;
 use tokio::sync::{broadcast::error::RecvError, mpsc};
 
-use crate::socket::session_registry::Session;
+use crate::{client_protocol::Envelope, socket::session_registry::Session};
 
 pub struct SocketAdapter {
     ws_tx: SplitSink<WebSocket, Message>,
     ws_rs: SplitStream<WebSocket>,
     session: Session,
-    client_messenger_tx: mpsc::Sender<ClientMessage>,
+    client_messenger_tx: mpsc::Sender<Envelope<IncomingRequest>>,
 }
 impl SocketAdapter {
     pub fn new(
         socket: WebSocket,
         session: Session,
-        client_messenger_tx: mpsc::Sender<ClientMessage>,
+        client_messenger_tx: mpsc::Sender<Envelope<IncomingRequest>>,
     ) -> Self {
         let (ws_tx, ws_rs) = socket.split();
         Self {
@@ -57,11 +57,11 @@ impl SocketAdapter {
                         Some(Ok(msg)) => {
                             match msg {
                                 Message::Text(text) => {
-                                    match serde_json::from_str::<IncomingPacket>(&text) {
-                                        Ok(packet) => {
-                                            let _ = self.client_messenger_tx.send(ClientMessage {
+                                    match serde_json::from_str::<IncomingRequest>(&text) {
+                                        Ok(payload) => {
+                                            let _ = self.client_messenger_tx.send(Envelope {
                                                 sender: self.session.pk,
-                                                packet
+                                                payload
                                             }).await;
                                         }
                                         Err(_) => {}

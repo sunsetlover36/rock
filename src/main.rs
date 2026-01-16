@@ -8,7 +8,7 @@ use axum::{
     routing::{any, get},
 };
 use color_eyre::eyre::Result;
-use shared::ClientMessage;
+use shared::IncomingRequest;
 use tokio::{net::TcpListener, sync::mpsc};
 
 use crate::{
@@ -19,6 +19,7 @@ use crate::{
         world::create_world_actor,
         ws_client_message::create_client_message_actor,
     },
+    client_protocol::Envelope,
     player_pool::PlayerPool,
     router::CommitRouter,
     runtime::Runtime,
@@ -29,6 +30,7 @@ use crate::{
 };
 
 mod actor;
+mod client_protocol;
 mod meta_db;
 mod player_pool;
 mod router;
@@ -38,7 +40,7 @@ mod socket;
 #[derive(Clone)]
 struct AppState {
     session_registrar: SessionRegistrar,
-    client_messenger_tx: mpsc::Sender<ClientMessage>,
+    client_messenger_tx: mpsc::Sender<Envelope<IncomingRequest>>,
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {

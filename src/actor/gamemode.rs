@@ -1,4 +1,4 @@
-use shared::ClientMessage;
+use shared::GameModeRequest;
 use tokio::sync::mpsc;
 
 use crate::actor::{
@@ -21,13 +21,35 @@ pub struct GameMode {
     pub world_getters: WorldGetters,
 }
 impl GameMode {
-    fn on_client_message(&self, message: ClientMessage) {
+    // Untrusted input (called by the client)
+    fn on_client_request(&self, message: ClientRequest) {
         println!("[gamemode] new client message: {:?}", message);
         self.gamemode_event_listener
             .on_emit(GameModeEvent::SendClientMessage {
                 pk: message.sender,
                 text: String::from("Hello from Wonderful RP!"),
             });
+
+        match message.payload {
+            GameModeRequest::PlayerMove(dir) => {
+                // TODO: Who's being moved?
+                self.game_intent_tx.send(GameIntent::MovePlayer(dir));
+            }
+        }
+    }
+
+    // Trusted input (called by the engine)
+    fn on_engine_callback(&self, cb: EngineCallback) {
+        match cb {
+            EngineCallback::OnGameModeInit => {
+                println!("[gamemode] gamemode init");
+                // Load the world, initialize entities
+            }
+            EngineCallback::OnPlayerConnect { pk } => {
+                println!("[gamemode] player connected: {:?}", pk);
+                // Spawn player, include the player into the world
+            }
+        }
     }
 }
 
@@ -36,8 +58,11 @@ impl Actor for GameMode {
     async fn run(mut self: Box<Self>) {
         while let Some(msg) = self.gamemode_callback_rx.recv().await {
             match msg {
+                GameModeCallback::Engine(cb) => {
+                    self.on_engine_callback(cb);
+                }
                 GameModeCallback::Client(message) => {
-                    self.on_client_message(message);
+                    self.on_client_request(message);
                 }
                 _ => {}
             }

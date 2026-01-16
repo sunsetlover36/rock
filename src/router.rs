@@ -1,7 +1,7 @@
 mod ws;
 use ws::WsCommitRouter;
 
-use crate::{socket::session_registry::SessionSender, world::WorldCommit};
+use crate::{actor::world::WorldCommit, socket::session_registry::SessionSender};
 
 pub struct CommitRouter {
     // db: DatabaseSystem

@@ -1,31 +1,46 @@
-use shared::ClientMessage;
+// This actor "unwraps" envelopes and routes them to needed receivers
+
+use shared::IncomingRequest;
 use tokio::sync::mpsc;
 
-use crate::actor::{Actor, gamemode::GameModeCallback};
+use crate::{
+    actor::{Actor, gamemode::GameModeCallback},
+    client_protocol::Envelope,
+};
 
 pub struct ClientMessageActor {
-    rx: mpsc::Receiver<ClientMessage>,
-    world_event_tx: mpsc::Sender<GameModeCallback>,
+    rx: mpsc::Receiver<Envelope<IncomingRequest>>,
+    gamemode_callback_tx: mpsc::Sender<GameModeCallback>,
 }
 
 #[async_trait::async_trait]
 impl Actor for ClientMessageActor {
     async fn run(mut self: Box<Self>) {
         while let Some(msg) = self.rx.recv().await {
-            let _ = self
-                .world_event_tx
-                .send(GameModeCallback::Client(msg))
-                .await;
+            match msg.payload {
+                IncomingRequest::GameMode(req) => {
+                    let _ = self
+                        .gamemode_callback_tx
+                        .send(GameModeCallback::Client(Envelope {
+                            sender: msg.sender,
+                            payload: req,
+                        }))
+                        .await;
+                }
+            }
         }
     }
 }
 
 pub fn create_client_message_actor(
     buffer: usize,
-    world_event_tx: mpsc::Sender<GameModeCallback>,
-) -> (mpsc::Sender<ClientMessage>, ClientMessageActor) {
-    let (tx, rx) = mpsc::channel::<ClientMessage>(buffer);
+    gamemode_callback_tx: mpsc::Sender<GameModeCallback>,
+) -> (mpsc::Sender<Envelope<IncomingRequest>>, ClientMessageActor) {
+    let (tx, rx) = mpsc::channel::<Envelope<IncomingRequest>>(buffer);
 
-    let actor = ClientMessageActor { rx, world_event_tx };
+    let actor = ClientMessageActor {
+        rx,
+        gamemode_callback_tx,
+    };
     return (tx, actor);
 }
