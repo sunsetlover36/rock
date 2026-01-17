@@ -1,22 +1,11 @@
-use shared::{OutgoingPacket, PlayerKey};
+use shared::OutgoingPacket;
+
+use crate::envelope::ServerEnvelope;
 
 #[derive(Debug, Clone)]
-pub enum Recipient {
-    All,
-    Single(PlayerKey),
-    List(Vec<PlayerKey>),
-    Except(PlayerKey),
+pub enum SocketCommand {
+    Kick,
 }
 
-// Temporarily deprecated
-#[derive(Debug, Clone, Copy)]
-pub enum Delivery {
-    Ephemeral,
-    Reliable,
-}
-
-#[derive(Debug, Clone)]
-pub struct ServerMessage {
-    pub recipient: Recipient,
-    pub packet: OutgoingPacket,
-}
+pub type ServerMessage = ServerEnvelope<OutgoingPacket>;
+pub type SocketControl = ServerEnvelope<SocketCommand>;

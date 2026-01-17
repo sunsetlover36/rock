@@ -19,7 +19,7 @@ use crate::{
         world::create_world_actor,
         ws_client_message::create_client_message_actor,
     },
-    client_protocol::Envelope,
+    envelope::ClientEnvelope,
     player_pool::PlayerPool,
     router::CommitRouter,
     runtime::Runtime,
@@ -30,7 +30,7 @@ use crate::{
 };
 
 mod actor;
-mod client_protocol;
+mod envelope;
 mod meta_db;
 mod player_pool;
 mod router;
@@ -40,7 +40,7 @@ mod socket;
 #[derive(Clone)]
 struct AppState {
     session_registrar: SessionRegistrar,
-    client_messenger_tx: mpsc::Sender<Envelope<IncomingRequest>>,
+    client_messenger_tx: mpsc::Sender<ClientEnvelope<IncomingRequest>>,
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
     let (client_messenger_tx, client_messenger_actor) =
         create_client_message_actor(1024, gamemode_callback_tx.clone());
 
-    let session_registry = SessionRegistry::new(1024, 64, PlayerPool::new());
+    let session_registry = SessionRegistry::new(1024, 64, 8, PlayerPool::new());
     let session_registrar = session_registry.registrar();
     let session_sender = session_registry.sender();
 

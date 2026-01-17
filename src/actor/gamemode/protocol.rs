@@ -1,13 +1,14 @@
 use shared::{GameModeRequest, PlayerKey};
 
-use crate::{actor::indexer::protocol::IndexerEvent, client_protocol::Envelope};
+use crate::{actor::indexer::protocol::IndexerEvent, envelope::ClientEnvelope};
 
-pub type ClientRequest = Envelope<GameModeRequest>;
+pub type ClientRequest = ClientEnvelope<GameModeRequest>;
 
 pub enum GameModeEvent {
     SendClientMessage { pk: PlayerKey, text: String },
     Broadcast { text: String },
     Log { text: String },
+    KickPlayer { pk: PlayerKey },
 }
 
 pub enum EngineCallback {

@@ -7,36 +7,43 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{
+    envelope::EnvelopeRecipient,
     player_pool::PlayerPool,
-    socket::protocol::{Recipient, ServerMessage},
+    socket::protocol::{ServerMessage, SocketCommand, SocketControl},
 };
 
 #[derive(Debug)]
-pub enum SessionSendError {
+pub enum SessionSendError<T> {
     NoSuchSession,
     Prohibited,
-    ChannelFull(OutgoingPacket),
-    ChannelClosed(OutgoingPacket),
+    ChannelFull(T),
+    ChannelClosed(T),
 }
-impl From<mpsc::error::TrySendError<OutgoingPacket>> for SessionSendError {
-    fn from(err: mpsc::error::TrySendError<OutgoingPacket>) -> Self {
+impl<T> From<mpsc::error::TrySendError<T>> for SessionSendError<T> {
+    fn from(err: mpsc::error::TrySendError<T>) -> Self {
         match err {
             mpsc::error::TrySendError::Full(p) => SessionSendError::ChannelFull(p),
             mpsc::error::TrySendError::Closed(p) => SessionSendError::ChannelClosed(p),
         }
     }
 }
-impl From<mpsc::error::SendError<OutgoingPacket>> for SessionSendError {
-    fn from(err: mpsc::error::SendError<OutgoingPacket>) -> Self {
+impl<T> From<mpsc::error::SendError<T>> for SessionSendError<T> {
+    fn from(err: mpsc::error::SendError<T>) -> Self {
         SessionSendError::ChannelClosed(err.0)
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionEndpoint {
+    unicast: mpsc::Sender<OutgoingPacket>,
+    control: mpsc::Sender<SocketCommand>,
+}
 struct RegistryInner {
     player_pool: parking_lot::Mutex<PlayerPool>,
     broadcast_hub: broadcast::Sender<OutgoingPacket>,
     unicast_channel_buffer: usize,
-    sessions: DashMap<PlayerKey, mpsc::Sender<OutgoingPacket>>,
+    control_channel_buffer: usize,
+    sessions: DashMap<PlayerKey, SessionEndpoint>,
 }
 pub struct SessionRegistry {
     inner: Arc<RegistryInner>,
@@ -45,6 +52,7 @@ impl SessionRegistry {
     pub fn new(
         broadcast_hub_buffer: usize,
         unicast_channel_buffer: usize,
+        control_channel_buffer: usize,
         player_pool: PlayerPool,
     ) -> Self {
         let sessions = DashMap::new();
@@ -55,6 +63,7 @@ impl SessionRegistry {
                 player_pool: parking_lot::Mutex::new(player_pool),
                 broadcast_hub,
                 unicast_channel_buffer,
+                control_channel_buffer,
                 sessions,
             }),
         }
@@ -76,6 +85,7 @@ pub struct Session {
     pub pk: PlayerKey,
     pub unicast_rx: mpsc::Receiver<OutgoingPacket>,
     pub broadcast_rx: broadcast::Receiver<OutgoingPacket>,
+    pub control_rx: mpsc::Receiver<SocketCommand>,
 }
 
 #[derive(Clone)]
@@ -88,13 +98,22 @@ impl SessionRegistrar {
             let mut pool = self.inner.player_pool.lock();
             pool.claim()
         };
-        let (tx, rx) = mpsc::channel::<OutgoingPacket>(self.inner.unicast_channel_buffer);
+        let (uni_tx, uni_rx) = mpsc::channel::<OutgoingPacket>(self.inner.unicast_channel_buffer);
+        let (control_tx, control_rx) =
+            mpsc::channel::<SocketCommand>(self.inner.control_channel_buffer);
 
-        self.inner.sessions.insert(pk, tx);
+        self.inner.sessions.insert(
+            pk,
+            SessionEndpoint {
+                unicast: uni_tx,
+                control: control_tx,
+            },
+        );
         Session {
             pk,
-            unicast_rx: rx,
+            unicast_rx: uni_rx,
             broadcast_rx: self.inner.broadcast_hub.subscribe(),
+            control_rx,
         }
     }
     pub fn unregister(&self, pk: &PlayerKey) {
@@ -108,8 +127,22 @@ pub struct SessionSender {
     inner: Arc<RegistryInner>,
 }
 impl SessionSender {
-    fn get_channel(&self, pk: &PlayerKey) -> Option<mpsc::Sender<OutgoingPacket>> {
-        self.inner.sessions.get(pk).map(|tx| tx.value().clone())
+    fn get_endpoints(&self, pk: &PlayerKey) -> Option<SessionEndpoint> {
+        self.inner.sessions.get(pk).map(|e| e.value().clone())
+    }
+    fn get_unicast(&self, pk: &PlayerKey) -> Option<mpsc::Sender<OutgoingPacket>> {
+        if let Some(e) = self.get_endpoints(pk) {
+            return Some(e.unicast);
+        }
+
+        None
+    }
+    fn get_control(&self, pk: &PlayerKey) -> Option<mpsc::Sender<SocketCommand>> {
+        if let Some(e) = self.get_endpoints(pk) {
+            return Some(e.control);
+        }
+
+        None
     }
 
     // Cases:
@@ -122,25 +155,24 @@ impl SessionSender {
     // TODO: Add a timeout for slow consumers with a forced disconnection opportunity
     // -> To prevent blocking a thread
     // -> Required for a reliable message delivery to multiple recipients
-    pub fn send_ephemeral(&self, message: ServerMessage) -> Result<(), SessionSendError> {
+    pub fn send_ephemeral(&self, message: ServerMessage) {
         match message.recipient {
-            Recipient::All => {
-                let _ = self.inner.broadcast_hub.send(message.packet);
+            EnvelopeRecipient::All => {
+                let _ = self.inner.broadcast_hub.send(message.payload);
             }
-            Recipient::Single(pk) => {
-                let tx = self
-                    .get_channel(&pk)
-                    .ok_or(SessionSendError::NoSuchSession)?;
-                let _ = tx.try_send(message.packet);
+            EnvelopeRecipient::Single(pk) => {
+                if let Some(tx) = self.get_unicast(&pk) {
+                    let _ = tx.try_send(message.payload);
+                }
             }
-            Recipient::List(pks) => {
+            EnvelopeRecipient::List(pks) => {
                 for pk in pks {
-                    if let Some(tx) = self.get_channel(&pk) {
-                        let _ = tx.try_send(message.packet.clone());
+                    if let Some(tx) = self.get_unicast(&pk) {
+                        let _ = tx.try_send(message.payload.clone());
                     }
                 }
             }
-            Recipient::Except(except_pk) => {
+            EnvelopeRecipient::Except(except_pk) => {
                 for entry in self.inner.sessions.iter() {
                     let pk = *entry.key();
                     if pk == except_pk {
@@ -148,32 +180,50 @@ impl SessionSender {
                     }
 
                     let tx = entry.value().clone();
-                    let _ = tx.try_send(message.packet.clone());
+                    let _ = tx.unicast.try_send(message.payload.clone());
                 }
             }
+        }
+    }
+    pub async fn send_reliable(
+        &self,
+        message: ServerMessage,
+    ) -> Result<(), SessionSendError<OutgoingPacket>> {
+        match message.recipient {
+            EnvelopeRecipient::All => return Err(SessionSendError::Prohibited),
+            EnvelopeRecipient::Single(pk) => {
+                let tx = self
+                    .get_unicast(&pk)
+                    .ok_or(SessionSendError::NoSuchSession)?;
+                tx.send(message.payload).await?;
+            }
+            EnvelopeRecipient::List(pks) => {
+                for pk in pks {
+                    if let Some(tx) = self.get_unicast(&pk) {
+                        tx.send(message.payload.clone()).await?;
+                    }
+                }
+            }
+            EnvelopeRecipient::Except(_) => return Err(SessionSendError::Prohibited),
         }
 
         Ok(())
     }
-    pub async fn send_reliable(&self, message: ServerMessage) -> Result<(), SessionSendError> {
-        match message.recipient {
-            Recipient::All => return Err(SessionSendError::Prohibited),
-            Recipient::Single(pk) => {
-                let tx = self
-                    .get_channel(&pk)
-                    .ok_or(SessionSendError::NoSuchSession)?;
-                tx.send(message.packet).await?;
-            }
-            Recipient::List(pks) => {
-                for pk in pks {
-                    if let Some(tx) = self.get_channel(&pk) {
-                        tx.send(message.packet.clone()).await?;
-                    }
-                }
-            }
-            Recipient::Except(_) => return Err(SessionSendError::Prohibited),
-        }
 
-        Ok(())
+    pub fn send_control_command(
+        &self,
+        command: SocketControl,
+    ) -> Result<(), SessionSendError<SocketCommand>> {
+        match command.recipient {
+            EnvelopeRecipient::Single(pk) => {
+                let tx = self
+                    .get_control(&pk)
+                    .ok_or(SessionSendError::NoSuchSession)?;
+
+                tx.try_send(command.payload)?;
+                Ok(())
+            }
+            _ => Err(SessionSendError::Prohibited),
+        }
     }
 }

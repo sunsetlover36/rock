@@ -2,8 +2,10 @@ use shared::{ChatPacket, OutgoingPacket};
 
 use crate::{
     actor::gamemode::{GameModeEventListener, protocol::GameModeEvent},
+    envelope::EnvelopeRecipient,
+    envelope::ServerEnvelope,
     socket::{
-        protocol::{Recipient, ServerMessage},
+        protocol::{ServerMessage, SocketCommand},
         session_registry::SessionSender,
     },
 };
@@ -17,11 +19,17 @@ impl GameModeEventListener for GameModeDefaultEventListener {
         match event {
             GameModeEvent::SendClientMessage { pk, text } => {
                 let _ = self.ws_session_sender.send_ephemeral(ServerMessage {
-                    recipient: Recipient::Single(pk),
-                    packet: OutgoingPacket::Chat(ChatPacket::Message {
+                    recipient: EnvelopeRecipient::Single(pk),
+                    payload: OutgoingPacket::Chat(ChatPacket::GlobalMessage {
                         message: text,
                         color: String::from("#FFFFFF"),
                     }),
+                });
+            }
+            GameModeEvent::KickPlayer { pk } => {
+                let _ = self.ws_session_sender.send_control_command(ServerEnvelope {
+                    recipient: EnvelopeRecipient::Single(pk),
+                    payload: SocketCommand::Kick,
                 });
             }
             GameModeEvent::Broadcast { text } => {}

@@ -5,11 +5,11 @@ use tokio::sync::mpsc;
 
 use crate::{
     actor::{Actor, gamemode::GameModeCallback},
-    client_protocol::Envelope,
+    envelope::ClientEnvelope,
 };
 
 pub struct ClientMessageActor {
-    rx: mpsc::Receiver<Envelope<IncomingRequest>>,
+    rx: mpsc::Receiver<ClientEnvelope<IncomingRequest>>,
     gamemode_callback_tx: mpsc::Sender<GameModeCallback>,
 }
 
@@ -21,7 +21,7 @@ impl Actor for ClientMessageActor {
                 IncomingRequest::GameMode(req) => {
                     let _ = self
                         .gamemode_callback_tx
-                        .send(GameModeCallback::Client(Envelope {
+                        .send(GameModeCallback::Client(ClientEnvelope {
                             sender: msg.sender,
                             payload: req,
                         }))
@@ -35,8 +35,11 @@ impl Actor for ClientMessageActor {
 pub fn create_client_message_actor(
     buffer: usize,
     gamemode_callback_tx: mpsc::Sender<GameModeCallback>,
-) -> (mpsc::Sender<Envelope<IncomingRequest>>, ClientMessageActor) {
-    let (tx, rx) = mpsc::channel::<Envelope<IncomingRequest>>(buffer);
+) -> (
+    mpsc::Sender<ClientEnvelope<IncomingRequest>>,
+    ClientMessageActor,
+) {
+    let (tx, rx) = mpsc::channel::<ClientEnvelope<IncomingRequest>>(buffer);
 
     let actor = ClientMessageActor {
         rx,

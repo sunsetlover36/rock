@@ -3,22 +3,25 @@ use futures_util::{
     SinkExt, StreamExt,
     stream::{SplitSink, SplitStream},
 };
-use shared::IncomingRequest;
+use shared::{IncomingRequest, OutgoingPacket, SystemPacket};
 use tokio::sync::{broadcast::error::RecvError, mpsc};
 
-use crate::{client_protocol::Envelope, socket::session_registry::Session};
+use crate::{
+    envelope::ClientEnvelope,
+    socket::{protocol::SocketCommand, session_registry::Session},
+};
 
 pub struct SocketAdapter {
     ws_tx: SplitSink<WebSocket, Message>,
     ws_rs: SplitStream<WebSocket>,
     session: Session,
-    client_messenger_tx: mpsc::Sender<Envelope<IncomingRequest>>,
+    client_messenger_tx: mpsc::Sender<ClientEnvelope<IncomingRequest>>,
 }
 impl SocketAdapter {
     pub fn new(
         socket: WebSocket,
         session: Session,
-        client_messenger_tx: mpsc::Sender<Envelope<IncomingRequest>>,
+        client_messenger_tx: mpsc::Sender<ClientEnvelope<IncomingRequest>>,
     ) -> Self {
         let (ws_tx, ws_rs) = socket.split();
         Self {
@@ -32,6 +35,26 @@ impl SocketAdapter {
     pub async fn activate(mut self) {
         loop {
             tokio::select! {
+                biased;
+
+                res = self.session.control_rx.recv() => {
+                    if let Some(command) = res {
+                        match command {
+                            SocketCommand::Kick => {
+                                let p = OutgoingPacket::System(SystemPacket::PlayerKicked);
+                                let json = serde_json::to_string(&p).unwrap();
+
+                                // best-effort UX
+                                let _ = self.ws_tx.send(Message::Text(json.into())).await;
+
+                                // force disconnect
+                                let _ = self.ws_tx.send(Message::Close(None)).await;
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 // TODO: Need an util for JSON convertation and send
                 res = self.session.unicast_rx.recv() => {
                     if let Some(p) = res {
@@ -59,7 +82,7 @@ impl SocketAdapter {
                                 Message::Text(text) => {
                                     match serde_json::from_str::<IncomingRequest>(&text) {
                                         Ok(payload) => {
-                                            let _ = self.client_messenger_tx.send(Envelope {
+                                            let _ = self.client_messenger_tx.send(ClientEnvelope {
                                                 sender: self.session.pk,
                                                 payload
                                             }).await;
