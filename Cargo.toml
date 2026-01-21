@@ -17,4 +17,6 @@ async-trait = "0.1.89"
 arc-swap = "1.8.0"
 dashmap = "6.1.0"
 parking_lot = "0.12.5"
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "postgres", "json", "chrono", "macros", "uuid"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "sqlite", "json", "chrono", "macros", "uuid"] }
+flume = "0.12.0"
+mlua = { version = "0.11.5", features = ["lua54", "vendored", "async"] }
