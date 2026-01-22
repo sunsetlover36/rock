@@ -3,14 +3,11 @@
 use shared::IncomingRequest;
 use tokio::sync::mpsc;
 
-use crate::{
-    actor::{Actor, gamemode::GameModeCallback},
-    envelope::ClientEnvelope,
-};
+use crate::{actor::Actor, envelope::ClientEnvelope, gamemode::GameModeCallback};
 
 pub struct ClientMessageActor {
     rx: mpsc::Receiver<ClientEnvelope<IncomingRequest>>,
-    gamemode_callback_tx: mpsc::Sender<GameModeCallback>,
+    gamemode_callback_tx: flume::Sender<GameModeCallback>,
 }
 
 #[async_trait::async_trait]
@@ -21,7 +18,7 @@ impl Actor for ClientMessageActor {
                 IncomingRequest::GameMode(req) => {
                     let _ = self
                         .gamemode_callback_tx
-                        .send(GameModeCallback::Client(ClientEnvelope {
+                        .send_async(GameModeCallback::Client(ClientEnvelope {
                             sender: msg.sender,
                             payload: req,
                         }))
@@ -34,7 +31,7 @@ impl Actor for ClientMessageActor {
 
 pub fn create_client_message_actor(
     buffer: usize,
-    gamemode_callback_tx: mpsc::Sender<GameModeCallback>,
+    gamemode_callback_tx: flume::Sender<GameModeCallback>,
 ) -> (
     mpsc::Sender<ClientEnvelope<IncomingRequest>>,
     ClientMessageActor,

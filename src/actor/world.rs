@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use shared::{MovementDirection, Position};
-use tokio::sync::mpsc;
 
 use crate::{actor::Actor, router::CommitRouter};
 use state::WorldState;
@@ -32,7 +31,7 @@ impl WorldGetters {
 }
 
 pub struct World {
-    game_intent_rx: mpsc::Receiver<GameIntent>,
+    game_intent_rx: flume::Receiver<GameIntent>,
     commit_router: CommitRouter,
     state: Arc<ArcSwap<WorldState>>,
 }
@@ -59,8 +58,8 @@ impl Actor for World {
 pub fn create_world_actor(
     buffer: usize,
     commit_router: CommitRouter,
-) -> (mpsc::Sender<GameIntent>, World, WorldGetters) {
-    let (game_intent_tx, game_intent_rx) = mpsc::channel(buffer);
+) -> (flume::Sender<GameIntent>, World, WorldGetters) {
+    let (game_intent_tx, game_intent_rx) = flume::bounded(buffer);
 
     let state = Arc::new(ArcSwap::from_pointee(WorldState::new()));
     let world_actor = World {

@@ -1,9 +1,8 @@
 use shared::{ChatPacket, OutgoingPacket};
 
 use crate::{
-    actor::gamemode::{GameModeEventListener, protocol::GameModeEvent},
-    envelope::EnvelopeRecipient,
-    envelope::ServerEnvelope,
+    envelope::{EnvelopeRecipient, ServerEnvelope},
+    gamemode::{GameModeEventListener, protocol::GameModeEvent},
     socket::{
         protocol::{ServerMessage, SocketCommand},
         session_registry::SessionSender,
