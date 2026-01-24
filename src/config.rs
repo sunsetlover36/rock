@@ -22,7 +22,7 @@ impl ServerConfig {
                 continue;
             }
 
-            if let Some((key, value)) = line.split_once(" at ") {
+            if let Some((key, value)) = line.split_once(" is ") {
                 let value = value.trim();
 
                 match key.trim() {

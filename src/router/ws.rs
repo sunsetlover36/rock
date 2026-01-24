@@ -1,15 +1,14 @@
 use shared::{OutgoingPacket, WorldPacket};
 
 use crate::{
-    actor::world::WorldCommit,
     envelope::{EnvelopeRecipient, ServerEnvelope},
     socket::session_registry::SessionSender,
+    world::protocol::WorldCommit,
 };
 
 pub struct WsCommitRouter {
     pub ws_session_sender: SessionSender,
 }
-
 impl WsCommitRouter {
     pub fn publish(&self, commit: WorldCommit) {
         match commit {

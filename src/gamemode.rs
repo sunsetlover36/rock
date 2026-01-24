@@ -1,63 +1,103 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-use color_eyre::eyre::{self, Result};
-use mlua::{Lua, UserData, UserDataMethods};
+use color_eyre::eyre::{self};
+use mlua::Lua;
 use shared::GameModeRequest;
 
-use crate::actor::world::{GameIntent, WorldGetters};
+use crate::{
+    router::CommitRouter,
+    world::{WorldNatives, WorldState},
+};
 
 pub mod default_event_listener;
 pub mod protocol;
 pub use protocol::*;
 
-pub trait GameModeEventListener: Send + Sync {
-    fn on_emit(&self, event: GameModeEvent);
+mod app_data;
+mod utils;
+use app_data::GameModeAppData;
+use utils::LuaResultExt;
+
+mod api;
+
+pub trait GameModeEventListener {
+    fn emit(&self, event: GameModeEvent);
 }
 
 pub struct GameModeParams {
-    pub gamemode_name: String,
-    pub gamemode_event_listener: Box<dyn GameModeEventListener>,
-    pub gamemode_callback_rx: flume::Receiver<GameModeCallback>,
-    pub game_intent_tx: flume::Sender<GameIntent>,
-    pub world_getters: WorldGetters,
+    pub name: String,
+    pub event_listener: Box<dyn GameModeEventListener>,
+    pub callback_rx: flume::Receiver<GameModeCallback>,
+    pub commit_router: CommitRouter,
 }
 
 pub struct GameMode {
     lua: Lua,
-    gamemode_event_listener: Box<dyn GameModeEventListener>,
-    gamemode_callback_rx: flume::Receiver<GameModeCallback>,
-    game_intent_tx: flume::Sender<GameIntent>,
-    world_getters: WorldGetters,
+    event_listener: Box<dyn GameModeEventListener>,
+    callback_rx: flume::Receiver<GameModeCallback>,
+    world_state: Rc<WorldState>,
+    world_natives: WorldNatives,
+    commit_router: CommitRouter,
 }
 impl GameMode {
-    pub fn new(params: GameModeParams) -> Result<Self> {
+    pub fn new(params: GameModeParams) -> eyre::Result<Self> {
         let lua = Lua::new();
-        let script_path = format!("{}.lua", params.gamemode_name);
+        let script_path = format!("gamemodes/{}.lua", params.name);
         let script = std::fs::read_to_string(script_path)?;
+
+        let app_data = GameModeAppData {
+            world_awakes: None,
+            scenes: HashMap::new(),
+        };
+        lua.set_app_data(app_data);
+
+        api::when::register(&lua)?;
+        api::scene::register(&lua)?;
 
         lua.load(&script)
             .exec()
-            .map_err(|e| eyre::eyre!("Lua script error: {}", e))?;
+            .wrap_err("Script execution error")?;
+
+        let world_state = Rc::new(WorldState::new());
+        let world_natives = WorldNatives {
+            state: world_state.clone(),
+        };
 
         Ok(Self {
             lua,
-            gamemode_event_listener: params.gamemode_event_listener,
-            gamemode_callback_rx: params.gamemode_callback_rx,
-            game_intent_tx: params.game_intent_tx,
-            world_getters: params.world_getters,
+            event_listener: params.event_listener,
+            callback_rx: params.callback_rx,
+            world_state,
+            world_natives,
+            commit_router: params.commit_router,
         })
     }
 
-    pub fn awaken(&self) {
-        // Call OnGameModeAwake (Lua callback)
-        if let Ok(cb) = self.lua.globals().get::<mlua::Function>("OnGameModeInit") {
-            let _ = cb.call::<()>(());
+    pub fn awaken(&self) -> eyre::Result<Self> {
+        // Call when.world.awakes
+        if let Some(when_world_awakes) =
+            self.lua
+                .app_data_ref::<GameModeAppData>()
+                .and_then(|app_data| {
+                    app_data
+                        .world_awakes
+                        .as_ref()
+                        .and_then(|rk| self.lua.registry_value::<mlua::Function>(rk).ok())
+                })
+        {
+            when_world_awakes
+                .call::<()>(())
+                .wrap_err("Error in `when.world.awakes`")?;
         }
 
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();
         loop {
-            while let Ok(cb) = self.gamemode_callback_rx.try_recv() {
+            while let Ok(cb) = self.callback_rx.try_recv() {
                 match cb {
                     GameModeCallback::Engine(cb) => {
                         self.on_engine_callback(cb);
@@ -92,16 +132,15 @@ impl GameMode {
     // Untrusted input (called by the client)
     fn on_client_request(&self, message: ClientRequest) {
         println!("[gamemode] new client message: {:?}", message);
-        self.gamemode_event_listener
-            .on_emit(GameModeEvent::SendClientMessage {
-                pk: message.sender,
-                text: String::from("Hello from Wonderful RP!"),
-            });
+        self.event_listener.emit(GameModeEvent::SendClientMessage {
+            pk: message.sender,
+            text: String::from("Hello from Wonderful RP!"),
+        });
 
         match message.payload {
             GameModeRequest::PlayerMove(dir) => {
-                // TODO: Who's being moved?
-                self.game_intent_tx.send(GameIntent::MovePlayer(dir));
+                // TODO: Who's being moved? How?
+                println!("[CLIENT] PlayerMove: {:?}", dir);
             }
         }
     }
@@ -118,11 +157,5 @@ impl GameMode {
                 // Spawn player, include the player into the world
             }
         }
-    }
-}
-
-impl UserData for GameMode {
-    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_function("Test", |_, ()| Ok(0));
     }
 }

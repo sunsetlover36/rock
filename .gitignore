@@ -14,3 +14,7 @@ target
 **/mutants.out*/
 
 .env
+
+# Gamemodes folder and config.cfg (not related to the engine)
+gamemodes
+config.cfg

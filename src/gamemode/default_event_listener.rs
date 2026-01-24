@@ -14,7 +14,7 @@ pub struct GameModeDefaultEventListener {
 }
 
 impl GameModeEventListener for GameModeDefaultEventListener {
-    fn on_emit(&self, event: GameModeEvent) {
+    fn emit(&self, event: GameModeEvent) {
         match event {
             GameModeEvent::SendClientMessage { pk, text } => {
                 let _ = self.ws_session_sender.send_ephemeral(ServerMessage {

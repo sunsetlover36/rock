@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::actor::{Actor, gamemode::GameModeCallback};
+use crate::{actor::Actor, gamemode::GameModeCallback};
 use color_eyre::eyre::Result;
 use futures_util::StreamExt;
 use tokio::sync::mpsc;

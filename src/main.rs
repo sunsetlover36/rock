@@ -1,3 +1,5 @@
+use std::thread;
+
 use axum::{
     Router,
     extract::{
@@ -12,7 +14,7 @@ use shared::IncomingRequest;
 use tokio::{net::TcpListener, sync::mpsc};
 
 use crate::{
-    actor::{world::create_world_actor, ws_client_message::create_client_message_actor},
+    actor::{ActorRuntime, ws_client_message::create_client_message_actor},
     config::ServerConfig,
     envelope::ClientEnvelope,
     gamemode::{
@@ -21,7 +23,6 @@ use crate::{
     },
     player_pool::PlayerPool,
     router::CommitRouter,
-    runtime::Runtime,
     socket::{
         adapter::SocketAdapter,
         session_registry::{SessionRegistrar, SessionRegistry},
@@ -35,8 +36,8 @@ mod gamemode;
 mod meta_db;
 mod player_pool;
 mod router;
-mod runtime;
 mod socket;
+mod world;
 
 #[derive(Clone)]
 struct AppState {
@@ -70,21 +71,32 @@ async fn main() -> Result<()> {
     let (client_messenger_tx, client_messenger_actor) =
         create_client_message_actor(1024, gamemode_callback_tx.clone());
 
+    // Actor Runtime for background async tasks
+    // Actor #1: Route ws client messages to gamemode callbacks channel
+    // More reasons to keep it? If no, get rid of it
+    ActorRuntime::new().with(client_messenger_actor).start();
+
+    // WS Session registry
     let session_registry = SessionRegistry::new(1024, 64, 8, PlayerPool::new());
     let session_registrar = session_registry.registrar();
     let session_sender = session_registry.sender();
 
+    // Commit Router -> listen for and distribute new world events as they're committed
     let commit_router = CommitRouter::new(session_sender.clone());
-    let (game_intent_tx, world_actor, world_getters) = create_world_actor(2048, commit_router);
 
-    // Runtime
-    // 1. Set up world actor (global game intents listener)
-    // 2. Set up ws server-to-clients broadcast channel
-    // 3. Route ws client messages to gamemode callbacks channel
-    Runtime::new()
-        .with(world_actor)
-        .with(client_messenger_actor)
-        .start();
+    // GameMode main process
+    thread::spawn(move || {
+        let gm = GameMode::new(GameModeParams {
+            name: config.gamemode_name,
+            event_listener: Box::new(GameModeDefaultEventListener {
+                ws_session_sender: session_sender.clone(),
+            }),
+            callback_rx: gamemode_callback_rx,
+            commit_router,
+        })
+        .unwrap();
+        gm.awaken().unwrap();
+    });
 
     // Axum HTTP/WS API
     let state = AppState {
@@ -99,17 +111,6 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
     println!("Server is listening on 127.0.0.1:3000!");
     axum::serve(listener, app).await.unwrap();
-
-    // GameMode main process
-    let _ = GameMode::new(GameModeParams {
-        gamemode_name: config.gamemode_name,
-        gamemode_event_listener: Box::new(GameModeDefaultEventListener {
-            ws_session_sender: session_sender.clone(),
-        }),
-        gamemode_callback_rx,
-        game_intent_tx,
-        world_getters,
-    });
 
     Ok(())
 }
