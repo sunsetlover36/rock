@@ -26,7 +26,8 @@ fn create_world_table(lua: &Lua) -> eyre::Result<Table> {
 
     Ok(when_world)
 }
-pub fn register(lua: &Lua) -> eyre::Result<()> {
+
+pub fn construct(lua: &Lua) -> eyre::Result<Table> {
     let when_table = lua
         .create_table()
         .wrap_err("Failed to create `when` namespace")?;
@@ -34,8 +35,5 @@ pub fn register(lua: &Lua) -> eyre::Result<()> {
         .set("world", create_world_table(&lua)?)
         .wrap_err("Failed to register `world` table for `when` namespace")?;
 
-    lua.globals()
-        .set("when", when_table)
-        .wrap_err("Failed to register `when` namespace")?;
-    Ok(())
+    Ok(when_table)
 }

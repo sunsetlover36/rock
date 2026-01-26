@@ -1,8 +1,11 @@
 use std::time::{Duration, SystemTime};
 
 use dashmap::DashMap;
+use mlua::{IntoLua, Lua};
 use serde_json::Value;
 use sqlx::sqlite::SqlitePoolOptions;
+
+use crate::utils::json_to_lua;
 
 #[derive(Debug, Clone)]
 pub enum MetaValue {
@@ -11,10 +14,26 @@ pub enum MetaValue {
     Stale(Option<Value>),
     Fresh(Option<Value>),
 }
+impl IntoLua for MetaValue {
+    fn into_lua(self, lua: &Lua) -> mlua::Result<mlua::Value> {
+        match self {
+            MetaValue::Missing => Ok(mlua::Value::Nil),
+            MetaValue::Pending => Ok(mlua::Value::String(lua.create_string("pending")?)),
+            MetaValue::Stale(v) => Ok(match v {
+                Some(v) => json_to_lua(lua, v)?,
+                None => mlua::Value::Nil,
+            }),
+            MetaValue::Fresh(v) => Ok(match v {
+                Some(v) => json_to_lua(lua, v)?,
+                None => mlua::Value::Nil,
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct MetaEntry {
-    ttl: u64,
+    ttl: Duration,
     updated_at: SystemTime,
     is_scheduled: bool,
     value: Option<Value>,
@@ -27,8 +46,8 @@ pub enum MetaEnsureError {
 }
 
 pub struct MetaDbConfig {
-    mode_id: String,
-    default_ttl: u64,
+    pub mode_id: String,
+    pub default_ttl: Duration,
 }
 
 pub struct MetaDb {
@@ -55,7 +74,7 @@ impl MetaDb {
                     Ok(())
                 })
             })
-            .connect("sqlite://db.sqlite")
+            .connect("sqlite://db.sqlite?mode=rwc")
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
 
@@ -77,7 +96,7 @@ impl MetaDb {
 
         let is_stale = entry
             .updated_at
-            .checked_add(Duration::from_secs(entry.ttl))
+            .checked_add(entry.ttl)
             .map(|expires_at| SystemTime::now() > expires_at)
             .unwrap_or(true);
         if is_stale {

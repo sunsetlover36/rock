@@ -1,4 +1,4 @@
-use std::thread;
+use std::{thread, time::Duration};
 
 use axum::{
     Router,
@@ -21,6 +21,7 @@ use crate::{
         GameMode, GameModeCallback, GameModeParams,
         default_event_listener::GameModeDefaultEventListener,
     },
+    meta_db::{MetaDb, MetaDbConfig},
     player_pool::PlayerPool,
     router::CommitRouter,
     socket::{
@@ -37,6 +38,7 @@ mod meta_db;
 mod player_pool;
 mod router;
 mod socket;
+mod utils;
 mod world;
 
 #[derive(Clone)]
@@ -84,6 +86,13 @@ async fn main() -> Result<()> {
     // Commit Router -> listen for and distribute new world events as they're committed
     let commit_router = CommitRouter::new(session_sender.clone());
 
+    // Meta database
+    let meta_db = MetaDb::new(MetaDbConfig {
+        mode_id: config.gamemode_name.clone(),
+        default_ttl: Duration::from_secs(30),
+    })
+    .await?;
+
     // GameMode main process
     thread::spawn(move || {
         let gm = GameMode::new(GameModeParams {
@@ -93,6 +102,7 @@ async fn main() -> Result<()> {
             }),
             callback_rx: gamemode_callback_rx,
             commit_router,
+            meta_db,
         })
         .unwrap();
         gm.awaken().unwrap();

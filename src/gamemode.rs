@@ -9,6 +9,7 @@ use mlua::Lua;
 use shared::GameModeRequest;
 
 use crate::{
+    meta_db::MetaDb,
     router::CommitRouter,
     world::{WorldNatives, WorldState},
 };
@@ -24,6 +25,8 @@ use utils::LuaResultExt;
 
 mod api;
 
+const LUA_STDLIB: &str = include_str!("gamemode/lua/stdlib.lua");
+
 pub trait GameModeEventListener {
     fn emit(&self, event: GameModeEvent);
 }
@@ -33,6 +36,7 @@ pub struct GameModeParams {
     pub event_listener: Box<dyn GameModeEventListener>,
     pub callback_rx: flume::Receiver<GameModeCallback>,
     pub commit_router: CommitRouter,
+    pub meta_db: MetaDb,
 }
 
 pub struct GameMode {
@@ -42,21 +46,41 @@ pub struct GameMode {
     world_state: Rc<WorldState>,
     world_natives: WorldNatives,
     commit_router: CommitRouter,
+    meta_db: Rc<MetaDb>,
 }
 impl GameMode {
     pub fn new(params: GameModeParams) -> eyre::Result<Self> {
         let lua = Lua::new();
+
         let script_path = format!("gamemodes/{}.lua", params.name);
         let script = std::fs::read_to_string(script_path)?;
 
         let app_data = GameModeAppData {
             world_awakes: None,
             scenes: HashMap::new(),
+            memory_table_async: None,
         };
         lua.set_app_data(app_data);
 
-        api::when::register(&lua)?;
-        api::scene::register(&lua)?;
+        lua.load(LUA_STDLIB)
+            .exec()
+            .wrap_err("`stdlib` injection error")?;
+
+        let meta_db = Rc::new(params.meta_db);
+
+        let globals = lua.globals();
+        // Extendable tables (sync + async)
+        globals
+            .set("memory", api::memory::construct(&lua, meta_db.clone())?)
+            .wrap_err("Failed to register `memory` namespace")?;
+
+        // Global tables (sync)
+        globals
+            .set("when", api::when::construct(&lua)?)
+            .wrap_err("Failed to register `when` namespace")?;
+        globals
+            .set("scene", api::scene::construct(&lua)?)
+            .wrap_err("Failed to register `scene` namespace")?;
 
         lua.load(&script)
             .exec()
@@ -74,6 +98,7 @@ impl GameMode {
             world_state,
             world_natives,
             commit_router: params.commit_router,
+            meta_db,
         })
     }
 
