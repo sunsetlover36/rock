@@ -9,6 +9,9 @@ use mlua::Lua;
 use shared::GameModeRequest;
 
 use crate::{
+    gamemode::api::{
+        memory::MemoryPlugin, protocol::GameModePlugin, scene::ScenePlugin, when::WhenPlugin,
+    },
     meta_db::MetaDb,
     router::CommitRouter,
     world::{WorldNatives, WorldState},
@@ -16,6 +19,7 @@ use crate::{
 
 pub mod default_event_listener;
 pub mod protocol;
+pub mod scheduler;
 pub use protocol::*;
 
 mod app_data;
@@ -50,46 +54,42 @@ pub struct GameMode {
 }
 impl GameMode {
     pub fn new(params: GameModeParams) -> eyre::Result<Self> {
-        let lua = Lua::new();
+        let meta_db = Rc::new(params.meta_db);
+        let world_state = Rc::new(WorldState::new());
+        let world_natives = WorldNatives {
+            state: world_state.clone(),
+        };
 
+        let lua = Lua::new();
         let script_path = format!("gamemodes/{}.lua", params.name);
         let script = std::fs::read_to_string(script_path)?;
 
         let app_data = GameModeAppData {
             world_awakes: None,
             scenes: HashMap::new(),
-            memory_table_async: None,
+            scene_plugins: HashMap::new(),
+            yielder: None,
         };
         lua.set_app_data(app_data);
 
-        lua.load(LUA_STDLIB)
-            .exec()
-            .wrap_err("`stdlib` injection error")?;
+        // lua.load(LUA_STDLIB)
+        //     .exec()
+        //     .wrap_err("`stdlib` injection error")?;
 
-        let meta_db = Rc::new(params.meta_db);
+        // Plugins
+        let plugins: Vec<Box<dyn GameModePlugin>> = vec![
+            Box::new(WhenPlugin {}),
+            Box::new(MemoryPlugin {
+                meta_db: meta_db.clone(),
+            }),
+            Box::new(ScenePlugin {}),
+        ];
+        api::register(&lua, plugins)?;
 
-        let globals = lua.globals();
-        // Extendable tables (sync + async)
-        globals
-            .set("memory", api::memory::construct(&lua, meta_db.clone())?)
-            .wrap_err("Failed to register `memory` namespace")?;
-
-        // Global tables (sync)
-        globals
-            .set("when", api::when::construct(&lua)?)
-            .wrap_err("Failed to register `when` namespace")?;
-        globals
-            .set("scene", api::scene::construct(&lua)?)
-            .wrap_err("Failed to register `scene` namespace")?;
-
+        // Load script
         lua.load(&script)
             .exec()
             .wrap_err("Script execution error")?;
-
-        let world_state = Rc::new(WorldState::new());
-        let world_natives = WorldNatives {
-            state: world_state.clone(),
-        };
 
         Ok(Self {
             lua,

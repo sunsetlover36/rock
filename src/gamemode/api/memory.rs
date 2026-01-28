@@ -1,56 +1,73 @@
 use std::rc::Rc;
 
 use color_eyre::eyre;
-use mlua::{Lua, Table};
+use mlua::{Function, Lua, RegistryKey, Table};
 
 use crate::{
-    gamemode::{app_data::GameModeAppData, utils::LuaResultExt},
+    gamemode::{api::get_yielder, api::protocol::GameModePlugin, utils::LuaResultExt},
     meta_db::MetaDb,
 };
 
-pub fn construct(lua: &Lua, meta_db: Rc<MetaDb>) -> eyre::Result<Table> {
-    let memory_table = lua
-        .create_table()
-        .wrap_err("Failed to create `memory_table`")?;
+pub struct MemoryPlugin {
+    pub meta_db: Rc<MetaDb>,
+}
+impl GameModePlugin for MemoryPlugin {
+    fn name(&self) -> &str {
+        "memory"
+    }
 
-    let memory_peek_fn = lua
-        .create_function(move |_, key: String| Ok(meta_db.get(key.as_str())))
-        .wrap_err("Failed to create `memory.peek` method for `memory` namespace")?;
-    memory_table
-        .set("peek", memory_peek_fn)
-        .wrap_err("Failed to register `memory.peek` method for `memory` namespace")?;
+    fn create_global_api(&self, lua: &Lua) -> eyre::Result<Option<Table>> {
+        let memory_global_table = lua
+            .create_table()
+            .wrap_err("Failed to create `memory_table` for `memory` plugin")?;
 
-    let memory_table_async = lua
-        .create_table()
-        .wrap_err("Failed to create `memory_table_async`")?;
+        let meta_db = self.meta_db.clone();
+        let peek_fn = lua
+            .create_function(move |_, key: String| Ok(meta_db.get(key.as_str())))
+            .wrap_err("Failed to create `peek` method for `memory` plugin")?;
+        memory_global_table
+            .set("peek", peek_fn)
+            .wrap_err("Failed to register `peek` method for `memory` plugin")?;
 
-    let mt = lua
-        .create_table()
-        .wrap_err("Failed to create metatable `memory_table` for `memory_table_async` table")?;
-    mt.set("__index", memory_table.clone())
-        .wrap_err("Failed to set `__index` for metatable of `memory_table_async`")?;
-    memory_table_async
-        .set_metatable(Some(mt))
-        .wrap_err("Failed to register a metatable for `memory_table_async`")?;
+        Ok(Some(memory_global_table))
+    }
 
-    let memory_recall_fn = lua
-        .create_function(|_, key: String| {
-            // Call `yield` with OPCODE
-            println!("Memory recall: {}", key);
-            Ok(())
-        })
-        .wrap_err("Failed to create `memory.recall` method for `memory` namespace")?;
-    memory_table_async
-        .set("recall", memory_recall_fn)
-        .wrap_err("Failed to register `memory.recall` method for `memory` namespace")?;
+    fn create_scene_api(&self, lua: &Lua) -> eyre::Result<Option<RegistryKey>> {
+        let memory_scene_table = lua
+            .create_table()
+            .wrap_err("Failed to create `memory_scene_table` for `memory` plugin")?;
 
-    let rk = lua
-        .create_registry_value(memory_table_async)
-        .wrap_err("Failed to create `memory_table_async` registry value")?;
-    let mut app_data = lua
-        .app_data_mut::<GameModeAppData>()
-        .ok_or_else(|| eyre::eyre!("GameModeAppData is not initialized"))?;
-    app_data.memory_table_async = Some(rk);
+        let global_memory = lua
+            .globals()
+            .get::<Table>(self.name())
+            .wrap_err("Global table `memory` not found")?;
+        let mt = lua
+            .create_table()
+            .wrap_err("Failed to create the metatable for `memory_scene_table`")?;
+        mt.set("__index", global_memory)
+            .wrap_err("Failed to set `__index` for the metatable of `memory_scene_table`")?;
+        memory_scene_table
+            .set_metatable(Some(mt))
+            .wrap_err("Failed to register the metatable for `memory_scene_table`")?;
 
-    Ok(memory_table)
+        let yielder_fn = get_yielder(&lua)?;
+        let recall_fn = yielder_fn.call::<Function>("MEMORY_RECALL").wrap_err(
+            "Failed to create `recall` method for `memory_table_async` table using yielder",
+        )?;
+        memory_scene_table
+            .set("recall", recall_fn)
+            .wrap_err("Failed to register `recall` method for `memory_scene_table` table")?;
+
+        let fetch_fn = yielder_fn
+            .call::<Function>("MEMORY_FETCH")
+            .wrap_err("Failed to create `fetch` method for `memory_table_as wync` using yielder")?;
+        memory_scene_table
+            .set("fetch", fetch_fn)
+            .wrap_err("Failed to register `fetch` method for `memory_scene_table` table")?;
+
+        let rk = lua
+            .create_registry_value(memory_scene_table)
+            .wrap_err("Failed to create `memory_scene_table` registry value")?;
+        Ok(Some(rk))
+    }
 }
