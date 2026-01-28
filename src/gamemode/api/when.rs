@@ -2,7 +2,9 @@ use color_eyre::eyre;
 use mlua::{Lua, RegistryKey, Table};
 
 use crate::gamemode::{
-    api::protocol::GameModePlugin, app_data::GameModeAppData, utils::LuaResultExt,
+    api::protocol::{AsyncTask, GameModePlugin},
+    app_data::GameModeAppData,
+    utils::LuaResultExt,
 };
 
 pub struct WhenPlugin {}
@@ -49,5 +51,9 @@ impl GameModePlugin for WhenPlugin {
 
     fn create_scene_api(&self, _: &Lua) -> eyre::Result<Option<RegistryKey>> {
         return Ok(None);
+    }
+
+    fn handle_op(&self, _: &str, _: Table) -> eyre::Result<Option<AsyncTask>> {
+        Ok(None)
     }
 }

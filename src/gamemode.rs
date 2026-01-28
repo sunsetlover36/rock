@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -9,8 +10,11 @@ use mlua::Lua;
 use shared::GameModeRequest;
 
 use crate::{
-    gamemode::api::{
-        memory::MemoryPlugin, protocol::GameModePlugin, scene::ScenePlugin, when::WhenPlugin,
+    gamemode::{
+        api::{
+            memory::MemoryPlugin, protocol::GameModePlugin, scene::ScenePlugin, when::WhenPlugin,
+        },
+        scheduler::{Scheduler, SchedulerParams},
     },
     meta_db::MetaDb,
     router::CommitRouter,
@@ -50,11 +54,12 @@ pub struct GameMode {
     world_state: Rc<WorldState>,
     world_natives: WorldNatives,
     commit_router: CommitRouter,
-    meta_db: Rc<MetaDb>,
+    meta_db: Arc<MetaDb>,
+    scheduler: Scheduler,
 }
 impl GameMode {
     pub fn new(params: GameModeParams) -> eyre::Result<Self> {
-        let meta_db = Rc::new(params.meta_db);
+        let meta_db = Arc::new(params.meta_db);
         let world_state = Rc::new(WorldState::new());
         let world_natives = WorldNatives {
             state: world_state.clone(),
@@ -84,7 +89,12 @@ impl GameMode {
             }),
             Box::new(ScenePlugin {}),
         ];
-        api::register(&lua, plugins)?;
+        let registered_plugins_map = api::register(&lua, plugins)?;
+
+        let scheduler = Scheduler::new(SchedulerParams {
+            channel_buffer: 1024,
+            plugins: registered_plugins_map,
+        });
 
         // Load script
         lua.load(&script)
@@ -99,6 +109,7 @@ impl GameMode {
             world_natives,
             commit_router: params.commit_router,
             meta_db,
+            scheduler,
         })
     }
 

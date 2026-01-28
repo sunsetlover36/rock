@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime};
 
+use color_eyre::eyre;
 use dashmap::DashMap;
 use mlua::{IntoLua, Lua};
 use serde_json::Value;
@@ -43,6 +44,16 @@ pub struct MetaEntry {
 pub enum MetaEnsureError {
     Db(sqlx::Error),
     InvalidJson(serde_json::Error),
+}
+impl From<MetaEnsureError> for eyre::ErrReport {
+    fn from(err: MetaEnsureError) -> Self {
+        match err {
+            MetaEnsureError::Db(e) => eyre::eyre!("Unknown database error: {}", e),
+            MetaEnsureError::InvalidJson(e) => {
+                eyre::eyre!("Database error when trying to parse JSON: {}", e)
+            }
+        }
+    }
 }
 
 pub struct MetaDbConfig {

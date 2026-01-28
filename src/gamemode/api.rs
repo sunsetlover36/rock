@@ -11,11 +11,6 @@ use protocol::GameModePlugin;
 
 use crate::gamemode::{app_data::GameModeAppData, utils::LuaResultExt};
 
-pub struct YielderRawOutput {
-    opcode: String,
-    args: mlua::Table,
-}
-
 pub fn get_yielder(lua: &Lua) -> eyre::Result<mlua::Function> {
     let app_data = lua
         .app_data_ref::<GameModeAppData>()
@@ -48,7 +43,10 @@ fn create_yielder(lua: &Lua) -> eyre::Result<RegistryKey> {
 
     Ok(yielder_fn_rk)
 }
-pub fn register(lua: &Lua, plugins: Vec<Box<dyn GameModePlugin>>) -> eyre::Result<()> {
+pub fn register(
+    lua: &Lua,
+    plugins: Vec<Box<dyn GameModePlugin>>,
+) -> eyre::Result<HashMap<String, Box<dyn GameModePlugin>>> {
     let globals = lua.globals();
     {
         let mut app_data = lua
@@ -73,13 +71,18 @@ pub fn register(lua: &Lua, plugins: Vec<Box<dyn GameModePlugin>>) -> eyre::Resul
 
     // Global APIs
     // Registered after all Scene APIs, because at least the Global API of `scene` plugin depends on Scene APIs
-    for plugin in &plugins {
+    let mut registered_plugins = HashMap::new();
+    for plugin in plugins {
         if let Some(global_api_table) = plugin.create_global_api(&lua)? {
             let name = plugin.name().to_owned();
             let err_msg = format!("Failed to register global API for `{}` plugin", &name);
-            globals.set(name, global_api_table).wrap_err(&err_msg)?;
+            globals
+                .set(name.clone(), global_api_table)
+                .wrap_err(&err_msg)?;
+
+            registered_plugins.insert(name, plugin);
         }
     }
 
-    Ok(())
+    Ok(registered_plugins)
 }
