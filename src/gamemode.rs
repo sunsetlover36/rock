@@ -10,12 +10,7 @@ use mlua::Lua;
 use shared::GameModeRequest;
 
 use crate::{
-    gamemode::{
-        api::{
-            memory::MemoryPlugin, protocol::GameModePlugin, scene::ScenePlugin, when::WhenPlugin,
-        },
-        scheduler::{Scheduler, SchedulerParams},
-    },
+    gamemode::api::{ApiRegisterParams, scheduler::Scheduler},
     meta_db::MetaDb,
     router::CommitRouter,
     world::{WorldNatives, WorldState},
@@ -23,7 +18,6 @@ use crate::{
 
 pub mod default_event_listener;
 pub mod protocol;
-pub mod scheduler;
 pub use protocol::*;
 
 mod app_data;
@@ -32,8 +26,8 @@ use app_data::GameModeAppData;
 use utils::LuaResultExt;
 
 mod api;
-
-const LUA_STDLIB: &str = include_str!("gamemode/lua/stdlib.lua");
+pub use api::SchedulerMessage;
+pub use api::protocol::*;
 
 pub trait GameModeEventListener {
     fn emit(&self, event: GameModeEvent);
@@ -45,6 +39,9 @@ pub struct GameModeParams {
     pub callback_rx: flume::Receiver<GameModeCallback>,
     pub commit_router: CommitRouter,
     pub meta_db: MetaDb,
+    pub scheduler_rx: flume::Receiver<SchedulerMessage>,
+    pub scheduler_tx: flume::Sender<SchedulerMessage>,
+    pub async_executor_tx: flume::Sender<AsyncTaskWithId>,
 }
 
 pub struct GameMode {
@@ -77,24 +74,16 @@ impl GameMode {
         };
         lua.set_app_data(app_data);
 
-        // lua.load(LUA_STDLIB)
-        //     .exec()
-        //     .wrap_err("`stdlib` injection error")?;
-
         // Plugins
-        let plugins: Vec<Box<dyn GameModePlugin>> = vec![
-            Box::new(WhenPlugin {}),
-            Box::new(MemoryPlugin {
+        let scheduler = api::register(
+            &lua,
+            ApiRegisterParams {
+                scheduler_rx: params.scheduler_rx,
+                scheduler_tx: params.scheduler_tx,
+                async_executor_tx: params.async_executor_tx,
                 meta_db: meta_db.clone(),
-            }),
-            Box::new(ScenePlugin {}),
-        ];
-        let registered_plugins_map = api::register(&lua, plugins)?;
-
-        let scheduler = Scheduler::new(SchedulerParams {
-            channel_buffer: 1024,
-            plugins: registered_plugins_map,
-        });
+            },
+        )?;
 
         // Load script
         lua.load(&script)
@@ -113,7 +102,7 @@ impl GameMode {
         })
     }
 
-    pub fn awaken(&self) -> eyre::Result<Self> {
+    pub fn awaken(&mut self) -> eyre::Result<Self> {
         // Call when.world.awakes
         if let Some(when_world_awakes) =
             self.lua
@@ -133,6 +122,8 @@ impl GameMode {
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();
         loop {
+            self.scheduler.tick(&self.lua);
+
             while let Ok(cb) = self.callback_rx.try_recv() {
                 match cb {
                     GameModeCallback::Engine(cb) => {

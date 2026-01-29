@@ -7,7 +7,7 @@ use strum::{AsRefStr, Display, EnumString};
 use crate::{
     gamemode::{
         api::{
-            get_yielder,
+            Yielder,
             protocol::{AsyncTask, AsyncTaskResult, GameModePlugin},
         },
         utils::LuaResultExt,
@@ -65,7 +65,7 @@ impl GameModePlugin for MemoryPlugin {
             .set_metatable(Some(mt))
             .wrap_err("Failed to register the metatable for `memory_scene_table`")?;
 
-        let yielder_fn = get_yielder(&lua)?;
+        let yielder_fn = Yielder::get(&lua)?;
         let recall_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Recall);
         let recall_fn = yielder_fn.call::<Function>(recall_op).wrap_err(
             "Failed to create `recall` method for `memory_table_async` table using yielder",
@@ -96,7 +96,7 @@ impl GameModePlugin for MemoryPlugin {
         match op {
             MemoryOp::Recall => {
                 let key: String = args
-                    .get(2)
+                    .get(1)
                     .wrap_err("Missing argument for `memory.recall` method")?;
                 let future = Box::pin(async move {
                     let res = meta_db.ensure_key(&key).await?;
@@ -110,7 +110,7 @@ impl GameModePlugin for MemoryPlugin {
             }
             MemoryOp::Fetch => {
                 let key: String = args
-                    .get(2)
+                    .get(1)
                     .wrap_err("Missing argument for `memory.fetch` method")?;
                 let future = Box::pin(async move {
                     let res = meta_db.ensure_key(&key).await?;

@@ -2,7 +2,10 @@ use color_eyre::eyre;
 use mlua::{Function, Lua, RegistryKey, Table};
 
 use crate::gamemode::{
-    api::protocol::{AsyncTask, GameModePlugin},
+    api::{
+        SchedulerMessage,
+        protocol::{AsyncTask, GameModePlugin},
+    },
     app_data::GameModeAppData,
     utils::LuaResultExt,
 };
@@ -25,13 +28,16 @@ fn get_scene_env(lua: &Lua) -> mlua::Result<Table> {
 
     Ok(env)
 }
-fn to_coroutine(lua: &Lua, function: Function) -> mlua::Result<mlua::Thread> {
+fn to_coroutine(lua: &Lua, function: Function) -> mlua::Result<mlua::RegistryKey> {
     function.set_environment(get_scene_env(&lua)?)?;
-
-    Ok(lua.create_thread(function)?)
+    let thread = lua.create_thread(function)?;
+    let rk = lua.create_registry_value(thread)?;
+    Ok(rk)
 }
 
-pub struct ScenePlugin {}
+pub struct ScenePlugin {
+    pub scheduler_tx: flume::Sender<SchedulerMessage>,
+}
 impl GameModePlugin for ScenePlugin {
     fn name(&self) -> &str {
         "scene"
@@ -67,12 +73,13 @@ impl GameModePlugin for ScenePlugin {
             .set("create", scene_create_fn)
             .wrap_err("Failed to register `create` method for `scene` table")?;
 
+        let scheduler_tx = self.scheduler_tx.clone();
         let scene_run_fn = lua
-            .create_function(|lua, table: Table| {
+            .create_function(move |lua, table: Table| {
                 let action: Function = table
                     .get("action")
                     .map_err(|_| mlua::Error::runtime("scene.run: missing `action`"))?;
-                let coroutine = to_coroutine(lua, action)?;
+                scheduler_tx.send(SchedulerMessage::AddTask(to_coroutine(lua, action)?));
                 Ok(())
             })
             .wrap_err("Failed to create `run` method for `scene` table")?;
@@ -80,8 +87,9 @@ impl GameModePlugin for ScenePlugin {
             .set("run", scene_run_fn)
             .wrap_err("Failed to register `run` method for `scene` table")?;
 
+        let scheduler_tx = self.scheduler_tx.clone();
         let scene_play_fn = lua
-            .create_function(|lua, name: String| {
+            .create_function(move |lua, name: String| {
                 let app_data = lua
                     .app_data_ref::<GameModeAppData>()
                     .ok_or_else(|| mlua::Error::runtime("GameModeAppData is not initialized"))?;
@@ -90,7 +98,7 @@ impl GameModePlugin for ScenePlugin {
                 })?;
 
                 let action: Function = lua.registry_value(rk)?;
-                let coroutine = to_coroutine(lua, action)?;
+                scheduler_tx.send(SchedulerMessage::AddTask(to_coroutine(lua, action)?));
                 Ok(())
             })
             .wrap_err("Failed to create `play` method for `scene` table")?;

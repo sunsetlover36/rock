@@ -2,12 +2,19 @@ use color_eyre::eyre::{self};
 use futures_util::future::BoxFuture;
 use mlua::{Lua, RegistryKey, Table};
 
+use crate::gamemode::api::scheduler::TaskId;
+
+#[derive(Debug)]
 pub enum AsyncTaskResult {
     JsonValue(serde_json::Value),
     Text(String),
     Nil,
 }
 pub type AsyncTask = BoxFuture<'static, eyre::Result<AsyncTaskResult>>;
+pub struct AsyncTaskWithId {
+    pub id: TaskId,
+    pub future: AsyncTask,
+}
 
 pub trait GameModePlugin {
     fn name(&self) -> &str;

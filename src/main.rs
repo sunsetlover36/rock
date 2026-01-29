@@ -15,10 +15,11 @@ use tokio::{net::TcpListener, sync::mpsc};
 
 use crate::{
     actor::{ActorRuntime, ws_client_message::create_client_message_actor},
+    async_executor::{AsyncExecutorParams, create_async_executor},
     config::ServerConfig,
     envelope::ClientEnvelope,
     gamemode::{
-        GameMode, GameModeCallback, GameModeParams,
+        GameMode, GameModeCallback, GameModeParams, SchedulerMessage,
         default_event_listener::GameModeDefaultEventListener,
     },
     meta_db::{MetaDb, MetaDbConfig},
@@ -31,6 +32,7 @@ use crate::{
 };
 
 mod actor;
+mod async_executor;
 mod config;
 mod envelope;
 mod gamemode;
@@ -93,9 +95,15 @@ async fn main() -> Result<()> {
     })
     .await?;
 
+    let (scheduler_tx, scheduler_rx) = flume::bounded::<SchedulerMessage>(256);
+    let async_executor_tx = create_async_executor(AsyncExecutorParams {
+        channel_buffer: 256,
+        scheduler_tx: scheduler_tx.clone(),
+    });
+
     // GameMode main process
     thread::spawn(move || {
-        let gm = GameMode::new(GameModeParams {
+        let mut gm = GameMode::new(GameModeParams {
             name: config.gamemode_name,
             event_listener: Box::new(GameModeDefaultEventListener {
                 ws_session_sender: session_sender.clone(),
@@ -103,6 +111,9 @@ async fn main() -> Result<()> {
             callback_rx: gamemode_callback_rx,
             commit_router,
             meta_db,
+            scheduler_rx,
+            scheduler_tx,
+            async_executor_tx,
         })
         .unwrap();
         gm.awaken().unwrap();
