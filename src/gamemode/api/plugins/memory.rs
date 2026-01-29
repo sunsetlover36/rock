@@ -77,7 +77,7 @@ impl GameModePlugin for MemoryPlugin {
         let fetch_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Fetch);
         let fetch_fn = yielder_fn
             .call::<Function>(fetch_op)
-            .wrap_err("Failed to create `fetch` method for `memory_table_as wync` using yielder")?;
+            .wrap_err("Failed to create `fetch` method for `memory_table_async` using yielder")?;
         memory_scene_table
             .set("fetch", fetch_fn)
             .wrap_err("Failed to register `fetch` method for `memory_scene_table` table")?;
@@ -99,11 +99,16 @@ impl GameModePlugin for MemoryPlugin {
                     .get(1)
                     .wrap_err("Missing argument for `memory.recall` method")?;
                 let future = Box::pin(async move {
-                    let res = meta_db.ensure_key(&key).await?;
-                    match res {
-                        Some(v) => Ok(AsyncTaskResult::JsonValue(v)),
-                        None => Ok(AsyncTaskResult::Nil),
-                    }
+                    let res = if key.ends_with("/") {
+                        meta_db.get_or_ensure_prefix(&key).await?
+                    } else {
+                        meta_db.get_or_ensure_key(&key).await?
+                    };
+
+                    Ok(match res {
+                        Some(v) => AsyncTaskResult::JsonValue(v),
+                        None => AsyncTaskResult::Nil,
+                    })
                 });
 
                 Ok(Some(future))
@@ -113,11 +118,16 @@ impl GameModePlugin for MemoryPlugin {
                     .get(1)
                     .wrap_err("Missing argument for `memory.fetch` method")?;
                 let future = Box::pin(async move {
-                    let res = meta_db.ensure_key(&key).await?;
-                    match res {
-                        Some(v) => Ok(AsyncTaskResult::JsonValue(v)),
-                        None => Ok(AsyncTaskResult::Nil),
-                    }
+                    let res = if key.ends_with("/") {
+                        meta_db.ensure_prefix(&key).await?
+                    } else {
+                        meta_db.ensure_key(&key).await?
+                    };
+
+                    Ok(match res {
+                        Some(v) => AsyncTaskResult::JsonValue(v),
+                        None => AsyncTaskResult::Nil,
+                    })
                 });
 
                 Ok(Some(future))

@@ -3,23 +3,21 @@ use std::time::{Duration, SystemTime};
 use color_eyre::eyre;
 use dashmap::DashMap;
 use mlua::{IntoLua, Lua};
-use serde_json::Value;
-use sqlx::sqlite::SqlitePoolOptions;
+use serde_json::Value as JsonValue;
+use sqlx::{Row, sqlite::SqlitePoolOptions};
 
 use crate::utils::json_to_lua;
 
 #[derive(Debug, Clone)]
 pub enum MetaValue {
     Missing,
-    Pending,
-    Stale(Option<Value>),
-    Fresh(Option<Value>),
+    Stale(Option<JsonValue>),
+    Fresh(Option<JsonValue>),
 }
 impl IntoLua for MetaValue {
     fn into_lua(self, lua: &Lua) -> mlua::Result<mlua::Value> {
         match self {
             MetaValue::Missing => Ok(mlua::Value::Nil),
-            MetaValue::Pending => Ok(mlua::Value::String(lua.create_string("pending")?)),
             MetaValue::Stale(v) => Ok(match v {
                 Some(v) => json_to_lua(lua, v)?,
                 None => mlua::Value::Nil,
@@ -36,8 +34,7 @@ impl IntoLua for MetaValue {
 pub struct MetaEntry {
     ttl: Duration,
     updated_at: SystemTime,
-    is_scheduled: bool,
-    value: Option<Value>,
+    value: Option<JsonValue>,
 }
 
 #[derive(Debug)]
@@ -101,9 +98,6 @@ impl MetaDb {
             Some(v) => v.clone(),
             None => return MetaValue::Missing,
         };
-        if entry.is_scheduled {
-            return MetaValue::Pending;
-        }
 
         let is_stale = entry
             .updated_at
@@ -117,27 +111,26 @@ impl MetaDb {
         MetaValue::Fresh(entry.value)
     }
 
-    fn update_entry(&self, key: &str, value: Option<Value>) {
+    fn update_entry(&self, key: &str, value: Option<JsonValue>) {
         let now = SystemTime::now();
 
         match self.cache.entry(key.to_owned()) {
             dashmap::Entry::Occupied(mut e) => {
                 let entry = e.get_mut();
                 entry.updated_at = now;
-                entry.is_scheduled = false;
                 entry.value = value;
             }
             dashmap::Entry::Vacant(e) => {
                 e.insert(MetaEntry {
                     ttl: self.config.default_ttl,
                     updated_at: now,
-                    is_scheduled: false,
                     value,
                 });
             }
         }
     }
-    pub async fn ensure_key(&self, key: &str) -> Result<Option<Value>, MetaEnsureError> {
+
+    pub async fn ensure_key(&self, key: &str) -> Result<Option<JsonValue>, MetaEnsureError> {
         let raw_str: Option<String> =
             sqlx::query_scalar("SELECT value FROM meta_kv WHERE mode_id = ? AND key = ?")
                 .bind(self.config.mode_id.clone())
@@ -148,12 +141,11 @@ impl MetaDb {
 
         match raw_str {
             Some(raw_str) => {
-                let json: Value =
-                    serde_json::from_str(&raw_str).map_err(MetaEnsureError::InvalidJson)?;
-                let json = Some(json);
+                let json_value: Option<JsonValue> =
+                    Some(serde_json::from_str(&raw_str).map_err(MetaEnsureError::InvalidJson)?);
 
-                self.update_entry(key, json.clone());
-                Ok(json.clone())
+                self.update_entry(key, json_value.clone());
+                Ok(json_value.clone())
             }
             None => {
                 self.update_entry(key, None);
@@ -162,14 +154,50 @@ impl MetaDb {
         }
     }
 
-    pub async fn ensure_prefix(
+    pub async fn ensure_prefix(&self, prefix: &str) -> Result<Option<JsonValue>, MetaEnsureError> {
+        let rows =
+            sqlx::query("SELECT key, value FROM meta_kv WHERE mode_id = ? AND key LIKE ? || '%'")
+                .bind(self.config.mode_id.clone())
+                .bind(prefix)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(MetaEnsureError::Db)?;
+
+        let mut map = serde_json::Map::new();
+        for row in rows {
+            let key: String = row.get("key");
+            let value_str: String = row.get("value");
+
+            if let Ok(json_value) = serde_json::from_str(&value_str) {
+                if let Some(stripped_prefix) = key.strip_prefix(prefix) {
+                    map.insert(stripped_prefix.to_string(), json_value);
+                }
+            }
+        }
+
+        if map.is_empty() {
+            self.update_entry(prefix, None);
+            Ok(None)
+        } else {
+            let json_map = JsonValue::Object(map);
+            self.update_entry(prefix, Some(json_map.clone()));
+            Ok(Some(json_map))
+        }
+    }
+
+    pub async fn get_or_ensure_key(&self, key: &str) -> Result<Option<JsonValue>, MetaEnsureError> {
+        match self.get(key) {
+            MetaValue::Missing | MetaValue::Stale(_) => self.ensure_key(key).await,
+            MetaValue::Fresh(v) => Ok(v),
+        }
+    }
+    pub async fn get_or_ensure_prefix(
         &self,
-        key: &str,
-    ) -> Result<Option<Vec<(String, Value)>>, MetaEnsureError> {
-        // Get COUNT of keys under the prefix and iterate? Get all keys under the prefix?
-        // Fetch the first level vs fetch all children prefixes too (shallow prefix)
-        // TODO: Customizable delimiters (meta:player:1:items vs. meta/player/1/items)
-        // Default delimiter right now: `/`
-        unimplemented!();
+        prefix: &str,
+    ) -> Result<Option<JsonValue>, MetaEnsureError> {
+        match self.get(prefix) {
+            MetaValue::Missing | MetaValue::Stale(_) => self.ensure_prefix(prefix).await,
+            MetaValue::Fresh(v) => Ok(v),
+        }
     }
 }
