@@ -6,7 +6,6 @@ use slotmap::{SlotMap, new_key_type};
 
 use crate::{
     gamemode::{
-        AsyncTaskWithId,
         api::protocol::{AsyncTaskResult, GameModePlugin},
         utils::LuaResultExt,
     },
@@ -35,14 +34,14 @@ pub struct SchedulerParams {
     pub plugins: HashMap<String, Box<dyn GameModePlugin>>,
     pub rx: flume::Receiver<SchedulerMessage>,
     pub tx: flume::Sender<SchedulerMessage>,
-    pub async_executor_tx: flume::Sender<AsyncTaskWithId>,
+    pub tokio_handle: tokio::runtime::Handle,
 }
 
 pub struct Scheduler {
     threads: SlotMap<TaskId, mlua::RegistryKey>,
     rx: flume::Receiver<SchedulerMessage>,
     tx: flume::Sender<SchedulerMessage>,
-    async_executor_tx: flume::Sender<AsyncTaskWithId>,
+    tokio_handle: tokio::runtime::Handle,
     plugins: HashMap<String, Box<dyn GameModePlugin>>,
 }
 impl Scheduler {
@@ -51,7 +50,7 @@ impl Scheduler {
             threads: SlotMap::<TaskId, mlua::RegistryKey>::with_key(),
             rx: params.rx,
             tx: params.tx,
-            async_executor_tx: params.async_executor_tx,
+            tokio_handle: params.tokio_handle,
             plugins: params.plugins,
         }
     }
@@ -128,9 +127,19 @@ impl Scheduler {
                 let Some(task) = plugin.handle_op(suffix, args)? else {
                     return Ok(());
                 };
-                self.async_executor_tx.send(AsyncTaskWithId {
-                    id: task_id,
-                    future: task,
+                let tx = self.tx.clone();
+                self.tokio_handle.spawn(async move {
+                    match task.await {
+                        Ok(result) => {
+                            let _ = tx.send(SchedulerMessage::Wake { task_id, result });
+                        }
+                        Err(err) => {
+                            let _ = tx.send(SchedulerMessage::Error {
+                                task_id,
+                                err: err.to_string(),
+                            });
+                        }
+                    }
                 });
             }
             None => return Err(eyre::eyre!("handle_yield: plugin {} not found", prefix)),

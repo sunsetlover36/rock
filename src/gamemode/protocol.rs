@@ -10,6 +10,9 @@ pub enum GameModeEvent {
     Log { text: String },
     KickPlayer { pk: PlayerKey },
 }
+pub trait GameModeEventListener: Send {
+    fn emit(&self, event: GameModeEvent);
+}
 
 pub enum EngineCallback {
     OnGameModeInit,

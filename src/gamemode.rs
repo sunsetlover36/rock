@@ -24,14 +24,7 @@ mod app_data;
 mod utils;
 use app_data::GameModeAppData;
 use utils::LuaResultExt;
-
 mod api;
-pub use api::SchedulerMessage;
-pub use api::protocol::*;
-
-pub trait GameModeEventListener {
-    fn emit(&self, event: GameModeEvent);
-}
 
 pub struct GameModeParams {
     pub name: String,
@@ -39,9 +32,7 @@ pub struct GameModeParams {
     pub callback_rx: flume::Receiver<GameModeCallback>,
     pub commit_router: CommitRouter,
     pub meta_db: MetaDb,
-    pub scheduler_rx: flume::Receiver<SchedulerMessage>,
-    pub scheduler_tx: flume::Sender<SchedulerMessage>,
-    pub async_executor_tx: flume::Sender<AsyncTaskWithId>,
+    pub tokio_handle: tokio::runtime::Handle,
 }
 
 pub struct GameMode {
@@ -78,9 +69,8 @@ impl GameMode {
         let scheduler = api::register(
             &lua,
             ApiRegisterParams {
-                scheduler_rx: params.scheduler_rx,
-                scheduler_tx: params.scheduler_tx,
-                async_executor_tx: params.async_executor_tx,
+                tokio_handle: params.tokio_handle,
+                scheduler_channel_buffer: 256,
                 meta_db: meta_db.clone(),
             },
         )?;

@@ -12,7 +12,6 @@ use crate::{
 pub struct GameModeDefaultEventListener {
     pub ws_session_sender: SessionSender,
 }
-
 impl GameModeEventListener for GameModeDefaultEventListener {
     fn emit(&self, event: GameModeEvent) {
         match event {

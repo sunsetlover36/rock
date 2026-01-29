@@ -12,7 +12,7 @@ pub mod protocol;
 use protocol::GameModePlugin;
 
 use crate::{
-    gamemode::{AsyncTaskWithId, app_data::GameModeAppData, utils::LuaResultExt},
+    gamemode::{app_data::GameModeAppData, utils::LuaResultExt},
     meta_db::MetaDb,
 };
 
@@ -53,19 +53,21 @@ impl Yielder {
 }
 
 pub struct ApiRegisterParams {
-    pub scheduler_rx: flume::Receiver<SchedulerMessage>,
-    pub scheduler_tx: flume::Sender<SchedulerMessage>,
-    pub async_executor_tx: flume::Sender<AsyncTaskWithId>,
+    pub tokio_handle: tokio::runtime::Handle,
+    pub scheduler_channel_buffer: usize,
     pub meta_db: Arc<MetaDb>,
 }
 pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler> {
+    let (scheduler_tx, scheduler_rx) =
+        flume::bounded::<SchedulerMessage>(params.scheduler_channel_buffer);
+
     let plugins: Vec<Box<dyn GameModePlugin>> = vec![
         Box::new(WhenPlugin {}),
         Box::new(MemoryPlugin {
             meta_db: params.meta_db,
         }),
         Box::new(ScenePlugin {
-            scheduler_tx: params.scheduler_tx.clone(),
+            scheduler_tx: scheduler_tx.clone(),
         }),
     ];
     let mut registered_plugins = HashMap::new();
@@ -105,8 +107,8 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
 
     Ok(Scheduler::new(SchedulerParams {
         plugins: registered_plugins,
-        rx: params.scheduler_rx,
-        tx: params.scheduler_tx,
-        async_executor_tx: params.async_executor_tx,
+        rx: scheduler_rx,
+        tx: scheduler_tx,
+        tokio_handle: params.tokio_handle,
     }))
 }
