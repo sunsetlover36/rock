@@ -133,7 +133,6 @@ impl GameMode {
             // Lua sends a game intent then can't get the result in the same tick
 
             // world.step
-            // Also, subscribe Lua to CommitRouter
 
             let now = Instant::now();
             next_tick += tick_interval;
