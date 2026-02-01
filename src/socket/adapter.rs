@@ -8,7 +8,10 @@ use tokio::sync::{broadcast::error::RecvError, mpsc};
 
 use crate::{
     envelope::ClientEnvelope,
-    socket::{protocol::SocketCommand, session_registry::Session},
+    socket::{
+        protocol::SocketCommand,
+        session_registry::{Session, protocol::SessionCommand},
+    },
 };
 
 pub struct SocketAdapter {
@@ -37,31 +40,31 @@ impl SocketAdapter {
             tokio::select! {
                 biased;
 
-                res = self.session.control_rx.recv() => {
-                    if let Some(command) = res {
-                        match command {
-                            SocketCommand::Kick => {
-                                let p = OutgoingPacket::System(SystemPacket::PlayerKicked);
-                                let json = serde_json::to_string(&p).unwrap();
+                Some(command) = self.session.session_rx.recv() => {
+                    match command {
+                        SessionCommand::Data(packet) => {
+                            // TODO: Need an util for JSON convertation and send
+                            let json = serde_json::to_string(&packet).unwrap();
+                            let _ = self.ws_tx.send(Message::Text(json.into())).await;
+                        },
+                        SessionCommand::Control(command) => {
+                            match command {
+                                SocketCommand::Kick => {
+                                    let p = OutgoingPacket::System(SystemPacket::PlayerKicked);
+                                    let json = serde_json::to_string(&p).unwrap();
 
-                                // best-effort UX
-                                let _ = self.ws_tx.send(Message::Text(json.into())).await;
+                                    // best-effort UX
+                                    let _ = self.ws_tx.send(Message::Text(json.into())).await;
 
-                                // force disconnect
-                                let _ = self.ws_tx.send(Message::Close(None)).await;
-                                break;
+                                    // force disconnect
+                                    let _ = self.ws_tx.send(Message::Close(None)).await;
+                                    break;
+                                }
                             }
                         }
                     }
                 }
 
-                // TODO: Need an util for JSON convertation and send
-                res = self.session.unicast_rx.recv() => {
-                    if let Some(p) = res {
-                        let json = serde_json::to_string(&p).unwrap();
-                        let _ = self.ws_tx.send(Message::Text(json.into())).await;
-                    }
-                }
                 res = self.session.broadcast_rx.recv() => {
                     match res {
                         Ok(p) => {

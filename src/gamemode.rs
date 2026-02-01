@@ -164,10 +164,6 @@ impl GameMode {
     // Trusted input (called by the engine)
     fn on_engine_callback(&self, cb: EngineCallback) {
         match cb {
-            EngineCallback::OnGameModeInit => {
-                println!("[gamemode] gamemode init");
-                // Load the world, initialize entities
-            }
             EngineCallback::OnPlayerConnect { pk } => {
                 println!("[gamemode] player connected: {:?}", pk);
                 // Spawn player, include the player into the world

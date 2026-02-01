@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     ActorRuntime::new().with(client_messenger_actor).start();
 
     // WS Session registry
-    let session_registry = SessionRegistry::new(1024, 64, 8, PlayerPool::new());
+    let session_registry = SessionRegistry::new(1024, 64, PlayerPool::new());
     let session_registrar = session_registry.registrar();
     let session_sender = session_registry.sender();
 

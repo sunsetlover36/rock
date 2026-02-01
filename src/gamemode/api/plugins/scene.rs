@@ -79,7 +79,11 @@ impl GameModePlugin for ScenePlugin {
                 let action: Function = table
                     .get("action")
                     .map_err(|_| mlua::Error::runtime("scene.run: missing `action`"))?;
-                scheduler_tx.send(SchedulerMessage::AddTask(to_coroutine(lua, action)?));
+                scheduler_tx
+                    .send(SchedulerMessage::AddTask(to_coroutine(lua, action)?))
+                    .map_err(|e| {
+                        mlua::Error::runtime(format!("scene.run: Failed to add task ({})", e))
+                    })?;
                 Ok(())
             })
             .wrap_err("Failed to create `run` method for `scene` table")?;
@@ -98,7 +102,11 @@ impl GameModePlugin for ScenePlugin {
                 })?;
 
                 let action: Function = lua.registry_value(rk)?;
-                scheduler_tx.send(SchedulerMessage::AddTask(to_coroutine(lua, action)?));
+                scheduler_tx
+                    .send(SchedulerMessage::AddTask(to_coroutine(lua, action)?))
+                    .map_err(|e| {
+                        mlua::Error::runtime(format!("scene.run: Failed to add task ({})", e))
+                    })?;
                 Ok(())
             })
             .wrap_err("Failed to create `play` method for `scene` table")?;

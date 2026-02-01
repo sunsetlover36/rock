@@ -47,7 +47,6 @@ impl PlayerPool {
             }
         }
     }
-
     pub fn release(&mut self, pk: &PlayerKey) {
         let Some(s) = self.slots.get_mut(pk.slot_idx as usize) else {
             return;

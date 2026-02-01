@@ -15,7 +15,6 @@ pub trait GameModeEventListener: Send {
 }
 
 pub enum EngineCallback {
-    OnGameModeInit,
     OnPlayerConnect { pk: PlayerKey },
 }
 
