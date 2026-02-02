@@ -14,7 +14,7 @@ use shared::IncomingRequest;
 use tokio::{net::TcpListener, runtime::Handle, sync::mpsc};
 
 use crate::{
-    actor::{ActorRuntime, ws_client_message::create_client_message_actor},
+    actor::{ActorRuntime, client_message::create_client_message_actor},
     config::ServerConfig,
     envelope::ClientEnvelope,
     gamemode::{

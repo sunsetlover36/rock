@@ -6,11 +6,17 @@ use tokio::sync::mpsc;
 use crate::{
     envelope::EnvelopeRecipient,
     socket::{
-        protocol::{ServerMessage, SocketControl},
+        protocol::{ControlMessage, ServerMessage},
         session_registry::protocol::{SessionCommand, SessionRegistryState, SessionSendError},
     },
 };
 
+// Cases:
+// -> 1. message.delivery == Reliable and message.recipient == All -> Prohibited (can't guarantee it right now)
+// -> 2. message.delivery == Ephemeral and message.recipient == All -> Sync [broadcast]
+// -> 3. message.delivery == Reliable and message.recipient != All -> Async [unicast: send().await]
+// -> 4. message.delivery == Ephemeral and message.recipient != All -> Sync [unicast: try_send()]
+// -> 5. message.delivery == Reliable and message.recipient == Except -> Prohibited (can't guarantee it right now)
 #[derive(Clone)]
 pub struct SessionSender {
     pub(super) inner: Arc<SessionRegistryState>,
@@ -21,16 +27,6 @@ impl SessionSender {
         self.inner.sessions.get(pk).map(|e| e.value().clone())
     }
 
-    // Cases:
-    // -> 1. message.delivery == Reliable and message.recipient == All -> Prohibited (can't guarantee it right now)
-    // -> 2. message.delivery == Ephemeral and message.recipient == All -> Sync [broadcast]
-    // -> 3. message.delivery == Reliable and message.recipient != All -> Async [unicast: send().await]
-    // -> 4. message.delivery == Ephemeral and message.recipient != All -> Sync [unicast: try_send()]
-    // -> 5. message.delivery == Reliable and message.recipient == Except -> Prohibited (can't guarantee it right now)
-    //
-    // TODO: Add a timeout for slow consumers with a forced disconnection opportunity
-    // -> To prevent blocking a thread
-    // -> Required for a reliable message delivery to multiple recipients
     pub fn send_ephemeral(&self, message: ServerMessage) {
         match message.recipient {
             EnvelopeRecipient::All => {
@@ -62,23 +58,26 @@ impl SessionSender {
         }
     }
 
+    // TODO: Add a timeout for slow consumers with a forced disconnection opportunity
+    // -> To prevent blocking a thread
+    // -> Required for a reliable message delivery to multiple recipients
     pub async fn send_reliable(
         &self,
         message: ServerMessage,
     ) -> Result<(), SessionSendError<SessionCommand>> {
+        let payload = SessionCommand::Data(message.payload);
         match message.recipient {
             EnvelopeRecipient::All => return Err(SessionSendError::Prohibited),
             EnvelopeRecipient::Single(pk) => {
                 let tx = self
                     .get_endpoint(&pk)
                     .ok_or(SessionSendError::NoSuchSession)?;
-                tx.send(SessionCommand::Data(message.payload)).await?;
+                tx.send(payload).await?;
             }
             EnvelopeRecipient::List(pks) => {
                 for pk in pks {
                     if let Some(tx) = self.get_endpoint(&pk) {
-                        tx.send(SessionCommand::Data(message.payload.clone()))
-                            .await?;
+                        tx.send(payload.clone()).await?;
                     }
                 }
             }
@@ -88,9 +87,9 @@ impl SessionSender {
         Ok(())
     }
 
-    pub fn send_control_command(
+    pub fn send_control(
         &self,
-        command: SocketControl,
+        command: ControlMessage,
     ) -> Result<(), SessionSendError<SessionCommand>> {
         match command.recipient {
             EnvelopeRecipient::Single(pk) => {

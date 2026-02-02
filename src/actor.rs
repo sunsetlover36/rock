@@ -1,5 +1,5 @@
+pub mod client_message;
 pub mod indexer;
-pub mod ws_client_message;
 
 #[async_trait::async_trait]
 pub trait Actor: Send + 'static {

@@ -25,7 +25,7 @@ impl GameModeEventListener for GameModeDefaultEventListener {
                 });
             }
             GameModeEvent::KickPlayer { pk } => {
-                let _ = self.ws_session_sender.send_control_command(ServerEnvelope {
+                let _ = self.ws_session_sender.send_control(ServerEnvelope {
                     recipient: EnvelopeRecipient::Single(pk),
                     payload: SocketCommand::Kick,
                 });

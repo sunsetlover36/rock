@@ -8,4 +8,4 @@ pub enum SocketCommand {
 }
 
 pub type ServerMessage = ServerEnvelope<OutgoingPacket>;
-pub type SocketControl = ServerEnvelope<SocketCommand>;
+pub type ControlMessage = ServerEnvelope<SocketCommand>;
