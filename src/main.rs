@@ -26,7 +26,7 @@ use crate::{
     router::CommitRouter,
     socket::{
         adapter::SocketAdapter,
-        session_registry::{SessionRegistrar, SessionRegistry},
+        session_registry::{SessionRegistrar, SessionRegistry, SessionRegistryParams},
     },
 };
 
@@ -69,6 +69,8 @@ async fn main() -> Result<()> {
         .ok_or_else(|| eyre::eyre!("Config path not set"))?;
     let config = ServerConfig::new(&config_path)?;
 
+    let tokio_handle = Handle::current();
+
     let (gamemode_callback_tx, gamemode_callback_rx) = flume::bounded::<GameModeCallback>(1024);
     let (client_messenger_tx, client_messenger_actor) =
         create_client_message_actor(1024, gamemode_callback_tx.clone());
@@ -79,7 +81,12 @@ async fn main() -> Result<()> {
     ActorRuntime::new().with(client_messenger_actor).start();
 
     // WS Session registry
-    let session_registry = SessionRegistry::new(1024, 64, PlayerPool::new());
+    let session_registry = SessionRegistry::new(SessionRegistryParams {
+        broadcast_hub_buffer: 1024,
+        session_channel_buffer: 256,
+        player_pool: PlayerPool::new(),
+        tokio_handle: tokio_handle.clone(),
+    });
     let session_registrar = session_registry.registrar();
     let session_sender = session_registry.sender();
 
@@ -94,7 +101,6 @@ async fn main() -> Result<()> {
     .await?;
 
     // GameMode main process
-    let tokio_handle = Handle::current();
     let gm_params = GameModeParams {
         name: config.gamemode_name,
         event_listener: Box::new(GameModeDefaultEventListener {

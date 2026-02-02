@@ -14,25 +14,30 @@ pub use registrar::{Session, SessionRegistrar};
 pub mod sender;
 pub use sender::SessionSender;
 
+pub struct SessionRegistryParams {
+    pub broadcast_hub_buffer: usize,
+    pub session_channel_buffer: usize,
+    pub player_pool: PlayerPool,
+    pub tokio_handle: tokio::runtime::Handle,
+}
+
 pub struct SessionRegistry {
     inner: Arc<SessionRegistryState>,
+    tokio_handle: tokio::runtime::Handle,
 }
 impl SessionRegistry {
-    pub fn new(
-        broadcast_hub_buffer: usize,
-        session_channel_buffer: usize,
-        player_pool: PlayerPool,
-    ) -> Self {
+    pub fn new(params: SessionRegistryParams) -> Self {
         let sessions = DashMap::new();
-        let (broadcast_hub, _) = broadcast::channel::<OutgoingPacket>(broadcast_hub_buffer);
+        let (broadcast_hub, _) = broadcast::channel::<OutgoingPacket>(params.broadcast_hub_buffer);
 
         Self {
             inner: Arc::new(SessionRegistryState {
-                player_pool: parking_lot::Mutex::new(player_pool),
+                player_pool: parking_lot::Mutex::new(params.player_pool),
                 broadcast_hub,
-                session_channel_buffer,
+                session_channel_buffer: params.session_channel_buffer,
                 sessions,
             }),
+            tokio_handle: params.tokio_handle,
         }
     }
 
@@ -44,6 +49,7 @@ impl SessionRegistry {
     pub fn sender(&self) -> SessionSender {
         SessionSender {
             inner: self.inner.clone(),
+            tokio_handle: self.tokio_handle.clone(),
         }
     }
 }

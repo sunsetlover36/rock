@@ -14,6 +14,7 @@ use crate::{
 #[derive(Clone)]
 pub struct SessionSender {
     pub(super) inner: Arc<SessionRegistryState>,
+    pub(super) tokio_handle: tokio::runtime::Handle,
 }
 impl SessionSender {
     fn get_endpoint(&self, pk: &PlayerKey) -> Option<mpsc::Sender<SessionCommand>> {
@@ -96,9 +97,22 @@ impl SessionSender {
                 let tx = self
                     .get_endpoint(&pk)
                     .ok_or(SessionSendError::NoSuchSession)?;
+                let payload = SessionCommand::Control(command.payload);
 
-                tx.try_send(SessionCommand::Control(command.payload))?;
-                Ok(())
+                match tx.try_send(payload.clone()) {
+                    Ok(_) => return Ok(()),
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        return Err(SessionSendError::ChannelClosed(payload));
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        let tx = tx.clone();
+                        self.tokio_handle.spawn(async move {
+                            let _ = tx.send(payload).await;
+                        });
+
+                        Ok(())
+                    }
+                }
             }
             _ => Err(SessionSendError::Prohibited),
         }

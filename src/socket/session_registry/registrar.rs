@@ -27,7 +27,7 @@ impl SessionRegistrar {
             let mut pool = self.inner.player_pool.lock();
             pool.claim()
         };
-        let (tx, rx) = mpsc::channel::<SessionCommand>(self.inner.unicast_channel_buffer);
+        let (tx, rx) = mpsc::channel::<SessionCommand>(self.inner.session_channel_buffer);
 
         self.inner.sessions.insert(pk, tx);
         Session {
