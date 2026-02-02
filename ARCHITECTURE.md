@@ -133,7 +133,7 @@ pub struct CommitRouter {
 `emit(commit: WorldCommit)` is synchronous and used by the gamemode to publish world commits as they happen in game.
 
 ### meta db
-another powerful concept in the engine. SA-MP server devs were free to pick their favorite database. not that like i'm trying to create a boundary for the devs, but rather i want to give a useful and optimized tool to store the in-game data with no pain.
+another powerful concept in the engine. SA-MP server devs were free to pick their favorite database. not that like i'm trying to create a boundary for devs, but rather i want to give a useful and optimized tool to store the in-game data with no pain.
 
 meta db acts as a caching mechanism for hot data and a storage for cold data (long-term data). cache using `DashMap<String, MetaEntry>` to store recently pulled data. `DashMap` handles locks/unlocks under the hood, and doing its task really good, especially with shards of data.
 
@@ -284,7 +284,7 @@ the beauty is that everything is synchronous at the surface. async methods retur
 
 async methods in the scene API don't perform any kind of asynchronous code nor the engine uses async directly to handle the request.
 
-once the async method is called inside the coroutine -> it's result is being yielded as `coroutine.yield(OPCODE)`. `scene.play` and `scene.run` methods create a coroutine from the closure. after that, it sends a channel message to the scheduler (`SchedulerMessage::AddTask`): add task (new coroutine arrived) to a queue. the thing is that i'm not passing an actual coroutine or something. i'm passing its registry key so the scheduler can get this coroutine when it needs, because scheduler also has ``&lua` borrowed reference.
+once the async method is called inside the coroutine -> it's result is being yielded as `coroutine.yield(OPCODE)`. `scene.play` and `scene.run` methods create a coroutine from the closure. after that, it sends a channel message to the scheduler (`SchedulerMessage::AddTask`): add task (new coroutine arrived) to a queue. the thing is that i'm not passing an actual coroutine or something. i'm passing its registry key so the scheduler can get this coroutine when it needs, because scheduler also has `&lua` borrowed reference.
 scheduler's task is to keep track of incoming coroutines, advance and wake up them when needed (keep yielding until an actual return) and then finish its execution.
 
 it has a `tick` method that pings a channel for new messages (add task, cancel task, etc.). `scheduler.tick` method is being called in the main game loop (each 16ms as of now). so it keeps running along with the game loop.
