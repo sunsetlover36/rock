@@ -22,3 +22,4 @@ flume = "0.12.0"
 mlua = { version = "0.11.5", features = ["lua54", "vendored", "async"] }
 slotmap = "1.1.1"
 strum = { version = "0.27", features = ["derive"] }
+hecs = "0.11.0"
