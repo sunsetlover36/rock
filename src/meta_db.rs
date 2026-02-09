@@ -82,7 +82,7 @@ impl MetaDb {
                     Ok(())
                 })
             })
-            .connect("sqlite://db.sqlite?mode=rwc")
+            .connect("sqlite://./db/db.sqlite?mode=rwc")
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
 
