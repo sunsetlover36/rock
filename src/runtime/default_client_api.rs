@@ -2,20 +2,20 @@ use shared::{ChatPacket, OutgoingPacket};
 
 use crate::{
     envelope::{EnvelopeRecipient, ServerEnvelope},
-    gamemode::{GameModeEventListener, protocol::GameModeEvent},
+    runtime::{GameModeClientApi, protocol::GameModeClientCommand},
     socket::{
         protocol::{ServerMessage, SocketCommand},
         session_registry::SessionSender,
     },
 };
 
-pub struct GameModeDefaultEventListener {
+pub struct GameModeDefaultClientApi {
     pub ws_session_sender: SessionSender,
 }
-impl GameModeEventListener for GameModeDefaultEventListener {
-    fn emit(&self, event: GameModeEvent) {
+impl GameModeClientApi for GameModeDefaultClientApi {
+    fn send(&self, event: GameModeClientCommand) {
         match event {
-            GameModeEvent::SendClientMessage { pk, text } => {
+            GameModeClientCommand::SendMessage { pk, text } => {
                 let _ = self.ws_session_sender.send_ephemeral(ServerMessage {
                     recipient: EnvelopeRecipient::Single(pk),
                     payload: OutgoingPacket::Chat(ChatPacket::GlobalMessage {
@@ -24,14 +24,14 @@ impl GameModeEventListener for GameModeDefaultEventListener {
                     }),
                 });
             }
-            GameModeEvent::KickPlayer { pk } => {
+            GameModeClientCommand::KickPlayer { pk } => {
                 let _ = self.ws_session_sender.send_control(ServerEnvelope {
                     recipient: EnvelopeRecipient::Single(pk),
                     payload: SocketCommand::Kick,
                 });
             }
-            GameModeEvent::Broadcast { text } => {}
-            GameModeEvent::Log { text } => {}
+            GameModeClientCommand::Broadcast { text } => {}
+            GameModeClientCommand::Log { text } => {}
         }
     }
 }

@@ -1,7 +1,7 @@
 use color_eyre::eyre;
 use mlua::{Function, Lua, RegistryKey, Table};
 
-use crate::gamemode::{
+use crate::runtime::{
     api::{
         SchedulerMessage,
         protocol::{AsyncTask, GameModePlugin},

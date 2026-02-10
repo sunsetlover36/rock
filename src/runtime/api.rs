@@ -7,13 +7,13 @@ pub mod scheduler;
 pub use scheduler::SchedulerMessage;
 use scheduler::{Scheduler, SchedulerParams};
 mod plugins;
-use plugins::{memory::MemoryPlugin, scene::ScenePlugin, when::WhenPlugin};
+use plugins::{memory::MemoryPlugin, on::OnPlugin, scene::ScenePlugin};
 pub mod protocol;
 use protocol::GameModePlugin;
 
 use crate::{
-    gamemode::{app_data::GameModeAppData, utils::LuaResultExt},
     meta_db::MetaDb,
+    runtime::{app_data::GameModeAppData, utils::LuaResultExt},
 };
 
 pub struct Yielder {}
@@ -62,7 +62,7 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
         flume::bounded::<SchedulerMessage>(params.scheduler_channel_buffer);
 
     let plugins: Vec<Box<dyn GameModePlugin>> = vec![
-        Box::new(WhenPlugin {}),
+        Box::new(OnPlugin {}),
         Box::new(MemoryPlugin {
             meta_db: params.meta_db,
         }),

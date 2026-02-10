@@ -5,14 +5,14 @@ use mlua::{Function, Lua, RegistryKey, Table};
 use strum::{AsRefStr, Display, EnumString};
 
 use crate::{
-    gamemode::{
+    meta_db::MetaDb,
+    runtime::{
         api::{
             Yielder,
             protocol::{AsyncTask, AsyncTaskResult, GameModePlugin},
         },
         utils::LuaResultExt,
     },
-    meta_db::MetaDb,
 };
 
 #[derive(Debug, Clone, Copy, EnumString, Display, AsRefStr)]

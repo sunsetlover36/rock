@@ -5,7 +5,7 @@ use mlua::Lua;
 use slotmap::{SlotMap, new_key_type};
 
 use crate::{
-    gamemode::{
+    runtime::{
         api::protocol::{AsyncTaskResult, GameModePlugin},
         utils::LuaResultExt,
     },

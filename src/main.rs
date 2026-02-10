@@ -17,13 +17,12 @@ use crate::{
     actor::{ActorRuntime, client_message::create_client_message_actor},
     config::ServerConfig,
     envelope::ClientEnvelope,
-    gamemode::{
-        GameMode, GameModeCallback, GameModeParams,
-        default_event_listener::GameModeDefaultEventListener,
-    },
     meta_db::{MetaDb, MetaDbConfig},
     player_pool::PlayerPool,
     router::CommitRouter,
+    runtime::{
+        Runtime, RuntimeCallback, RuntimeParams, default_client_api::GameModeDefaultClientApi,
+    },
     socket::{
         adapter::SocketAdapter,
         session_registry::{SessionRegistrar, SessionRegistry, SessionRegistryParams},
@@ -33,10 +32,10 @@ use crate::{
 mod actor;
 mod config;
 mod envelope;
-mod gamemode;
 mod meta_db;
 mod player_pool;
 mod router;
+mod runtime;
 mod socket;
 mod utils;
 mod world;
@@ -62,8 +61,6 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenvy::dotenv()?;
-
     let config_path = std::env::args()
         .nth(1)
         .ok_or_else(|| eyre::eyre!("Config path not set"))?;
@@ -71,7 +68,7 @@ async fn main() -> Result<()> {
 
     let tokio_handle = Handle::current();
 
-    let (gamemode_callback_tx, gamemode_callback_rx) = flume::bounded::<GameModeCallback>(1024);
+    let (gamemode_callback_tx, gamemode_callback_rx) = flume::bounded::<RuntimeCallback>(1024);
     let (client_messenger_tx, client_messenger_actor) =
         create_client_message_actor(1024, gamemode_callback_tx.clone());
 
@@ -100,10 +97,10 @@ async fn main() -> Result<()> {
     })
     .await?;
 
-    // GameMode main process
-    let gm_params = GameModeParams {
+    // Runtime main process
+    let runtime_params = RuntimeParams {
         name: config.gamemode_name,
-        event_listener: Box::new(GameModeDefaultEventListener {
+        client_api: Box::new(GameModeDefaultClientApi {
             ws_session_sender: session_sender.clone(),
         }),
         callback_rx: gamemode_callback_rx,
@@ -112,8 +109,8 @@ async fn main() -> Result<()> {
         tokio_handle,
     };
     thread::spawn(move || {
-        let mut gm = GameMode::new(gm_params).unwrap();
-        gm.awaken().unwrap();
+        let mut runtime = Runtime::new(runtime_params).unwrap();
+        runtime.awaken().unwrap();
     });
 
     // Axum HTTP/WS API

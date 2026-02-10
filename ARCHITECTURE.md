@@ -183,8 +183,8 @@ gamemode is a heart of the engine. it gives a birth to the world.
 
 gamemode initialization params:
 * gamemode gets initialized with the gamemode name from the server config.
-* it also requires `event_listener` -> gamemode uses event listener to communicate with clients. gamemode is **transport-agnostic**. it means that we can attach any event listener to it. event listener decides what to do with the message from the world. as a default option, i implemented a default event listener that converts `GameModeEvent` events to `ServerMessage` messages, essentially communicating with the session registry.
-* `callback_rx` -> a channel for gamemode callbacks. this is the way to befriend gamemode with other entities and domains. for example, client messenger actor sends client intents to this channel (`GameModeEvent::Client(...)`).
+* it also requires `client_api` -> gamemode uses client api to communicate with clients. gamemode is **transport-agnostic**. it means that we can attach any client api to it. a client api decides what to do with the message from the world. as a default option, i implemented a default client api that converts `GameModeClientCommand` to `ServerMessage` messages, essentially communicating with the session registry.
+* `callback_rx` -> a channel for gamemode callbacks. this is the way to befriend gamemode with other entities and domains. for example, client messenger actor sends client intents to this channel (`GameModeClientCommand::Client(...)`).
 * `commit_router` -> handed to the gamemode from the outside because commit router should be initialized in the main file because it gathers all types of listeners located throughout the engine.
 * `meta_db` -> gamemode uses meta db to inject a `memory` plugin (see below)
 * `tokio_handle` -> scheduler is using it to spawn async background tasks (see below)
@@ -248,7 +248,7 @@ vs.
 // ???
 ```
 
-currently, there are two active types of callback: `GameModeCallback::Engine` for the gamemode lifecycle management and `GameModeCallback::Client` for client messages.
+currently, there are two active types of callback: `RuntimeCallback::System` for system callbacks (called by the engine) and `RuntimeCallback::Client` for client messages.
 
 #### lua, plugins and scheduler
 the engine uses `mlua` to make Rust and Lua friends. one of the most powerful concepts of the engine shines here: scenes and plugins.
