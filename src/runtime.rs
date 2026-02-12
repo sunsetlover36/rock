@@ -111,26 +111,49 @@ impl Runtime {
         let args = args
             .into_lua_multi(&self.lua)
             .wrap_err("Failed to materialize args")?;
-        let listeners: Vec<mlua::Function> = {
-            let app_data = match self.lua.app_data_ref::<GameModeAppData>() {
+
+        let mut pending = Vec::new();
+        {
+            let mut app_data = match self.lua.app_data_mut::<GameModeAppData>() {
                 Some(d) => d,
-                None => return Err(eyre::eyre!("GameModeAppData is not initialized")),
+                None => return Err(eyre::eyre!("App data is not initialized")),
+            };
+            let listeners = match app_data.event_listeners.get_mut(&event) {
+                Some(fns) => fns,
+                None => return Ok(()),
             };
 
-            match app_data.event_listeners.get(&event) {
-                Some(rks) => rks
-                    .iter()
-                    .filter_map(|rk| self.lua.registry_value::<mlua::Function>(rk).ok())
-                    .collect(),
-                None => return Ok(()),
-            }
-        };
+            for (id, listener) in listeners.iter().enumerate() {
+                if listener.limit_reached() || !listener.passes_filters(&args)? {
+                    continue;
+                }
 
-        for listener in listeners {
-            listener
-                .call::<()>(args.clone())
+                pending.push((id, listener.handle.clone()))
+            }
+        }
+
+        for (_, handle) in &pending {
+            handle
+                .call::<()>(&args)
                 .wrap_err(format!("Error in `{:?}` event listener", event).as_str())?;
         }
+
+        let mut app_data = match self.lua.app_data_mut::<GameModeAppData>() {
+            Some(d) => d,
+            None => return Err(eyre::eyre!("App data is not initialized")),
+        };
+        let listeners = match app_data.event_listeners.get_mut(&event) {
+            Some(fns) => fns,
+            None => {
+                return Err(eyre::eyre!(
+                    "Failed to increment call counts for event listeners, because `event_listeners` doesn't exist"
+                ));
+            }
+        };
+        for (id, _) in pending {
+            listeners[id].call_count += 1;
+        }
+        listeners.retain(|l| !l.limit_reached());
 
         Ok(())
     }

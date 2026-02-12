@@ -13,7 +13,7 @@ use crate::runtime::{
 fn get_scene_env(lua: &Lua) -> mlua::Result<Table> {
     let app_data = lua
         .app_data_ref::<GameModeAppData>()
-        .ok_or_else(|| mlua::Error::runtime("GameModeAppData is not initialized"))?;
+        .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
 
     let env = lua.create_table()?;
     let mt = lua.create_table()?;
@@ -63,7 +63,7 @@ impl GameModePlugin for ScenePlugin {
 
                 let mut app_data = lua
                     .app_data_mut::<GameModeAppData>()
-                    .ok_or_else(|| mlua::Error::runtime("GameModeAppData is not initialized"))?;
+                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
                 app_data.scenes.insert(name, rk);
 
                 Ok(())
@@ -96,7 +96,7 @@ impl GameModePlugin for ScenePlugin {
             .create_function(move |lua, name: String| {
                 let app_data = lua
                     .app_data_ref::<GameModeAppData>()
-                    .ok_or_else(|| mlua::Error::runtime("GameModeAppData is not initialized"))?;
+                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
                 let rk = app_data.scenes.get(&name).ok_or_else(|| {
                     mlua::Error::runtime(format!("scene.play: scene {} not found", name))
                 })?;

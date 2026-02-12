@@ -3,12 +3,13 @@ use mlua::{Lua, RegistryKey, Table};
 
 use crate::runtime::{
     api::protocol::{AsyncTask, GameModePlugin},
-    app_data::GameModeAppData,
     utils::LuaResultExt,
 };
 
 mod event_descriptors;
 use event_descriptors::EVENT_DESCRIPTORS;
+mod rx;
+use rx::RxBuilder;
 
 pub struct OnPlugin {}
 impl GameModePlugin for OnPlugin {
@@ -42,15 +43,7 @@ impl GameModePlugin for OnPlugin {
 
             let event = descriptor.event;
             let listener = lua
-                .create_function(move |lua, cb: mlua::Function| {
-                    let rk = lua.create_registry_value(cb)?;
-                    let mut app_data = lua.app_data_mut::<GameModeAppData>().ok_or_else(|| {
-                        mlua::Error::runtime("GameModeAppData is not initialized")
-                    })?;
-                    app_data.event_listeners.entry(event).or_default().push(rk);
-
-                    Ok(())
-                })
+                .create_function(move |_, _: ()| Ok(RxBuilder::new(event)))
                 .wrap_err(
                     format!(
                         "Failed to create `{}` method for `{}` table",

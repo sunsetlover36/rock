@@ -21,7 +21,7 @@ impl Yielder {
     pub fn get(lua: &Lua) -> eyre::Result<mlua::Function> {
         let app_data = lua
             .app_data_ref::<GameModeAppData>()
-            .ok_or_else(|| eyre::eyre!("GameModeAppData is not initialized"))?;
+            .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
         let yielder_fn_rk = app_data.yielder.as_ref().ok_or_else(|| {
             eyre::eyre!("`yielder` registry key not found in app data. Did you forget to set it?")
         })?;
@@ -76,7 +76,7 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
     {
         let mut app_data = lua
             .app_data_mut::<GameModeAppData>()
-            .ok_or_else(|| eyre::eyre!("GameModeAppData is not initialized"))?;
+            .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
         app_data.yielder = Some(Yielder::create(&lua)?);
     }
 
@@ -102,7 +102,7 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
 
     let mut app_data = lua
         .app_data_mut::<GameModeAppData>()
-        .ok_or_else(|| eyre::eyre!("GameModeAppData is not initialized"))?;
+        .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
     app_data.scene_plugins = scene_plugins;
 
     Ok(Scheduler::new(SchedulerParams {
