@@ -22,16 +22,14 @@ impl Yielder {
         let app_data = lua
             .app_data_ref::<GameModeAppData>()
             .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
-        let yielder_fn_rk = app_data.yielder.as_ref().ok_or_else(|| {
-            eyre::eyre!("`yielder` registry key not found in app data. Did you forget to set it?")
-        })?;
-        let yielder_fn: mlua::Function = lua
-            .registry_value(yielder_fn_rk)
-            .wrap_err("`yielder` registry key not found")?;
+        let yielder_fn = app_data
+            .yielder
+            .clone()
+            .ok_or_else(|| eyre::eyre!("`yielder` function not found in app data"))?;
 
         Ok(yielder_fn)
     }
-    pub fn create(lua: &Lua) -> eyre::Result<mlua::RegistryKey> {
+    pub fn create(lua: &Lua) -> eyre::Result<mlua::Function> {
         let yielder_script = r#"
             return function(opcode)
                 return function(...)
@@ -44,11 +42,8 @@ impl Yielder {
             .set_name("engine/yielder")
             .eval()
             .wrap_err("Failed to create `yielder_script`")?;
-        let yielder_fn_rk = lua
-            .create_registry_value(yielder_fn)
-            .wrap_err("Failed to store `yielder` registry value")?;
 
-        Ok(yielder_fn_rk)
+        Ok(yielder_fn)
     }
 }
 
@@ -90,11 +85,11 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
     }
 
     // Scene APIs
-    let mut scene_plugins: HashMap<String, mlua::RegistryKey> = HashMap::new();
+    let mut scene_plugins: HashMap<String, mlua::Table> = HashMap::new();
     for plugin in plugins {
         let name = plugin.name().to_owned();
-        if let Some(scene_api_rk) = plugin.create_scene_api(&lua)? {
-            scene_plugins.insert(name.clone(), scene_api_rk);
+        if let Some(scene_api) = plugin.create_scene_api(&lua)? {
+            scene_plugins.insert(name.clone(), scene_api);
         }
 
         registered_plugins.insert(name, plugin);

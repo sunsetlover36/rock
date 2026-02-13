@@ -1,7 +1,7 @@
 use std::{str::FromStr, sync::Arc};
 
 use color_eyre::eyre::{self, Context};
-use mlua::{Function, Lua, RegistryKey, Table};
+use mlua::{Function, Lua, Table};
 use strum::{AsRefStr, Display, EnumString};
 
 use crate::{
@@ -46,7 +46,7 @@ impl GameModePlugin for MemoryPlugin {
         Ok(Some(memory_global_table))
     }
 
-    fn create_scene_api(&self, lua: &Lua) -> eyre::Result<Option<RegistryKey>> {
+    fn create_scene_api(&self, lua: &Lua) -> eyre::Result<Option<Table>> {
         let name_in_uppercase = self.name().to_uppercase();
         let memory_scene_table = lua
             .create_table()
@@ -82,10 +82,7 @@ impl GameModePlugin for MemoryPlugin {
             .set("fetch", fetch_fn)
             .wrap_err("Failed to register `fetch` method for `memory_scene_table` table")?;
 
-        let rk = lua
-            .create_registry_value(memory_scene_table)
-            .wrap_err("Failed to create `memory_scene_table` registry value")?;
-        Ok(Some(rk))
+        Ok(Some(memory_scene_table))
     }
 
     fn handle_op(&self, op: &str, args: mlua::Table) -> eyre::Result<Option<AsyncTask>> {

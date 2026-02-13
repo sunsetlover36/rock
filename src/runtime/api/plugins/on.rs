@@ -1,5 +1,5 @@
 use color_eyre::eyre;
-use mlua::{Lua, RegistryKey, Table};
+use mlua::{Lua, Table};
 
 use crate::runtime::{
     api::protocol::{AsyncTask, GameModePlugin},
@@ -60,11 +60,11 @@ impl GameModePlugin for OnPlugin {
             )?;
         }
 
-        return Ok(Some(on_table));
+        Ok(Some(on_table))
     }
 
-    fn create_scene_api(&self, _: &Lua) -> eyre::Result<Option<RegistryKey>> {
-        return Ok(None);
+    fn create_scene_api(&self, _: &Lua) -> eyre::Result<Option<Table>> {
+        Ok(None)
     }
 
     fn handle_op(&self, _: &str, _: Table) -> eyre::Result<Option<AsyncTask>> {

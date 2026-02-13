@@ -1,5 +1,5 @@
 use color_eyre::eyre;
-use mlua::{Function, Lua, RegistryKey, Table};
+use mlua::{Function, Lua, Table};
 
 use crate::runtime::{
     api::{
@@ -21,8 +21,7 @@ fn get_scene_env(lua: &Lua) -> mlua::Result<Table> {
     env.set_metatable(Some(mt))?;
 
     for plugin in app_data.scene_plugins.iter() {
-        let (name, rk) = plugin;
-        let table: Table = lua.registry_value(&rk)?;
+        let (name, table) = plugin;
         env.set(name.to_owned(), table)?;
     }
 
@@ -59,12 +58,11 @@ impl GameModePlugin for ScenePlugin {
                 let action: Function = table
                     .get("action")
                     .map_err(|_| mlua::Error::runtime("scene.create: missing `action`"))?;
-                let rk = lua.create_registry_value(action)?;
 
                 let mut app_data = lua
                     .app_data_mut::<GameModeAppData>()
                     .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-                app_data.scenes.insert(name, rk);
+                app_data.scenes.insert(name, action);
 
                 Ok(())
             })
@@ -97,13 +95,15 @@ impl GameModePlugin for ScenePlugin {
                 let app_data = lua
                     .app_data_ref::<GameModeAppData>()
                     .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-                let rk = app_data.scenes.get(&name).ok_or_else(|| {
+                let action = app_data.scenes.get(&name).ok_or_else(|| {
                     mlua::Error::runtime(format!("scene.play: scene {} not found", name))
                 })?;
 
-                let action: Function = lua.registry_value(rk)?;
                 scheduler_tx
-                    .send(SchedulerMessage::AddTask(to_coroutine(lua, action)?))
+                    .send(SchedulerMessage::AddTask(to_coroutine(
+                        lua,
+                        action.clone(),
+                    )?))
                     .map_err(|e| {
                         mlua::Error::runtime(format!("scene.run: Failed to add task ({})", e))
                     })?;
@@ -117,7 +117,7 @@ impl GameModePlugin for ScenePlugin {
         Ok(Some(scene_table))
     }
 
-    fn create_scene_api(&self, _: &Lua) -> eyre::Result<Option<RegistryKey>> {
+    fn create_scene_api(&self, _: &Lua) -> eyre::Result<Option<Table>> {
         Ok(None)
     }
 
