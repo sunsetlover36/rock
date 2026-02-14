@@ -7,7 +7,7 @@ pub mod scheduler;
 pub use scheduler::SchedulerMessage;
 use scheduler::{Scheduler, SchedulerParams};
 mod plugins;
-use plugins::{memory::MemoryPlugin, on::OnPlugin, scene::ScenePlugin};
+use plugins::{entity::EntityPlugin, memory::MemoryPlugin, on::OnPlugin, scene::ScenePlugin};
 pub mod protocol;
 use protocol::GameModePlugin;
 
@@ -58,6 +58,7 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
 
     let plugins: Vec<Box<dyn GameModePlugin>> = vec![
         Box::new(OnPlugin {}),
+        Box::new(EntityPlugin {}),
         Box::new(MemoryPlugin {
             meta_db: params.meta_db,
         }),

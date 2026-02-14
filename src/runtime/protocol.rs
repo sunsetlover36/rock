@@ -66,9 +66,3 @@ impl GameModeListener {
         })
     }
 }
-
-pub struct GameModeEntity {
-    name: String,
-    components: Vec<ComponentVariant>,
-    custom_data: Option<mlua::Table>,
-}

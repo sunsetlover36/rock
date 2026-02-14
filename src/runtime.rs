@@ -62,6 +62,7 @@ impl Runtime {
             scenes: HashMap::new(),
             scene_plugins: HashMap::new(),
             yielder: None,
+            world: hecs::World::new(),
         };
         lua.set_app_data(app_data);
 

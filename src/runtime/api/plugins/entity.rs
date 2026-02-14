@@ -1,10 +1,11 @@
 use crate::runtime::{api::protocol::GameModePlugin, utils::LuaResultExt};
-
-mod builder;
-use builder::EntityBuilder;
 use color_eyre::eyre;
+
+mod blueprint;
+use blueprint::EntityBlueprint;
 mod components;
-pub use components::ComponentVariant;
+mod handle;
+mod macros;
 
 pub struct EntityPlugin {}
 impl GameModePlugin for EntityPlugin {
@@ -17,18 +18,18 @@ impl GameModePlugin for EntityPlugin {
             .create_table()
             .wrap_err(format!("Failed to create `{}` table", self.name()).as_str())?;
 
-        let define_fn = lua
-            .create_function(|lua, name: mlua::String| Ok(EntityBuilder::new(name)))
+        let blueprint_fn = lua
+            .create_function(|_, _: ()| Ok(EntityBlueprint::new()))
             .wrap_err(
                 format!(
-                    "Failed to create `define` method for `{}` plugin",
+                    "Failed to create `blueprint` method for `{}` plugin",
                     self.name()
                 )
                 .as_str(),
             )?;
-        entity_table.set("define", define_fn).wrap_err(
+        entity_table.set("blueprint", blueprint_fn).wrap_err(
             format!(
-                "Failed to register `define` method for `{}` plugin",
+                "Failed to register `blueprint` method for `{}` plugin",
                 self.name()
             )
             .as_str(),

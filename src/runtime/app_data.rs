@@ -7,4 +7,5 @@ pub struct GameModeAppData {
     pub scenes: HashMap<String, mlua::Function>,
     pub scene_plugins: HashMap<String, mlua::Table>,
     pub yielder: Option<mlua::Function>,
+    pub world: hecs::World,
 }

@@ -21,3 +21,4 @@ pub(crate) enum ComponentVariant {
     Sprite2D(Sprite2D),
     SpriteChar(SpriteChar),
 }
+pub(crate) struct CustomDataComponent(pub mlua::RegistryKey);
