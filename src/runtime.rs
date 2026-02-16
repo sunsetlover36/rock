@@ -12,6 +12,7 @@ use shared::GameModeClientRequest;
 use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
+    runtime::api::on::{GameModeEventKey, WorldEventKey},
     world::{WorldNatives, WorldState},
 };
 
@@ -24,7 +25,7 @@ mod utils;
 use app_data::GameModeAppData;
 use utils::LuaResultExt;
 mod api;
-use api::{ApiRegisterParams, scheduler::Scheduler};
+use api::{ApiRegisterParams, SceneManager};
 
 pub struct RuntimeParams {
     pub name: String,
@@ -43,7 +44,7 @@ pub struct Runtime {
     world_natives: WorldNatives,
     commit_router: CommitRouter,
     meta_db: Arc<MetaDb>,
-    scheduler: Scheduler,
+    scheduler: SceneManager,
 }
 impl Runtime {
     pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
@@ -71,7 +72,7 @@ impl Runtime {
             &lua,
             ApiRegisterParams {
                 tokio_handle: params.tokio_handle,
-                scheduler_channel_buffer: 256,
+                scene_manager_channel_buffer: 256,
                 meta_db: meta_db.clone(),
             },
         )?;
@@ -94,19 +95,16 @@ impl Runtime {
     }
 
     // TODO: implement event args validation
-    fn validate_event_args(&self, event: GameModeEvent, args: mlua::MultiValue) {
+    fn validate_event_args(&self, event: GameModeEventKey, args: mlua::MultiValue) {
         match event {
-            GameModeEvent::World(event) => match event {
-                WorldEvent::Awake => {}
-            },
-            GameModeEvent::Player(event) => match event {
-                PlayerEvent::Connect => {}
-            },
+            GameModeEventKey::World(_) => {}
+            GameModeEventKey::Player(_) => {}
+            GameModeEventKey::Entity(_) => {}
         }
     }
     fn notify_event_listeners(
         &self,
-        event: GameModeEvent,
+        event: GameModeEventKey,
         args: impl IntoLuaMulti,
     ) -> eyre::Result<()> {
         let args = args
@@ -160,7 +158,7 @@ impl Runtime {
     }
 
     pub fn awaken(&mut self) -> eyre::Result<Self> {
-        self.notify_event_listeners(GameModeEvent::World(WorldEvent::Awake), ())?;
+        self.notify_event_listeners(GameModeEventKey::World(WorldEventKey::Awake), ())?;
 
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();

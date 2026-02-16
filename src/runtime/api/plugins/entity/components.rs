@@ -1,3 +1,5 @@
+use strum::EnumDiscriminants;
+
 mod vector_2d;
 pub(crate) use vector_2d::Vector2D;
 
@@ -13,8 +15,10 @@ pub(crate) use sprite_2d::Sprite2D;
 mod sprite_char;
 pub(crate) use sprite_char::SpriteChar;
 
-#[derive(Clone)]
-pub(crate) enum ComponentVariant {
+#[derive(EnumDiscriminants, Clone)]
+#[strum_discriminants(name(ComponentKey))]
+#[strum_discriminants(derive(Hash))]
+pub(crate) enum ComponentData {
     Vector2D(Vector2D),
     Transform2D(Transform2D),
     Control(Control),

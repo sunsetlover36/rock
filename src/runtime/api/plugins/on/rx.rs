@@ -1,22 +1,27 @@
 use mlua::UserData;
 
-use crate::runtime::{GameModeEvent, GameModeListener, app_data::GameModeAppData};
+use crate::runtime::{
+    api::on::{EventScope, GameModeEventKey, GameModeListener},
+    app_data::GameModeAppData,
+};
 
 #[derive(Clone)]
 pub(super) struct RxBuilder {
-    event: GameModeEvent,
+    event: GameModeEventKey,
+    scope: EventScope,
     name: Option<String>,
     limit: Option<u32>,
-    filters: Vec<mlua::Function>,
+    predicates: Vec<mlua::Function>,
     consumed: bool,
 }
 impl RxBuilder {
-    pub fn new(event: GameModeEvent) -> Self {
+    pub fn new(event: GameModeEventKey, scope: Option<EventScope>) -> Self {
         Self {
             event,
             name: None,
             limit: None,
-            filters: Vec::new(),
+            scope: scope.unwrap_or(EventScope::Global),
+            predicates: Vec::new(),
             consumed: false,
         }
     }
@@ -28,7 +33,8 @@ impl RxBuilder {
             handle,
             call_count: 0,
             limit: self.limit,
-            filters: builder.filters,
+            scope: self.scope,
+            predicates: builder.predicates,
         }
     }
     fn ensure_not_consumed(&self) -> mlua::Result<()> {
@@ -49,9 +55,9 @@ impl UserData for RxBuilder {
             Ok(next)
         });
 
-        methods.add_method("where", |_, this, filter| {
+        methods.add_method("where", |_, this, predicate| {
             let mut next = this.clone();
-            next.filters.push(filter);
+            next.predicates.push(predicate);
             Ok(next)
         });
 

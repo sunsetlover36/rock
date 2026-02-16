@@ -3,17 +3,26 @@ use std::{collections::HashMap, sync::Arc};
 use color_eyre::eyre;
 use mlua::Lua;
 
-pub mod scheduler;
-pub use scheduler::SchedulerMessage;
-use scheduler::{Scheduler, SchedulerParams};
 mod plugins;
-use plugins::{entity::EntityPlugin, memory::MemoryPlugin, on::OnPlugin, scene::ScenePlugin};
+use plugins::{
+    entity::EntityPlugin,
+    memory::MemoryPlugin,
+    on::OnPlugin,
+    scene::{SceneManagerMessage, ScenePlugin},
+};
+pub use plugins::{on, scene::SceneManager};
 pub mod protocol;
 use protocol::GameModePlugin;
 
 use crate::{
     meta_db::MetaDb,
-    runtime::{app_data::GameModeAppData, utils::LuaResultExt},
+    runtime::{
+        api::{
+            on::event_descriptors::GLOBAL_EVENT_DESCRIPTORS, plugins::scene::SceneManagerParams,
+        },
+        app_data::GameModeAppData,
+        utils::LuaResultExt,
+    },
 };
 
 pub struct Yielder {}
@@ -49,21 +58,23 @@ impl Yielder {
 
 pub struct ApiRegisterParams {
     pub tokio_handle: tokio::runtime::Handle,
-    pub scheduler_channel_buffer: usize,
+    pub scene_manager_channel_buffer: usize,
     pub meta_db: Arc<MetaDb>,
 }
-pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler> {
-    let (scheduler_tx, scheduler_rx) =
-        flume::bounded::<SchedulerMessage>(params.scheduler_channel_buffer);
+pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<SceneManager> {
+    let (scene_manager_tx, scene_manager_rx) =
+        flume::bounded::<SceneManagerMessage>(params.scene_manager_channel_buffer);
 
     let plugins: Vec<Box<dyn GameModePlugin>> = vec![
-        Box::new(OnPlugin {}),
+        Box::new(OnPlugin {
+            descriptors: GLOBAL_EVENT_DESCRIPTORS,
+        }),
         Box::new(EntityPlugin {}),
         Box::new(MemoryPlugin {
             meta_db: params.meta_db,
         }),
         Box::new(ScenePlugin {
-            scheduler_tx: scheduler_tx.clone(),
+            manager_tx: scene_manager_tx.clone(),
         }),
     ];
     let mut registered_plugins = HashMap::new();
@@ -101,10 +112,10 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
         .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
     app_data.scene_plugins = scene_plugins;
 
-    Ok(Scheduler::new(SchedulerParams {
+    Ok(SceneManager::new(SceneManagerParams {
         plugins: registered_plugins,
-        rx: scheduler_rx,
-        tx: scheduler_tx,
+        rx: scene_manager_rx,
+        tx: scene_manager_tx,
         tokio_handle: params.tokio_handle,
     }))
 }

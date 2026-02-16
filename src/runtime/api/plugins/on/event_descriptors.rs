@@ -1,20 +1,14 @@
-use crate::runtime::{GameModeEvent, PlayerEvent, WorldEvent};
+use crate::runtime::api::on::{EventDescriptor, GameModeEventKey, PlayerEventKey, WorldEventKey};
 
-pub(super) struct EventDescriptor {
-    pub namespace: &'static str,
-    pub name: &'static str,
-    pub event: GameModeEvent,
-}
-
-pub(super) const EVENT_DESCRIPTORS: &[EventDescriptor] = &[
+pub(crate) const GLOBAL_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
     EventDescriptor {
-        namespace: "world",
+        namespace: Some("world"),
         name: "awake",
-        event: GameModeEvent::World(WorldEvent::Awake),
+        event_key: GameModeEventKey::World(WorldEventKey::Awake),
     },
     EventDescriptor {
-        namespace: "player",
+        namespace: Some("player"),
         name: "connect",
-        event: GameModeEvent::Player(PlayerEvent::Connect),
+        event_key: GameModeEventKey::Player(PlayerEventKey::Connect),
     },
 ];

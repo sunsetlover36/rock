@@ -14,7 +14,7 @@ macro_rules! add_blueprint_methods {
         $methods.add_method($lua_name, |lua, this, data: mlua::Value| {
             let data: $comp_type = lua.from_value(data)?;
             let mut next = this.clone();
-            next.components.push(ComponentVariant::$variant(data));
+            next.components.push(ComponentData::$variant(data));
             Ok(next)
         });
     };

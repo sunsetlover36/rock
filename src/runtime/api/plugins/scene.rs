@@ -2,13 +2,13 @@ use color_eyre::eyre;
 use mlua::{Function, Lua, Table};
 
 use crate::runtime::{
-    api::{
-        SchedulerMessage,
-        protocol::{AsyncTask, GameModePlugin},
-    },
+    api::protocol::{AsyncTask, GameModePlugin},
     app_data::GameModeAppData,
     utils::LuaResultExt,
 };
+
+mod manager;
+pub use manager::{SceneManager, SceneManagerMessage, SceneManagerParams};
 
 fn get_scene_env(lua: &Lua) -> mlua::Result<Table> {
     let app_data = lua
@@ -35,7 +35,7 @@ fn to_coroutine(lua: &Lua, function: Function) -> mlua::Result<mlua::RegistryKey
 }
 
 pub struct ScenePlugin {
-    pub scheduler_tx: flume::Sender<SchedulerMessage>,
+    pub manager_tx: flume::Sender<SceneManagerMessage>,
 }
 impl GameModePlugin for ScenePlugin {
     fn name(&self) -> &str {
@@ -71,14 +71,14 @@ impl GameModePlugin for ScenePlugin {
             .set("create", scene_create_fn)
             .wrap_err("Failed to register `create` method for `scene` table")?;
 
-        let scheduler_tx = self.scheduler_tx.clone();
+        let manager_tx = self.manager_tx.clone();
         let scene_run_fn = lua
             .create_function(move |lua, table: Table| {
                 let action: Function = table
                     .get("action")
                     .map_err(|_| mlua::Error::runtime("scene.run: missing `action`"))?;
-                scheduler_tx
-                    .send(SchedulerMessage::AddTask(to_coroutine(lua, action)?))
+                manager_tx
+                    .send(SceneManagerMessage::AddTask(to_coroutine(lua, action)?))
                     .map_err(|e| {
                         mlua::Error::runtime(format!("scene.run: Failed to add task ({})", e))
                     })?;
@@ -89,7 +89,7 @@ impl GameModePlugin for ScenePlugin {
             .set("run", scene_run_fn)
             .wrap_err("Failed to register `run` method for `scene` table")?;
 
-        let scheduler_tx = self.scheduler_tx.clone();
+        let manager_tx = self.manager_tx.clone();
         let scene_play_fn = lua
             .create_function(move |lua, name: String| {
                 let app_data = lua
@@ -99,8 +99,8 @@ impl GameModePlugin for ScenePlugin {
                     mlua::Error::runtime(format!("scene.play: scene {} not found", name))
                 })?;
 
-                scheduler_tx
-                    .send(SchedulerMessage::AddTask(to_coroutine(
+                manager_tx
+                    .send(SceneManagerMessage::AddTask(to_coroutine(
                         lua,
                         action.clone(),
                     )?))

@@ -3,26 +3,36 @@ use std::collections::HashMap;
 use mlua::{LuaSerdeExt, UserData};
 
 use crate::runtime::{
-    api::plugins::entity::{
-        components::{
-            ComponentVariant, Control, CustomDataComponent, Sprite2D, SpriteChar, Transform2D,
-            Vector2D,
+    api::{
+        on::{EventScope, OnPlugin},
+        plugins::entity::{
+            components::{
+                ComponentData, Control, CustomDataComponent, Sprite2D, SpriteChar, Transform2D,
+                Vector2D,
+            },
+            event_descriptors::ENTITY_EVENT_DESCRIPTORS,
+            handle::EntityHandle,
+            macros::{add_blueprint_methods, for_each_component},
         },
-        handle::EntityHandle,
-        macros::{add_blueprint_methods, for_each_component},
     },
     app_data::GameModeAppData,
 };
 
 #[derive(Clone)]
 pub(super) struct EntityBlueprint {
+    id: u64,
+    on_plugin: OnPlugin,
     pub name: Option<String>,
-    pub components: Vec<ComponentVariant>,
+    pub components: Vec<ComponentData>,
     pub customs: HashMap<String, serde_json::Value>,
 }
 impl EntityBlueprint {
-    pub fn new() -> Self {
+    pub fn new(id: u64) -> Self {
         Self {
+            id,
+            on_plugin: OnPlugin {
+                descriptors: ENTITY_EVENT_DESCRIPTORS,
+            },
             name: None,
             components: Vec::new(),
             customs: HashMap::new(),
@@ -30,6 +40,13 @@ impl EntityBlueprint {
     }
 }
 impl UserData for EntityBlueprint {
+    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("on", |lua, this| {
+            this.on_plugin
+                .create_listeners_table(lua, Some(EventScope::Blueprint(this.id)))
+        });
+    }
+
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         for_each_component!(methods, add_blueprint_methods);
 
@@ -54,11 +71,11 @@ impl UserData for EntityBlueprint {
             let mut builder = hecs::EntityBuilder::new();
             for component in &this.components {
                 match component {
-                    ComponentVariant::Vector2D(c) => builder.add(c.clone()),
-                    ComponentVariant::Transform2D(c) => builder.add(c.clone()),
-                    ComponentVariant::Control(c) => builder.add(c.clone()),
-                    ComponentVariant::Sprite2D(c) => builder.add(c.clone()),
-                    ComponentVariant::SpriteChar(c) => builder.add(c.clone()),
+                    ComponentData::Vector2D(c) => builder.add(c.clone()),
+                    ComponentData::Transform2D(c) => builder.add(c.clone()),
+                    ComponentData::Control(c) => builder.add(c.clone()),
+                    ComponentData::Sprite2D(c) => builder.add(c.clone()),
+                    ComponentData::SpriteChar(c) => builder.add(c.clone()),
                 };
             }
 
@@ -71,7 +88,10 @@ impl UserData for EntityBlueprint {
                 .app_data_mut::<GameModeAppData>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
             let entity = app_data.world.spawn(builder.build());
-            Ok(EntityHandle { entity })
+            Ok(EntityHandle {
+                entity,
+                on_plugin: this.on_plugin.clone(),
+            })
         });
     }
 }

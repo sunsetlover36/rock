@@ -1,11 +1,17 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::runtime::{api::protocol::GameModePlugin, utils::LuaResultExt};
 use color_eyre::eyre;
 
 mod blueprint;
 use blueprint::EntityBlueprint;
 mod components;
+pub(crate) use components::{ComponentData, ComponentKey};
+mod event_descriptors;
 mod handle;
 mod macros;
+
+static BLUEPRINT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub struct EntityPlugin {}
 impl GameModePlugin for EntityPlugin {
@@ -19,7 +25,11 @@ impl GameModePlugin for EntityPlugin {
             .wrap_err(format!("Failed to create `{}` table", self.name()).as_str())?;
 
         let blueprint_fn = lua
-            .create_function(|_, _: ()| Ok(EntityBlueprint::new()))
+            .create_function(|_, _: ()| {
+                Ok(EntityBlueprint::new(
+                    BLUEPRINT_COUNTER.fetch_add(1, Ordering::Relaxed),
+                ))
+            })
             .wrap_err(
                 format!(
                     "Failed to create `blueprint` method for `{}` plugin",
