@@ -4,7 +4,7 @@ use mlua::{LuaSerdeExt, UserData};
 
 use crate::runtime::{
     api::{
-        on::{EventScope, OnPlugin},
+        on::{EventScope, OnPluginLazy},
         plugins::entity::{
             components::{
                 ComponentData, Control, CustomDataComponent, Sprite2D, SpriteChar, Transform2D,
@@ -21,7 +21,6 @@ use crate::runtime::{
 #[derive(Clone)]
 pub(super) struct EntityBlueprint {
     id: u64,
-    on_plugin: OnPlugin,
     pub name: Option<String>,
     pub components: Vec<ComponentData>,
     pub customs: HashMap<String, serde_json::Value>,
@@ -30,9 +29,6 @@ impl EntityBlueprint {
     pub fn new(id: u64) -> Self {
         Self {
             id,
-            on_plugin: OnPlugin {
-                descriptors: ENTITY_EVENT_DESCRIPTORS,
-            },
             name: None,
             components: Vec::new(),
             customs: HashMap::new(),
@@ -41,9 +37,11 @@ impl EntityBlueprint {
 }
 impl UserData for EntityBlueprint {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("on", |lua, this| {
-            this.on_plugin
-                .create_listeners_table(lua, Some(EventScope::Blueprint(this.id)))
+        fields.add_field_method_get("on", |_, this| {
+            Ok(OnPluginLazy {
+                scope: EventScope::Blueprint(this.id),
+                descriptors: ENTITY_EVENT_DESCRIPTORS,
+            })
         });
     }
 
@@ -88,10 +86,7 @@ impl UserData for EntityBlueprint {
                 .app_data_mut::<GameModeAppData>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
             let entity = app_data.world.spawn(builder.build());
-            Ok(EntityHandle {
-                entity,
-                on_plugin: this.on_plugin.clone(),
-            })
+            Ok(EntityHandle { entity })
         });
     }
 }

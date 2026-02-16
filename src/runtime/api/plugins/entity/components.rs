@@ -1,3 +1,4 @@
+use serde::Serialize;
 use strum::EnumDiscriminants;
 
 mod vector_2d;
@@ -15,7 +16,8 @@ pub(crate) use sprite_2d::Sprite2D;
 mod sprite_char;
 pub(crate) use sprite_char::SpriteChar;
 
-#[derive(EnumDiscriminants, Clone)]
+#[derive(EnumDiscriminants, Clone, Serialize)]
+#[serde(untagged)]
 #[strum_discriminants(name(ComponentKey))]
 #[strum_discriminants(derive(Hash))]
 pub(crate) enum ComponentData {

@@ -1,6 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
-use crate::runtime::api::on::{GameModeEventKey, GameModeListener};
+use crate::runtime::{
+    EventBus,
+    api::on::{GameModeEventKey, GameModeListener},
+};
 
 pub struct GameModeAppData {
     pub event_listeners: HashMap<GameModeEventKey, Vec<GameModeListener>>,
@@ -8,4 +11,5 @@ pub struct GameModeAppData {
     pub scene_plugins: HashMap<String, mlua::Table>,
     pub yielder: Option<mlua::Function>,
     pub world: hecs::World,
+    pub event_bus: Rc<EventBus>,
 }

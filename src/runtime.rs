@@ -6,24 +6,29 @@ use std::{
 };
 
 use color_eyre::eyre::{self};
-use mlua::{IntoLuaMulti, Lua};
+use mlua::Lua;
 use shared::GameModeClientRequest;
 
 use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
-    runtime::api::on::{GameModeEventKey, WorldEventKey},
+    runtime::api::on::{GameModeEventData, WorldEventData},
     world::{WorldNatives, WorldState},
 };
 
 pub mod default_client_api;
+pub(crate) mod event_bus;
+pub(crate) use event_bus::EventBus;
+
 pub mod protocol;
 pub use protocol::*;
 
 mod app_data;
-mod utils;
 use app_data::GameModeAppData;
+
+mod utils;
 use utils::LuaResultExt;
+
 mod api;
 use api::{ApiRegisterParams, SceneManager};
 
@@ -44,7 +49,8 @@ pub struct Runtime {
     world_natives: WorldNatives,
     commit_router: CommitRouter,
     meta_db: Arc<MetaDb>,
-    scheduler: SceneManager,
+    scene_manager: SceneManager,
+    event_bus: Rc<EventBus>,
 }
 impl Runtime {
     pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
@@ -53,6 +59,8 @@ impl Runtime {
         let world_natives = WorldNatives {
             state: world_state.clone(),
         };
+
+        let event_bus = Rc::new(EventBus::new());
 
         let lua = Lua::new();
         let script_path = format!("gamemodes/{}.lua", params.name);
@@ -64,11 +72,12 @@ impl Runtime {
             scene_plugins: HashMap::new(),
             yielder: None,
             world: hecs::World::new(),
+            event_bus: event_bus.clone(),
         };
         lua.set_app_data(app_data);
 
         // Plugins
-        let scheduler = api::register(
+        let scene_manager = api::register(
             &lua,
             ApiRegisterParams {
                 tokio_handle: params.tokio_handle,
@@ -90,80 +99,19 @@ impl Runtime {
             world_natives,
             commit_router: params.commit_router,
             meta_db,
-            scheduler,
+            scene_manager,
+            event_bus,
         })
     }
 
-    // TODO: implement event args validation
-    fn validate_event_args(&self, event: GameModeEventKey, args: mlua::MultiValue) {
-        match event {
-            GameModeEventKey::World(_) => {}
-            GameModeEventKey::Player(_) => {}
-            GameModeEventKey::Entity(_) => {}
-        }
-    }
-    fn notify_event_listeners(
-        &self,
-        event: GameModeEventKey,
-        args: impl IntoLuaMulti,
-    ) -> eyre::Result<()> {
-        let args = args
-            .into_lua_multi(&self.lua)
-            .wrap_err("Failed to materialize args")?;
-
-        let mut pending = Vec::new();
-        {
-            let mut app_data = match self.lua.app_data_mut::<GameModeAppData>() {
-                Some(d) => d,
-                None => return Err(eyre::eyre!("App data is not initialized")),
-            };
-            let listeners = match app_data.event_listeners.get_mut(&event) {
-                Some(fns) => fns,
-                None => return Ok(()),
-            };
-
-            for (id, listener) in listeners.iter().enumerate() {
-                if listener.limit_reached() || !listener.passes_filters(&args)? {
-                    continue;
-                }
-
-                pending.push((id, listener.handle.clone()))
-            }
-        }
-
-        for (_, handle) in &pending {
-            handle
-                .call::<()>(&args)
-                .wrap_err(format!("Error in `{:?}` event listener", event).as_str())?;
-        }
-
-        let mut app_data = match self.lua.app_data_mut::<GameModeAppData>() {
-            Some(d) => d,
-            None => return Err(eyre::eyre!("App data is not initialized")),
-        };
-        let listeners = match app_data.event_listeners.get_mut(&event) {
-            Some(fns) => fns,
-            None => {
-                return Err(eyre::eyre!(
-                    "Failed to increment call counts for event listeners, because `event_listeners` doesn't exist"
-                ));
-            }
-        };
-        for (id, _) in pending {
-            listeners[id].call_count += 1;
-        }
-        listeners.retain(|l| !l.limit_reached());
-
-        Ok(())
-    }
-
     pub fn awaken(&mut self) -> eyre::Result<Self> {
-        self.notify_event_listeners(GameModeEventKey::World(WorldEventKey::Awake), ())?;
+        self.event_bus
+            .schedule_event(GameModeEventData::World(WorldEventData::Awake));
 
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();
         loop {
-            self.scheduler.tick(&self.lua);
+            self.scene_manager.tick(&self.lua);
 
             while let Ok(cb) = self.callback_rx.try_recv() {
                 match cb {
@@ -184,6 +132,8 @@ impl Runtime {
             // Lua sends a game intent then can't get the result in the same tick
 
             // world.step
+
+            self.event_bus.flush(&self.lua)?;
 
             let now = Instant::now();
             next_tick += tick_interval;

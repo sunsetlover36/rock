@@ -27,6 +27,8 @@ macro_rules! add_handle_methods {
             let mut app_data = lua
                 .app_data_mut::<GameModeAppData>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+
+            let event_bus = app_data.event_bus.clone();
             let world = &mut app_data.world;
 
             if let Some(v) = data {
@@ -34,16 +36,21 @@ macro_rules! add_handle_methods {
 
                 // set
                 if let Ok(mut field) = world.get::<&mut $comp_type>(this.entity) {
-                    *field = comp_data;
+                    *field = comp_data.clone();
                 } else {
-                    world.insert_one(this.entity, comp_data).map_err(|e| {
-                        mlua::Error::runtime(format!(
-                            "Failed to add a component to the entity in method `{}`: {}",
-                            $lua_name, e
-                        ))
-                    })?;
+                    world
+                        .insert_one(this.entity, comp_data.clone())
+                        .map_err(|e| {
+                            mlua::Error::runtime(format!(
+                                "Failed to add a component to the entity in method `{}`: {}",
+                                $lua_name, e
+                            ))
+                        })?;
                 }
 
+                event_bus.schedule_event(GameModeEventData::Entity(
+                    EntityEventData::ComponentUpdate(ComponentData::$variant(comp_data)),
+                ));
                 return Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?));
             } else {
                 // get

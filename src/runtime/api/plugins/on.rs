@@ -7,6 +7,8 @@ use crate::runtime::{
 };
 
 pub(crate) mod event_descriptors;
+pub(crate) mod lazy;
+pub(crate) use lazy::OnPluginLazy;
 mod rx;
 use rx::RxBuilder;
 pub mod protocol;
@@ -17,15 +19,7 @@ pub struct OnPlugin {
     pub descriptors: &'static [EventDescriptor],
 }
 impl OnPlugin {
-    pub fn create_listeners_table(
-        &self,
-        lua: &Lua,
-        scope: Option<EventScope>,
-    ) -> mlua::Result<Table> {
-        println!(
-            "Request to create a new listeners table with scope: {:?}",
-            scope
-        );
+    pub fn create_listeners_table(&self, lua: &Lua) -> mlua::Result<Table> {
         let table = lua.create_table()?;
 
         for descriptor in self.descriptors {
@@ -42,7 +36,8 @@ impl OnPlugin {
             };
 
             let key = descriptor.event_key;
-            let listener = lua.create_function(move |_, _: ()| Ok(RxBuilder::new(key, scope)))?;
+            let listener =
+                lua.create_function(move |_, _: ()| Ok(RxBuilder::new(key, EventScope::Global)))?;
             ns_table.set(descriptor.name, listener)?;
         }
 
@@ -55,7 +50,7 @@ impl GameModePlugin for OnPlugin {
     }
 
     fn create_global_api(&self, lua: &Lua) -> eyre::Result<Option<Table>> {
-        Ok(Some(self.create_listeners_table(lua, None).wrap_err(
+        Ok(Some(self.create_listeners_table(lua).wrap_err(
             format!("Failed to initialize `{}` plugin", self.name()).as_str(),
         )?))
     }

@@ -15,21 +15,22 @@ pub(super) struct RxBuilder {
     consumed: bool,
 }
 impl RxBuilder {
-    pub fn new(event: GameModeEventKey, scope: Option<EventScope>) -> Self {
+    pub fn new(event: GameModeEventKey, scope: EventScope) -> Self {
         Self {
             event,
             name: None,
             limit: None,
-            scope: scope.unwrap_or(EventScope::Global),
+            scope,
             predicates: Vec::new(),
             consumed: false,
         }
     }
 
-    fn construct_listener(&self, handle: mlua::Function) -> GameModeListener {
+    fn construct_listener(&self, handle: mlua::Function, seq: u64) -> GameModeListener {
         let builder = self.clone();
         GameModeListener {
             name: builder.name,
+            created_at_seq: seq,
             handle,
             call_count: 0,
             limit: self.limit,
@@ -70,11 +71,12 @@ impl UserData for RxBuilder {
             let mut app_data = lua
                 .app_data_mut::<GameModeAppData>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            let current_seq = app_data.event_bus.increment_sequence();
             app_data
                 .event_listeners
                 .entry(this.event)
                 .or_default()
-                .push(this.construct_listener(handle));
+                .push(this.construct_listener(handle, current_seq));
 
             Ok(())
         });
@@ -86,11 +88,12 @@ impl UserData for RxBuilder {
             let mut app_data = lua
                 .app_data_mut::<GameModeAppData>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            let current_seq = app_data.event_bus.increment_sequence();
             app_data
                 .event_listeners
                 .entry(this.event)
                 .or_default()
-                .push(this.construct_listener(handle));
+                .push(this.construct_listener(handle, current_seq));
 
             Ok(())
         });
