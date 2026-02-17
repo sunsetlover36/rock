@@ -12,7 +12,7 @@ use shared::GameModeClientRequest;
 use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
-    runtime::api::on::{GameModeEventData, WorldEventData},
+    runtime::api::on::{GameModeEventData, PlayerEventData, WorldEventData},
     world::{WorldNatives, WorldState},
 };
 
@@ -166,8 +166,14 @@ impl Runtime {
     fn on_system_callback(&self, cb: SystemCallback) {
         match cb {
             SystemCallback::OnPlayerConnect { pk } => {
-                println!("[gamemode] player connected: {:?}", pk);
-                // Spawn player, include the player into the world
+                self.event_bus.schedule_event(GameModeEventData::Player(
+                    PlayerEventData::Connect { id: pk.pack() },
+                ));
+            }
+            SystemCallback::OnPlayerDisconnect { pk } => {
+                self.event_bus.schedule_event(GameModeEventData::Player(
+                    PlayerEventData::Disconnect { id: pk.pack() },
+                ));
             }
         }
     }

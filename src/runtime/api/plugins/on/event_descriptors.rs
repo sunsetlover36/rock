@@ -11,4 +11,9 @@ pub(crate) const GLOBAL_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
         name: "connect",
         event_key: GameModeEventKey::Player(PlayerEventKey::Connect),
     },
+    EventDescriptor {
+        namespace: Some("player"),
+        name: "disconnect",
+        event_key: GameModeEventKey::Player(PlayerEventKey::Disconnect),
+    },
 ];

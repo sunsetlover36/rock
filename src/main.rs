@@ -24,7 +24,7 @@ use crate::{
         Runtime, RuntimeCallback, RuntimeParams, default_client_api::GameModeDefaultClientApi,
     },
     socket::{
-        adapter::SocketAdapter,
+        adapter::{SocketAdapter, SocketAdapterParams},
         session_registry::{SessionRegistrar, SessionRegistry, SessionRegistryParams},
     },
 };
@@ -44,17 +44,19 @@ mod world;
 struct AppState {
     session_registrar: SessionRegistrar,
     client_messenger_tx: mpsc::Sender<ClientEnvelope<IncomingRequest>>,
+    gamemode_callback_tx: flume::Sender<RuntimeCallback>,
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 async fn handle_socket(socket: WebSocket, state: AppState) {
-    SocketAdapter::new(
+    SocketAdapter::new(SocketAdapterParams {
         socket,
-        state.session_registrar.register(),
-        state.client_messenger_tx.clone(),
-    )
+        session: state.session_registrar.register(),
+        client_messenger_tx: state.client_messenger_tx.clone(),
+        gamemode_callback_tx: state.gamemode_callback_tx.clone(),
+    })
     .activate()
     .await;
 }
@@ -72,6 +74,7 @@ async fn main() -> Result<()> {
     let (client_messenger_tx, client_messenger_actor) =
         create_client_message_actor(1024, gamemode_callback_tx.clone());
 
+    // TODO: Client messenger actor acts like an unwrapper for incoming requests. Remove it
     // Actor Runtime for background async tasks
     // Actor #1: Route ws client messages to gamemode callbacks channel
     // More reasons to keep it? If no, get rid of it
@@ -117,6 +120,7 @@ async fn main() -> Result<()> {
     let state = AppState {
         session_registrar,
         client_messenger_tx,
+        gamemode_callback_tx,
     };
     let app = Router::new()
         .route("/", get(async || "Hello, World!"))
