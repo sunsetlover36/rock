@@ -5,7 +5,7 @@ use mlua::Lua;
 use slotmap::{SlotMap, new_key_type};
 
 use crate::{
-    gamemode::{
+    runtime::{
         api::protocol::{AsyncTaskResult, GameModePlugin},
         utils::LuaResultExt,
     },
@@ -17,7 +17,7 @@ new_key_type! {
 }
 
 #[derive(Debug)]
-pub enum SchedulerMessage {
+pub enum SceneManagerMessage {
     AddTask(mlua::RegistryKey),
     Wake {
         task_id: TaskId,
@@ -30,22 +30,22 @@ pub enum SchedulerMessage {
     },
 }
 
-pub struct SchedulerParams {
+pub struct SceneManagerParams {
     pub plugins: HashMap<String, Box<dyn GameModePlugin>>,
-    pub rx: flume::Receiver<SchedulerMessage>,
-    pub tx: flume::Sender<SchedulerMessage>,
+    pub rx: flume::Receiver<SceneManagerMessage>,
+    pub tx: flume::Sender<SceneManagerMessage>,
     pub tokio_handle: tokio::runtime::Handle,
 }
 
-pub struct Scheduler {
+pub struct SceneManager {
     threads: SlotMap<TaskId, mlua::RegistryKey>,
-    rx: flume::Receiver<SchedulerMessage>,
-    tx: flume::Sender<SchedulerMessage>,
+    rx: flume::Receiver<SceneManagerMessage>,
+    tx: flume::Sender<SceneManagerMessage>,
     tokio_handle: tokio::runtime::Handle,
     plugins: HashMap<String, Box<dyn GameModePlugin>>,
 }
-impl Scheduler {
-    pub fn new(params: SchedulerParams) -> Self {
+impl SceneManager {
+    pub fn new(params: SceneManagerParams) -> Self {
         Self {
             threads: SlotMap::<TaskId, mlua::RegistryKey>::with_key(),
             rx: params.rx,
@@ -77,13 +77,13 @@ impl Scheduler {
         };
         let thread: mlua::Thread = lua
             .registry_value(thread_rk)
-            .wrap_err("scheduler.advance_task: cannot find a thread by its registry key")?;
+            .wrap_err("scene_manager.advance_task: cannot find a thread by its registry key")?;
 
         let resume_result = thread.resume::<mlua::Value>(args);
         match resume_result {
             Err(e) => {
                 return Err(eyre::eyre!(
-                    "scheduler.advance_task: task {:?} crashed: {}",
+                    "scene_manager.advance_task: task {:?} crashed: {}",
                     task_id,
                     e
                 ));
@@ -131,10 +131,10 @@ impl Scheduler {
                 self.tokio_handle.spawn(async move {
                     match task.await {
                         Ok(result) => {
-                            let _ = tx.send(SchedulerMessage::Wake { task_id, result });
+                            let _ = tx.send(SceneManagerMessage::Wake { task_id, result });
                         }
                         Err(err) => {
-                            let _ = tx.send(SchedulerMessage::Error {
+                            let _ = tx.send(SceneManagerMessage::Error {
                                 task_id,
                                 err: err.to_string(),
                             });
@@ -151,15 +151,15 @@ impl Scheduler {
     pub fn tick(&mut self, lua: &Lua) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                SchedulerMessage::AddTask(thread_rk) => {
+                SceneManagerMessage::AddTask(thread_rk) => {
                     if let Err(e) = self.add_task(lua, thread_rk) {
-                        eprintln!("scheduler.tick: error adding task ({})", e);
+                        eprintln!("scene_manager.tick: error adding task ({})", e);
                     }
                 }
-                SchedulerMessage::Cancel(task_id) => {
+                SceneManagerMessage::Cancel(task_id) => {
                     self.threads.remove(task_id);
                 }
-                SchedulerMessage::Wake { task_id, result } => {
+                SceneManagerMessage::Wake { task_id, result } => {
                     let lua_val = match result {
                         AsyncTaskResult::JsonValue(v) => match json_to_lua(lua, v) {
                             mlua::Result::Ok(v) => v,
@@ -173,13 +173,16 @@ impl Scheduler {
                     };
 
                     if let Err(e) = self.advance_task(lua, task_id, lua_val) {
-                        eprintln!("scheduler.tick: error advancing task {:?} ({})", task_id, e);
+                        eprintln!(
+                            "scene_manager.tick: error advancing task {:?} ({})",
+                            task_id, e
+                        );
                         self.threads.remove(task_id);
                     };
                 }
-                SchedulerMessage::Error { task_id, err } => {
+                SceneManagerMessage::Error { task_id, err } => {
                     eprintln!(
-                        "scheduler.tick: scene execution error. task_id = {:?}; {}",
+                        "scene_manager.tick: scene execution error. task_id = {:?}; {}",
                         &task_id, err
                     );
                     self.threads.remove(task_id);

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{actor::Actor, gamemode::GameModeCallback};
+use crate::{actor::Actor, runtime::RuntimeCallback};
 use color_eyre::eyre::Result;
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -9,7 +9,7 @@ pub mod protocol;
 pub use protocol::*;
 
 pub struct IndexerActor {
-    pub gamemode_callback_tx: mpsc::Sender<GameModeCallback>,
+    pub gamemode_callback_tx: mpsc::Sender<RuntimeCallback>,
     pub redis_url: String,
 }
 
@@ -28,7 +28,7 @@ impl IndexerActor {
                 Ok(event) => {
                     let _ = self
                         .gamemode_callback_tx
-                        .send(GameModeCallback::Indexer(event))
+                        .send(RuntimeCallback::Indexer(event))
                         .await;
                 }
                 Err(err) => {

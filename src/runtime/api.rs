@@ -3,17 +3,26 @@ use std::{collections::HashMap, sync::Arc};
 use color_eyre::eyre;
 use mlua::Lua;
 
-pub mod scheduler;
-pub use scheduler::SchedulerMessage;
-use scheduler::{Scheduler, SchedulerParams};
 mod plugins;
-use plugins::{memory::MemoryPlugin, scene::ScenePlugin, when::WhenPlugin};
+use plugins::{
+    entity::EntityPlugin,
+    memory::MemoryPlugin,
+    on::OnPlugin,
+    scene::{SceneManagerMessage, ScenePlugin},
+};
+pub use plugins::{on, scene::SceneManager};
 pub mod protocol;
 use protocol::GameModePlugin;
 
 use crate::{
-    gamemode::{app_data::GameModeAppData, utils::LuaResultExt},
     meta_db::MetaDb,
+    runtime::{
+        api::{
+            on::event_descriptors::GLOBAL_EVENT_DESCRIPTORS, plugins::scene::SceneManagerParams,
+        },
+        app_data::GameModeAppData,
+        utils::LuaResultExt,
+    },
 };
 
 pub struct Yielder {}
@@ -21,17 +30,15 @@ impl Yielder {
     pub fn get(lua: &Lua) -> eyre::Result<mlua::Function> {
         let app_data = lua
             .app_data_ref::<GameModeAppData>()
-            .ok_or_else(|| eyre::eyre!("GameModeAppData is not initialized"))?;
-        let yielder_fn_rk = app_data.yielder.as_ref().ok_or_else(|| {
-            eyre::eyre!("`yielder` registry key not found in app data. Did you forget to set it?")
-        })?;
-        let yielder_fn: mlua::Function = lua
-            .registry_value(yielder_fn_rk)
-            .wrap_err("`yielder` registry key not found")?;
+            .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
+        let yielder_fn = app_data
+            .yielder
+            .clone()
+            .ok_or_else(|| eyre::eyre!("`yielder` function not found in app data"))?;
 
         Ok(yielder_fn)
     }
-    pub fn create(lua: &Lua) -> eyre::Result<mlua::RegistryKey> {
+    pub fn create(lua: &Lua) -> eyre::Result<mlua::Function> {
         let yielder_script = r#"
             return function(opcode)
                 return function(...)
@@ -44,30 +51,30 @@ impl Yielder {
             .set_name("engine/yielder")
             .eval()
             .wrap_err("Failed to create `yielder_script`")?;
-        let yielder_fn_rk = lua
-            .create_registry_value(yielder_fn)
-            .wrap_err("Failed to store `yielder` registry value")?;
 
-        Ok(yielder_fn_rk)
+        Ok(yielder_fn)
     }
 }
 
 pub struct ApiRegisterParams {
     pub tokio_handle: tokio::runtime::Handle,
-    pub scheduler_channel_buffer: usize,
+    pub scene_manager_channel_buffer: usize,
     pub meta_db: Arc<MetaDb>,
 }
-pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler> {
-    let (scheduler_tx, scheduler_rx) =
-        flume::bounded::<SchedulerMessage>(params.scheduler_channel_buffer);
+pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<SceneManager> {
+    let (scene_manager_tx, scene_manager_rx) =
+        flume::bounded::<SceneManagerMessage>(params.scene_manager_channel_buffer);
 
     let plugins: Vec<Box<dyn GameModePlugin>> = vec![
-        Box::new(WhenPlugin {}),
+        Box::new(OnPlugin {
+            descriptors: GLOBAL_EVENT_DESCRIPTORS,
+        }),
+        Box::new(EntityPlugin {}),
         Box::new(MemoryPlugin {
             meta_db: params.meta_db,
         }),
         Box::new(ScenePlugin {
-            scheduler_tx: scheduler_tx.clone(),
+            manager_tx: scene_manager_tx.clone(),
         }),
     ];
     let mut registered_plugins = HashMap::new();
@@ -76,7 +83,7 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
     {
         let mut app_data = lua
             .app_data_mut::<GameModeAppData>()
-            .ok_or_else(|| eyre::eyre!("GameModeAppData is not initialized"))?;
+            .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
         app_data.yielder = Some(Yielder::create(&lua)?);
     }
 
@@ -90,11 +97,11 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
     }
 
     // Scene APIs
-    let mut scene_plugins: HashMap<String, mlua::RegistryKey> = HashMap::new();
+    let mut scene_plugins: HashMap<String, mlua::Table> = HashMap::new();
     for plugin in plugins {
         let name = plugin.name().to_owned();
-        if let Some(scene_api_rk) = plugin.create_scene_api(&lua)? {
-            scene_plugins.insert(name.clone(), scene_api_rk);
+        if let Some(scene_api) = plugin.create_scene_api(&lua)? {
+            scene_plugins.insert(name.clone(), scene_api);
         }
 
         registered_plugins.insert(name, plugin);
@@ -102,13 +109,13 @@ pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<Scheduler>
 
     let mut app_data = lua
         .app_data_mut::<GameModeAppData>()
-        .ok_or_else(|| eyre::eyre!("GameModeAppData is not initialized"))?;
+        .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
     app_data.scene_plugins = scene_plugins;
 
-    Ok(Scheduler::new(SchedulerParams {
+    Ok(SceneManager::new(SceneManagerParams {
         plugins: registered_plugins,
-        rx: scheduler_rx,
-        tx: scheduler_tx,
+        rx: scene_manager_rx,
+        tx: scene_manager_tx,
         tokio_handle: params.tokio_handle,
     }))
 }

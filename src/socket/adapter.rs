@@ -1,4 +1,5 @@
 use axum::extract::ws::{Message, WebSocket};
+use color_eyre::eyre;
 use futures_util::{
     SinkExt, StreamExt,
     stream::{SplitSink, SplitStream},
@@ -8,34 +9,45 @@ use tokio::sync::{broadcast::error::RecvError, mpsc};
 
 use crate::{
     envelope::ClientEnvelope,
+    runtime::{RuntimeCallback, SystemCallback},
     socket::{
         protocol::SocketCommand,
         session_registry::{Session, protocol::SessionCommand},
     },
 };
 
+pub struct SocketAdapterParams {
+    pub socket: WebSocket,
+    pub session: Session,
+    pub client_messenger_tx: mpsc::Sender<ClientEnvelope<IncomingRequest>>,
+    pub gamemode_callback_tx: flume::Sender<RuntimeCallback>,
+}
 pub struct SocketAdapter {
     ws_tx: SplitSink<WebSocket, Message>,
     ws_rs: SplitStream<WebSocket>,
     session: Session,
     client_messenger_tx: mpsc::Sender<ClientEnvelope<IncomingRequest>>,
+    gamemode_callback_tx: flume::Sender<RuntimeCallback>,
 }
 impl SocketAdapter {
-    pub fn new(
-        socket: WebSocket,
-        session: Session,
-        client_messenger_tx: mpsc::Sender<ClientEnvelope<IncomingRequest>>,
-    ) -> Self {
-        let (ws_tx, ws_rs) = socket.split();
+    pub fn new(params: SocketAdapterParams) -> Self {
+        let (ws_tx, ws_rs) = params.socket.split();
         Self {
             ws_tx,
             ws_rs,
-            session,
-            client_messenger_tx,
+            session: params.session,
+            client_messenger_tx: params.client_messenger_tx,
+            gamemode_callback_tx: params.gamemode_callback_tx,
         }
     }
 
-    pub async fn activate(mut self) {
+    pub async fn activate(mut self) -> eyre::Result<()> {
+        self.gamemode_callback_tx
+            .send_async(RuntimeCallback::System(SystemCallback::OnPlayerConnect {
+                pk: self.session.pk,
+            }))
+            .await?;
+
         loop {
             tokio::select! {
                 biased;
@@ -104,5 +116,14 @@ impl SocketAdapter {
                 }
             }
         }
+
+        self.gamemode_callback_tx
+            .send_async(RuntimeCallback::System(
+                SystemCallback::OnPlayerDisconnect {
+                    pk: self.session.pk,
+                },
+            ))
+            .await?;
+        Ok(())
     }
 }

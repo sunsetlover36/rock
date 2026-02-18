@@ -7,70 +7,81 @@ use std::{
 
 use color_eyre::eyre::{self};
 use mlua::Lua;
-use shared::GameModeRequest;
+use shared::GameModeClientRequest;
 
 use crate::{
-    gamemode::api::{ApiRegisterParams, scheduler::Scheduler},
     meta_db::MetaDb,
     router::CommitRouter,
+    runtime::api::on::{GameModeEventData, PlayerEventData, WorldEventData},
     world::{WorldNatives, WorldState},
 };
 
-pub mod default_event_listener;
+pub mod default_client_api;
+pub(crate) mod event_bus;
+pub(crate) use event_bus::EventBus;
+
 pub mod protocol;
 pub use protocol::*;
 
 mod app_data;
-mod utils;
 use app_data::GameModeAppData;
-use utils::LuaResultExt;
-mod api;
 
-pub struct GameModeParams {
+mod utils;
+use utils::LuaResultExt;
+
+mod api;
+use api::{ApiRegisterParams, SceneManager};
+
+pub struct RuntimeParams {
     pub name: String,
-    pub event_listener: Box<dyn GameModeEventListener>,
-    pub callback_rx: flume::Receiver<GameModeCallback>,
+    pub client_api: Box<dyn GameModeClientApi>,
+    pub callback_rx: flume::Receiver<RuntimeCallback>,
     pub commit_router: CommitRouter,
     pub meta_db: MetaDb,
     pub tokio_handle: tokio::runtime::Handle,
 }
 
-pub struct GameMode {
+pub struct Runtime {
     lua: Lua,
-    event_listener: Box<dyn GameModeEventListener>,
-    callback_rx: flume::Receiver<GameModeCallback>,
+    client_api: Box<dyn GameModeClientApi>,
+    callback_rx: flume::Receiver<RuntimeCallback>,
     world_state: Rc<WorldState>,
     world_natives: WorldNatives,
     commit_router: CommitRouter,
     meta_db: Arc<MetaDb>,
-    scheduler: Scheduler,
+    scene_manager: SceneManager,
+    event_bus: Rc<EventBus>,
 }
-impl GameMode {
-    pub fn new(params: GameModeParams) -> eyre::Result<Self> {
+impl Runtime {
+    pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
         let meta_db = Arc::new(params.meta_db);
         let world_state = Rc::new(WorldState::new());
         let world_natives = WorldNatives {
             state: world_state.clone(),
         };
 
+        let event_bus = Rc::new(EventBus::new());
+
         let lua = Lua::new();
         let script_path = format!("gamemodes/{}.lua", params.name);
         let script = std::fs::read_to_string(script_path)?;
 
         let app_data = GameModeAppData {
-            world_awakes: None,
+            event_listeners: HashMap::new(),
             scenes: HashMap::new(),
             scene_plugins: HashMap::new(),
             yielder: None,
+            world: hecs::World::new(),
+            event_bus: event_bus.clone(),
         };
         lua.set_app_data(app_data);
 
         // Plugins
-        let scheduler = api::register(
+        let scene_manager = api::register(
             &lua,
             ApiRegisterParams {
                 tokio_handle: params.tokio_handle,
-                scheduler_channel_buffer: 256,
+                scene_manager_channel_buffer: 256,
                 meta_db: meta_db.clone(),
             },
         )?;
@@ -82,47 +93,35 @@ impl GameMode {
 
         Ok(Self {
             lua,
-            event_listener: params.event_listener,
+            client_api: params.client_api,
             callback_rx: params.callback_rx,
             world_state,
             world_natives,
             commit_router: params.commit_router,
             meta_db,
-            scheduler,
+            scene_manager,
+            event_bus,
         })
     }
 
     pub fn awaken(&mut self) -> eyre::Result<Self> {
-        // Call when.world.awakes
-        if let Some(when_world_awakes) =
-            self.lua
-                .app_data_ref::<GameModeAppData>()
-                .and_then(|app_data| {
-                    app_data
-                        .world_awakes
-                        .as_ref()
-                        .and_then(|rk| self.lua.registry_value::<mlua::Function>(rk).ok())
-                })
-        {
-            when_world_awakes
-                .call::<()>(())
-                .wrap_err("Error in `when.world.awakes`")?;
-        }
+        self.event_bus
+            .schedule_event(GameModeEventData::World(WorldEventData::Awake));
 
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();
         loop {
-            self.scheduler.tick(&self.lua);
+            self.scene_manager.tick(&self.lua);
 
             while let Ok(cb) = self.callback_rx.try_recv() {
                 match cb {
-                    GameModeCallback::Engine(cb) => {
-                        self.on_engine_callback(cb);
+                    RuntimeCallback::System(cb) => {
+                        self.on_system_callback(cb);
                     }
-                    GameModeCallback::Client(cb) => {
+                    RuntimeCallback::Client(cb) => {
                         self.on_client_request(cb);
                     }
-                    GameModeCallback::Indexer(_) => {}
+                    RuntimeCallback::Indexer(_) => {}
                 }
             }
 
@@ -133,6 +132,8 @@ impl GameMode {
             // Lua sends a game intent then can't get the result in the same tick
 
             // world.step
+
+            self.event_bus.flush(&self.lua)?;
 
             let now = Instant::now();
             next_tick += tick_interval;
@@ -148,13 +149,13 @@ impl GameMode {
     // Untrusted input (called by the client)
     fn on_client_request(&self, message: ClientRequest) {
         println!("[gamemode] new client message: {:?}", message);
-        self.event_listener.emit(GameModeEvent::SendClientMessage {
+        self.client_api.send(GameModeClientCommand::SendMessage {
             pk: message.sender,
             text: String::from("Hello from Wonderful RP!"),
         });
 
         match message.payload {
-            GameModeRequest::PlayerMove(dir) => {
+            GameModeClientRequest::PlayerMove(dir) => {
                 // TODO: Who's being moved? How?
                 println!("[CLIENT] PlayerMove: {:?}", dir);
             }
@@ -162,11 +163,17 @@ impl GameMode {
     }
 
     // Trusted input (called by the engine)
-    fn on_engine_callback(&self, cb: EngineCallback) {
+    fn on_system_callback(&self, cb: SystemCallback) {
         match cb {
-            EngineCallback::OnPlayerConnect { pk } => {
-                println!("[gamemode] player connected: {:?}", pk);
-                // Spawn player, include the player into the world
+            SystemCallback::OnPlayerConnect { pk } => {
+                self.event_bus.schedule_event(GameModeEventData::Player(
+                    PlayerEventData::Connect { id: pk.pack() },
+                ));
+            }
+            SystemCallback::OnPlayerDisconnect { pk } => {
+                self.event_bus.schedule_event(GameModeEventData::Player(
+                    PlayerEventData::Disconnect { id: pk.pack() },
+                ));
             }
         }
     }

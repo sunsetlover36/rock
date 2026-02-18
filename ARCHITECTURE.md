@@ -178,20 +178,20 @@ instead of,
 ```
 5. `get_or_ensure_key(key: &str)` and `get_or_ensure_prefix(prefix: &str)` -> lazy `ensure` methods. if the value is fresh -> return it from the cache straight away, otherwise, pull it from sqlite and update the cache. asynchronous.
 
-### gamemode
-gamemode is a heart of the engine. it gives a birth to the world.
+### runtime
+runtime is a heart of the engine. it gives a birth to gamemodes.
 
-gamemode initialization params:
-* gamemode gets initialized with the gamemode name from the server config.
-* it also requires `event_listener` -> gamemode uses event listener to communicate with clients. gamemode is **transport-agnostic**. it means that we can attach any event listener to it. event listener decides what to do with the message from the world. as a default option, i implemented a default event listener that converts `GameModeEvent` events to `ServerMessage` messages, essentially communicating with the session registry.
-* `callback_rx` -> a channel for gamemode callbacks. this is the way to befriend gamemode with other entities and domains. for example, client messenger actor sends client intents to this channel (`GameModeEvent::Client(...)`).
-* `commit_router` -> handed to the gamemode from the outside because commit router should be initialized in the main file because it gathers all types of listeners located throughout the engine.
-* `meta_db` -> gamemode uses meta db to inject a `memory` plugin (see below)
+runtime initialization params:
+* runtime gets initialized with the active gamemode name from the server config.
+* it also requires `client_api` -> runtime uses client api to give gamemodes an opportunity to communicate with clients. runtime is **transport-agnostic**. it means that we can attach any client api to it. a client api decides what to do with the message from the world. as a default option, i implemented a default client api that converts `GameModeClientCommand` to `ServerMessage` messages, essentially communicating with the session registry.
+* `callback_rx` -> a channel for gamemode callbacks. this is the way to befriend gamemode with other entities and domains. for example, client messenger actor sends client intents to this channel (`GameModeClientCommand::Client(...)`).
+* `commit_router` -> handed to the runtime from the outside because commit router should be initialized in the main file because it gathers all types of listeners located throughout the engine.
+* `meta_db` -> runtime uses meta db to inject a `memory` plugin (see below)
 * `tokio_handle` -> scheduler is using it to spawn async background tasks (see below)
 
-gamemode operates on a different synchronous thread (apart of tokio runtime), so the tokio runtime is not being blocked by gamemode calculations and ticks.
+gamemode runtime operates on a different synchronous thread (apart of tokio runtime), so the tokio runtime is not being blocked by gamemode calculations and ticks.
 
-the great three pillars of `gamemode.rs`:
+the great three pillars of `runtime.rs`:
 1. world state and world natives
 2. gamemode callbacks
 3. lua, plugins and scheduler
@@ -248,7 +248,7 @@ vs.
 // ???
 ```
 
-currently, there are two active types of callback: `GameModeCallback::Engine` for the gamemode lifecycle management and `GameModeCallback::Client` for client messages.
+currently, there are two active types of callback: `RuntimeCallback::System` for system callbacks (called by the engine) and `RuntimeCallback::Client` for client messages.
 
 #### lua, plugins and scheduler
 the engine uses `mlua` to make Rust and Lua friends. one of the most powerful concepts of the engine shines here: scenes and plugins.
