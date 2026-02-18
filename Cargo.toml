@@ -1,6 +1,6 @@
 [package]
 name = "rock-engine"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -22,3 +22,4 @@ mlua = { version = "0.11.5", features = ["lua54", "vendored", "async", "serde"] 
 slotmap = "1.1.1"
 strum = { version = "0.27", features = ["derive"] }
 hecs = "0.11.0"
+clap = "4.5.59"
