@@ -1,4 +1,5 @@
 use color_eyre::eyre::{self, Context};
+use mlua::Lua;
 use rayon::prelude::*;
 use std::{
     collections::HashMap,
@@ -6,6 +7,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use walkdir::WalkDir;
+
+use crate::runtime::utils::LuaResultExt;
 
 #[derive(Debug)]
 struct ScriptAsset {
@@ -101,31 +104,7 @@ pub fn scan_geodes() -> eyre::Result<Vec<Geode>> {
     Ok(geodes)
 }
 
-struct ScriptAssetCompositionParams<'a> {
-    script_string: &'a mut String,
-    script_asset: &'a ScriptAsset,
-    display_name: &'a str,
-    scoped: bool,
-}
-fn compose_script_asset(params: ScriptAssetCompositionParams) {
-    let ScriptAssetCompositionParams {
-        script_string,
-        script_asset,
-        display_name,
-        scoped,
-    } = params;
-    script_string.push_str(&format!("-- {}: {:?}\n", display_name, script_asset.path));
-
-    if scoped {
-        script_string.push_str("do\n");
-    }
-    script_string.push_str(&script_asset.contents);
-    if scoped {
-        script_string.push_str("end\n");
-    }
-    script_string.push_str("\n");
-}
-pub fn compose_geodes(geodes: Vec<Geode>) -> eyre::Result<String> {
+pub fn inject_geodes(lua: &Lua, geodes: Vec<Geode>) -> eyre::Result<String> {
     let mut script = String::new();
     if geodes.is_empty() {
         return Ok(script);
@@ -135,28 +114,28 @@ pub fn compose_geodes(geodes: Vec<Geode>) -> eyre::Result<String> {
         script.push_str(&format!("-- [GEODE: {}] --\n", geode.name));
 
         for glyph in &geode.glyphs {
-            compose_script_asset(ScriptAssetCompositionParams {
-                script_string: &mut script,
-                script_asset: glyph,
-                display_name: "Glyph",
-                scoped: false,
-            });
+            let path = glyph.path.to_string_lossy().to_string();
+            lua.load(&glyph.contents)
+                .set_name(&path)
+                .exec()
+                .wrap_err(&format!("Failed to load a glyph at path {}", &path))?;
         }
         for bp in &geode.blueprints {
-            compose_script_asset(ScriptAssetCompositionParams {
-                script_string: &mut script,
-                script_asset: bp,
-                display_name: "Blueprint",
-                scoped: true,
-            });
+            let path = bp.path.to_string_lossy().to_string();
+            lua.load(&bp.contents)
+                .set_name(&path)
+                .exec()
+                .wrap_err(&format!(
+                    "Failed to load a blueprint script at path {}",
+                    &path
+                ))?;
         }
         for system in &geode.systems {
-            compose_script_asset(ScriptAssetCompositionParams {
-                script_string: &mut script,
-                script_asset: system,
-                display_name: "System",
-                scoped: true,
-            });
+            let path = system.path.to_string_lossy().to_string();
+            lua.load(&system.contents)
+                .set_name(&path)
+                .exec()
+                .wrap_err(&format!("Failed to load a system script at path {}", &path))?;
         }
     }
 

@@ -27,7 +27,7 @@ mod app_data;
 use app_data::GameModeAppData;
 
 mod geode;
-use geode::{compose_geodes, scan_geodes};
+use geode::{inject_geodes, scan_geodes};
 
 pub mod protocol;
 pub use protocol::*;
@@ -87,12 +87,9 @@ impl Runtime {
         )?;
 
         // Gamemode script string
+        inject_geodes(&lua, scan_geodes()?)?;
         let gamemode_path = format!("gamemodes/{}.lua", params.name);
-        let mut gamemode = String::new();
-        gamemode.push_str("-- [[ GEODES ]] --\n\n");
-        gamemode.push_str(&compose_geodes(scan_geodes()?)?);
-        gamemode.push_str("-- [[ GAMEMODE ]] --\n");
-        gamemode.push_str(&std::fs::read_to_string(gamemode_path)?);
+        let gamemode = std::fs::read_to_string(&gamemode_path)?;
 
         lua.load(&gamemode)
             .exec()
