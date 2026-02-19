@@ -20,17 +20,20 @@ pub mod default_client_api;
 pub(crate) mod event_bus;
 pub(crate) use event_bus::EventBus;
 
-pub mod protocol;
-pub use protocol::*;
+mod api;
+use api::{ApiRegisterParams, SceneManager};
 
 mod app_data;
 use app_data::GameModeAppData;
 
+mod geode;
+use geode::{compose_geodes, scan_geodes};
+
+pub mod protocol;
+pub use protocol::*;
+
 mod utils;
 use utils::LuaResultExt;
-
-mod api;
-use api::{ApiRegisterParams, SceneManager};
 
 pub struct RuntimeParams {
     pub name: String,
@@ -54,17 +57,14 @@ pub struct Runtime {
 }
 impl Runtime {
     pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
+        let lua = Lua::new();
+
         let meta_db = Arc::new(params.meta_db);
         let world_state = Rc::new(WorldState::new());
         let world_natives = WorldNatives {
             state: world_state.clone(),
         };
-
         let event_bus = Rc::new(EventBus::new());
-
-        let lua = Lua::new();
-        let script_path = format!("gamemodes/{}.lua", params.name);
-        let script = std::fs::read_to_string(script_path)?;
 
         let app_data = GameModeAppData {
             event_listeners: HashMap::new(),
@@ -86,8 +86,15 @@ impl Runtime {
             },
         )?;
 
-        // Load script
-        lua.load(&script)
+        // Gamemode script string
+        let gamemode_path = format!("gamemodes/{}.lua", params.name);
+        let mut gamemode = String::new();
+        gamemode.push_str("-- [[ GEODES ]] --\n\n");
+        gamemode.push_str(&compose_geodes(scan_geodes()?)?);
+        gamemode.push_str("-- [[ GAMEMODE ]] --\n");
+        gamemode.push_str(&std::fs::read_to_string(gamemode_path)?);
+
+        lua.load(&gamemode)
             .exec()
             .wrap_err("Script execution error")?;
 
@@ -121,7 +128,6 @@ impl Runtime {
                     RuntimeCallback::Client(cb) => {
                         self.on_client_request(cb);
                     }
-                    RuntimeCallback::Indexer(_) => {}
                 }
             }
 
