@@ -15,7 +15,7 @@ use crate::runtime::{
             macros::{add_handle_methods, for_each_component},
         },
     },
-    app_data::GameModeAppData,
+    app_data,
 };
 
 #[derive(Clone)]
@@ -35,11 +35,13 @@ impl UserData for EntityHandle {
         for_each_component!(methods, add_handle_methods);
 
         methods.add_method("custom", |lua, this, table: Option<mlua::Table>| {
-            let mut app_data = lua
-                .app_data_mut::<GameModeAppData>()
+            let event_bus = lua
+                .app_data_ref::<app_data::EventBus>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                .clone();
+            let mut world = lua
+                .app_data_mut::<app_data::World>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-            let event_bus = app_data.event_bus.clone();
-            let world = &mut app_data.world;
 
             if let Some(table) = table {
                 let rk = lua.create_registry_value(&table)?;

@@ -2,7 +2,7 @@ use mlua::UserData;
 
 use crate::runtime::{
     api::on::{EventScope, GameModeEventKey, GameModeListener},
-    app_data::GameModeAppData,
+    app_data,
 };
 
 #[derive(Clone)]
@@ -47,6 +47,20 @@ impl RxBuilder {
             Ok(())
         }
     }
+
+    fn add_event_listener(&self, lua: &mlua::Lua, handle: mlua::Function) -> mlua::Result<()> {
+        let current_seq = lua
+            .app_data_mut::<app_data::EventBus>()
+            .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+            .increment_sequence();
+        lua.app_data_mut::<app_data::EventListeners>()
+            .ok_or_else(|| mlua::Error::runtime("App data is not initialiezd"))?
+            .entry(self.event)
+            .or_default()
+            .push(self.construct_listener(handle, current_seq));
+
+        Ok(())
+    }
 }
 impl UserData for RxBuilder {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
@@ -68,33 +82,14 @@ impl UserData for RxBuilder {
             this.consumed = true;
             this.limit = Some(1);
 
-            let mut app_data = lua
-                .app_data_mut::<GameModeAppData>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-            let current_seq = app_data.event_bus.increment_sequence();
-            app_data
-                .event_listeners
-                .entry(this.event)
-                .or_default()
-                .push(this.construct_listener(handle, current_seq));
-
+            this.add_event_listener(lua, handle)?;
             Ok(())
         });
         methods.add_method_mut("each", |lua, this, handle| {
             this.ensure_not_consumed()?;
-
             this.consumed = true;
 
-            let mut app_data = lua
-                .app_data_mut::<GameModeAppData>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-            let current_seq = app_data.event_bus.increment_sequence();
-            app_data
-                .event_listeners
-                .entry(this.event)
-                .or_default()
-                .push(this.construct_listener(handle, current_seq));
-
+            this.add_event_listener(lua, handle)?;
             Ok(())
         });
     }

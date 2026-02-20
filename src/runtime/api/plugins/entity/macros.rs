@@ -24,12 +24,13 @@ pub(crate) use add_blueprint_methods;
 macro_rules! add_handle_methods {
     ($methods:ident, $lua_name:literal, $variant:ident, $comp_type:ty) => {
         $methods.add_method($lua_name, |lua, this, data: Option<mlua::Value>| {
-            let mut app_data = lua
-                .app_data_mut::<GameModeAppData>()
+            let event_bus = lua
+                .app_data_ref::<app_data::EventBus>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                .clone();
+            let mut world = lua
+                .app_data_mut::<app_data::World>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-
-            let event_bus = app_data.event_bus.clone();
-            let world = &mut app_data.world;
 
             if let Some(v) = data {
                 let comp_data: $comp_type = lua.from_value(v)?;

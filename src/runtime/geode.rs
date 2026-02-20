@@ -8,7 +8,7 @@ use std::{
 };
 use walkdir::WalkDir;
 
-use crate::runtime::utils::LuaResultExt;
+use crate::runtime::{app_data, utils::LuaResultExt};
 
 #[derive(Debug)]
 struct ScriptAsset {
@@ -104,15 +104,13 @@ pub fn scan_geodes() -> eyre::Result<Vec<Geode>> {
     Ok(geodes)
 }
 
-pub fn inject_geodes(lua: &Lua, geodes: Vec<Geode>) -> eyre::Result<String> {
-    let mut script = String::new();
+pub fn inject_geodes(lua: &Lua, geodes: &[Geode]) -> eyre::Result<()> {
     if geodes.is_empty() {
-        return Ok(script);
+        return Ok(());
     }
 
     for geode in geodes {
-        script.push_str(&format!("-- [GEODE: {}] --\n", geode.name));
-
+        lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Glyphs);
         for glyph in &geode.glyphs {
             let path = glyph.path.to_string_lossy().to_string();
             lua.load(&glyph.contents)
@@ -120,6 +118,9 @@ pub fn inject_geodes(lua: &Lua, geodes: Vec<Geode>) -> eyre::Result<String> {
                 .exec()
                 .wrap_err(&format!("Failed to load a glyph at path {}", &path))?;
         }
+    }
+    for geode in geodes {
+        lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Blueprints);
         for bp in &geode.blueprints {
             let path = bp.path.to_string_lossy().to_string();
             lua.load(&bp.contents)
@@ -130,6 +131,9 @@ pub fn inject_geodes(lua: &Lua, geodes: Vec<Geode>) -> eyre::Result<String> {
                     &path
                 ))?;
         }
+    }
+    for geode in geodes {
+        lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Systems);
         for system in &geode.systems {
             let path = system.path.to_string_lossy().to_string();
             lua.load(&system.contents)
@@ -139,5 +143,6 @@ pub fn inject_geodes(lua: &Lua, geodes: Vec<Geode>) -> eyre::Result<String> {
         }
     }
 
-    Ok(script)
+    lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Gamemode);
+    Ok(())
 }

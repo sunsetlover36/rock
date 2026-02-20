@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use color_eyre::eyre;
 use mlua::{IntoLuaMulti, Lua};
 
-use crate::runtime::{api::on::GameModeEventData, app_data::GameModeAppData, utils::LuaResultExt};
+use crate::runtime::{api::on::GameModeEventData, app_data, utils::LuaResultExt};
 
 struct QueuedEvent {
     created_at_seq: u64,
@@ -48,11 +48,11 @@ impl EventBus {
         let key = event.data.key();
 
         let (pending_handles, args) = {
-            let mut app_data = match lua.app_data_mut::<GameModeAppData>() {
+            let mut listeners = match lua.app_data_mut::<app_data::EventListeners>() {
                 Some(d) => d,
                 None => return Err(eyre::eyre!("App data is not initialized")),
             };
-            let listeners = match app_data.event_listeners.get_mut(&key) {
+            let listeners = match listeners.get_mut(&key) {
                 Some(fns) => fns,
                 None => return Ok(()),
             };

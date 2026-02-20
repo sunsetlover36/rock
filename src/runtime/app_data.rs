@@ -1,15 +1,24 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::runtime::{
-    EventBus,
-    api::on::{GameModeEventKey, GameModeListener},
+    EventBus as EventBusStruct,
+    api::{
+        on::{GameModeEventKey, GameModeListener},
+        protocol::PluginName,
+    },
 };
 
-pub struct GameModeAppData {
-    pub event_listeners: HashMap<GameModeEventKey, Vec<GameModeListener>>,
-    pub scenes: HashMap<String, mlua::Function>,
-    pub scene_plugins: HashMap<String, mlua::Table>,
-    pub yielder: Option<mlua::Function>,
-    pub world: hecs::World,
-    pub event_bus: Rc<EventBus>,
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum RuntimePhase {
+    Glyphs,
+    Blueprints,
+    Systems,
+    Gamemode,
 }
+
+pub type EventListeners = HashMap<GameModeEventKey, Vec<GameModeListener>>;
+pub type Scenes = HashMap<String, mlua::Function>;
+pub type ScenePlugins = HashMap<PluginName, mlua::Table>;
+pub type Yielder = Option<mlua::Function>;
+pub type World = hecs::World;
+pub type EventBus = Rc<EventBusStruct>;

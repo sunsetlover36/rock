@@ -15,7 +15,7 @@ use crate::runtime::{
             macros::{add_blueprint_methods, for_each_component},
         },
     },
-    app_data::GameModeAppData,
+    app_data,
 };
 
 #[derive(Clone)]
@@ -66,6 +66,15 @@ impl UserData for EntityBlueprint {
         });
 
         methods.add_method_mut("spawn", |lua, this, _: ()| {
+            let runtime_phase = lua
+                .app_data_ref::<app_data::RuntimePhase>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            if *runtime_phase == app_data::RuntimePhase::Blueprints {
+                return Err(mlua::Error::runtime(
+                    "Access denied: cannot spawn during blueprint loading phase",
+                ));
+            }
+
             let mut builder = hecs::EntityBuilder::new();
             for component in &this.components {
                 match component {
@@ -82,10 +91,10 @@ impl UserData for EntityBlueprint {
                 builder.add(CustomDataComponent(lua.create_registry_value(customs)?));
             }
 
-            let mut app_data = lua
-                .app_data_mut::<GameModeAppData>()
+            let mut world = lua
+                .app_data_mut::<app_data::World>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-            let entity = app_data.world.spawn(builder.build());
+            let entity = world.spawn(builder.build());
             Ok(EntityHandle { entity })
         });
     }

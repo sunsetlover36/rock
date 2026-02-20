@@ -12,7 +12,14 @@ use shared::GameModeClientRequest;
 use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
-    runtime::api::on::{GameModeEventData, PlayerEventData, WorldEventData},
+    runtime::api::{
+        SceneManagerParams,
+        on::{
+            GameModeEventData, OnPlugin, PlayerEventData, WorldEventData,
+            event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
+        },
+        protocol::GameModePlugin,
+    },
     world::{WorldNatives, WorldState},
 };
 
@@ -21,10 +28,11 @@ pub(crate) mod event_bus;
 pub(crate) use event_bus::EventBus;
 
 mod api;
-use api::{ApiRegisterParams, SceneManager};
+use api::{
+    EntityPlugin, MemoryPlugin, PluginComposer, SceneManager, SceneManagerMessage, ScenePlugin,
+};
 
 mod app_data;
-use app_data::GameModeAppData;
 
 mod geode;
 use geode::{inject_geodes, scan_geodes};
@@ -59,6 +67,7 @@ impl Runtime {
     pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
         let lua = Lua::new();
 
+        // Dependencies
         let meta_db = Arc::new(params.meta_db);
         let world_state = Rc::new(WorldState::new());
         let world_natives = WorldNatives {
@@ -66,31 +75,47 @@ impl Runtime {
         };
         let event_bus = Rc::new(EventBus::new());
 
-        let app_data = GameModeAppData {
-            event_listeners: HashMap::new(),
-            scenes: HashMap::new(),
-            scene_plugins: HashMap::new(),
-            yielder: None,
-            world: hecs::World::new(),
-            event_bus: event_bus.clone(),
-        };
-        lua.set_app_data(app_data);
+        // App data
+        lua.set_app_data::<app_data::EventListeners>(HashMap::new());
+        lua.set_app_data::<app_data::Scenes>(HashMap::new());
+        lua.set_app_data::<app_data::ScenePlugins>(HashMap::new());
+        lua.set_app_data::<app_data::Yielder>(None);
+        lua.set_app_data::<app_data::World>(hecs::World::new());
+        lua.set_app_data::<app_data::EventBus>(event_bus.clone());
 
         // Plugins
-        let scene_manager = api::register(
-            &lua,
-            ApiRegisterParams {
-                tokio_handle: params.tokio_handle,
-                scene_manager_channel_buffer: 256,
+        let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
+
+        let mut plugin_composer = PluginComposer::new(&lua)?;
+        let plugins: Vec<Box<dyn GameModePlugin>> = vec![
+            Box::new(OnPlugin {
+                descriptors: GLOBAL_EVENT_DESCRIPTORS,
+            }),
+            Box::new(EntityPlugin {}),
+            Box::new(MemoryPlugin {
                 meta_db: meta_db.clone(),
-            },
-        )?;
+            }),
+            Box::new(ScenePlugin {
+                manager_tx: scene_manager_tx.clone(),
+            }),
+        ];
+        for plugin in plugins {
+            plugin_composer.add_plugin(&lua, plugin)?;
+        }
+
+        let scene_manager = SceneManager::new(SceneManagerParams {
+            plugins: plugin_composer.consume_plugins(),
+            tx: scene_manager_tx,
+            rx: scene_manager_rx,
+            tokio_handle: params.tokio_handle,
+        });
+
+        // Geodes injection
+        inject_geodes(&lua, &scan_geodes()?)?;
 
         // Gamemode script string
-        inject_geodes(&lua, scan_geodes()?)?;
         let gamemode_path = format!("gamemodes/{}.lua", params.name);
         let gamemode = std::fs::read_to_string(&gamemode_path)?;
-
         lua.load(&gamemode)
             .exec()
             .wrap_err("Script execution error")?;
