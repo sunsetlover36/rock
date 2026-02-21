@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map};
 
 use mlua::{LuaSerdeExt, UserData};
 
@@ -19,7 +19,7 @@ use crate::runtime::{
 };
 
 #[derive(Clone)]
-pub(super) struct EntityBlueprint {
+pub(crate) struct EntityBlueprint {
     id: u64,
     pub name: Option<String>,
     pub components: Vec<ComponentData>,
@@ -47,6 +47,42 @@ impl UserData for EntityBlueprint {
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         for_each_component!(methods, add_blueprint_methods);
+
+        methods.add_method("from", |lua, this, name: String| {
+            if !this.components.is_empty() || !this.customs.is_empty() {
+                return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint already contains components or custom data", name)));
+            }
+
+            let blueprints = lua
+                .app_data_ref::<app_data::Blueprints>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            if let Some(blueprint) = blueprints.get(&name) {
+                let blueprint = blueprint.clone();
+                let mut this = this.clone();
+                this.components = blueprint.components;
+                this.customs = blueprint.customs;
+
+                return Ok(this);
+            } else {
+                return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint not found", name)));
+            }
+        });
+        methods.add_method("register", |lua, this, name: String| {
+            match lua
+                .app_data_mut::<app_data::Blueprints>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                .entry(name.clone())
+            {
+                hash_map::Entry::Occupied(_) => Err(mlua::Error::runtime(format!(
+                    "Cannot call `register(\"{}\")`: blueprint with this name already exists",
+                    name
+                ))),
+                hash_map::Entry::Vacant(entry) => {
+                    entry.insert(this.clone());
+                    Ok(())
+                }
+            }
+        });
 
         methods.add_method("name", |_, this, name: String| {
             let mut next = this.clone();

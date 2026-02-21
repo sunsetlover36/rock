@@ -5,7 +5,11 @@ use mlua::Lua;
 
 mod plugins;
 pub use plugins::on;
-pub(super) use plugins::{entity::EntityPlugin, memory::MemoryPlugin, scene::*};
+pub(super) use plugins::{
+    entity::{EntityBlueprint, EntityPlugin},
+    memory::MemoryPlugin,
+    scene::*,
+};
 pub mod protocol;
 use protocol::GameModePlugin;
 
@@ -70,7 +74,12 @@ impl PluginComposer {
 
         let err_msg = format!("Failed to initialize `{}` plugin", plugin_name);
         if let Some(global_api) = plugin.create_global_api(lua).wrap_err(&err_msg)? {
-            globals.set(plugin_name.as_ref(), global_api);
+            globals
+                .set(plugin_name.as_ref(), global_api)
+                .wrap_err(&format!(
+                    "Failed to call `add_plugin(\"{}\")`: failed to set a global table",
+                    plugin_name.as_ref()
+                ))?;
         };
         if let Some(scene_api) = plugin.create_scene_api(lua).wrap_err(&err_msg)? {
             let mut scene_plugins = lua
@@ -87,7 +96,12 @@ impl PluginComposer {
     }
     pub fn remove_plugin(&mut self, lua: &Lua, name: PluginName) -> eyre::Result<()> {
         let globals = lua.globals();
-        globals.set(name.as_ref(), mlua::Value::Nil);
+        globals
+            .set(name.as_ref(), mlua::Value::Nil)
+            .wrap_err(&format!(
+                "Failed to call `remove_plugin(\"{}\")`: cannot replace a plugin with `nil` value",
+                name.as_ref()
+            ))?;
 
         if self.plugins.contains_key(&name) {
             self.plugins.remove(&name);

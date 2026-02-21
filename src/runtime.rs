@@ -82,6 +82,7 @@ impl Runtime {
         lua.set_app_data::<app_data::Yielder>(None);
         lua.set_app_data::<app_data::World>(hecs::World::new());
         lua.set_app_data::<app_data::EventBus>(event_bus.clone());
+        lua.set_app_data::<app_data::Blueprints>(HashMap::new());
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);

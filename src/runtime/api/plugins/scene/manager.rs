@@ -118,7 +118,7 @@ impl SceneManager {
             .split_once("_")
             .ok_or_else(|| eyre::eyre!("handle_yield: invalid format for opcode ({})", opcode))?;
 
-        let plugin_name = prefix.parse::<PluginName>()?;
+        let plugin_name = prefix.to_lowercase().parse::<PluginName>()?;
         match self.plugins.get(&plugin_name) {
             Some(plugin) => {
                 let args: mlua::Table = t

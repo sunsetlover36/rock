@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::runtime::api::protocol::{GameModePlugin, PluginName};
 
 mod blueprint;
-use blueprint::EntityBlueprint;
+pub(crate) use blueprint::EntityBlueprint;
 mod components;
 pub(crate) use components::{ComponentData, ComponentKey};
 mod event_descriptors;
