@@ -24,3 +24,4 @@ hecs = "0.11.0"
 clap = { version = "4.5.5", features = ["derive"] }
 walkdir = "2"
 rayon = "1.11.0"
+num_enum = "0.7.5"

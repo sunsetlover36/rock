@@ -61,7 +61,6 @@ impl GameModePlugin for MemoryPlugin {
 
         Ok(Some(table))
     }
-
     fn handle_op(&self, op: &str, args: mlua::Table) -> eyre::Result<Option<AsyncTask>> {
         let meta_db = self.meta_db.clone();
 

@@ -15,8 +15,8 @@ pub trait GameModePlugin {
     fn name(&self) -> PluginName;
 
     fn create_global_api(&self, lua: &Lua) -> mlua::Result<Option<Table>>;
-    fn create_scene_api(&self, lua: &Lua) -> mlua::Result<Option<Table>>;
 
+    fn create_scene_api(&self, lua: &Lua) -> mlua::Result<Option<Table>>;
     fn handle_op(&self, op: &str, args: mlua::Table) -> eyre::Result<Option<AsyncTask>>;
 }
 
@@ -27,4 +27,5 @@ pub enum PluginName {
     Entity,
     Scene,
     Memory,
+    Input,
 }

@@ -177,16 +177,10 @@ impl Runtime {
 
     // Untrusted input (called by the client)
     fn on_client_request(&self, message: ClientRequest) {
-        println!("[gamemode] new client message: {:?}", message);
-        self.client_api.send(GameModeClientCommand::SendMessage {
-            pk: message.sender,
-            text: String::from("Hello from Wonderful RP!"),
-        });
-
         match message.payload {
-            GameModeClientRequest::PlayerMove(dir) => {
-                // TODO: Who's being moved? How?
-                println!("[CLIENT] PlayerMove: {:?}", dir);
+            GameModeClientRequest::Input(action) => {
+                self.event_bus
+                    .schedule_event(GameModeEventData::Player(PlayerEventData::Input(action)));
             }
         }
     }
