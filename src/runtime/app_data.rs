@@ -3,7 +3,7 @@ use std::{collections::HashMap, rc::Rc};
 use crate::runtime::{
     EventBus as EventBusStruct,
     api::{
-        EntityBlueprint,
+        EntityBlueprint, InputBindings,
         on::{GameModeEventKey, GameModeListener},
         protocol::PluginName,
     },
@@ -24,3 +24,4 @@ pub type Yielder = Option<mlua::Function>;
 pub type World = hecs::World;
 pub type EventBus = Rc<EventBusStruct>;
 pub type Blueprints = HashMap<String, EntityBlueprint>;
+pub type InputMap = HashMap<String, InputBindings>;

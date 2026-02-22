@@ -13,7 +13,7 @@ use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
     runtime::api::{
-        SceneManagerParams,
+        InputPlugin, SceneManagerParams,
         on::{
             GameModeEventData, OnPlugin, PlayerEventData, WorldEventData,
             event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
@@ -83,12 +83,14 @@ impl Runtime {
         lua.set_app_data::<app_data::World>(hecs::World::new());
         lua.set_app_data::<app_data::EventBus>(event_bus.clone());
         lua.set_app_data::<app_data::Blueprints>(HashMap::new());
+        lua.set_app_data::<app_data::InputMap>(HashMap::new());
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
 
         let mut plugin_composer = PluginComposer::new(&lua)?;
         let plugins: Vec<Box<dyn GameModePlugin>> = vec![
+            Box::new(InputPlugin {}),
             Box::new(OnPlugin {
                 descriptors: GLOBAL_EVENT_DESCRIPTORS,
             }),

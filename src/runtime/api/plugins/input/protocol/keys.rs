@@ -1,5 +1,8 @@
-use num_enum::TryFromPrimitive;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use serde_repr::Deserialize_repr;
+use strum::{AsRefStr, EnumIter};
 
+// TODO: do i actually need this macro? remove it if serde deserialize works well
 macro_rules! impl_from_lua_for_repr_enum {
     ($enum_ty:ty) => {
         impl mlua::FromLua for $enum_ty {
@@ -30,35 +33,37 @@ macro_rules! impl_from_lua_for_repr_enum {
     };
 }
 
-#[derive(Debug, Copy, Clone, TryFromPrimitive)]
+#[derive(
+    Debug, Copy, Clone, TryFromPrimitive, IntoPrimitive, Deserialize_repr, EnumIter, AsRefStr,
+)]
 #[repr(u8)]
 pub(crate) enum KeyboardKey {
-    Q,
-    W,
-    E,
-    R,
-    T,
-    Y,
-    U,
-    I,
-    O,
-    P,
-    A,
-    S,
-    D,
-    F,
-    G,
-    H,
-    J,
-    K,
-    L,
-    Z,
-    X,
-    C,
-    V,
-    B,
-    N,
-    M,
+    KeyQ,
+    KeyW,
+    KeyE,
+    KeyR,
+    KeyT,
+    KeyY,
+    KeyU,
+    KeyI,
+    KeyO,
+    KeyP,
+    KeyA,
+    KeyS,
+    KeyD,
+    KeyF,
+    KeyG,
+    KeyH,
+    KeyJ,
+    KeyK,
+    KeyL,
+    KeyZ,
+    KeyX,
+    KeyC,
+    KeyV,
+    KeyB,
+    KeyN,
+    KeyM,
     LeftShift,
     RightShift,
     LeftCtrl,
@@ -75,7 +80,9 @@ pub(crate) enum KeyboardKey {
 }
 impl_from_lua_for_repr_enum!(KeyboardKey);
 
-#[derive(Debug, Copy, Clone, TryFromPrimitive)]
+#[derive(
+    Debug, Copy, Clone, TryFromPrimitive, IntoPrimitive, Deserialize_repr, EnumIter, AsRefStr,
+)]
 #[repr(u8)]
 pub(crate) enum MouseKey {
     Left,
@@ -85,7 +92,9 @@ pub(crate) enum MouseKey {
 }
 impl_from_lua_for_repr_enum!(MouseKey);
 
-#[derive(Debug, Copy, Clone, TryFromPrimitive)]
+#[derive(
+    Debug, Copy, Clone, TryFromPrimitive, IntoPrimitive, Deserialize_repr, EnumIter, AsRefStr,
+)]
 #[repr(u8)]
 pub(crate) enum ControllerButton {
     DPadUp,
@@ -98,14 +107,16 @@ pub(crate) enum ControllerButton {
     RightBumper,
     LeftTrigger,
     RightTrigger,
-    Y,
-    A,
-    X,
-    B,
+    ButtonY,
+    ButtonA,
+    ButtonX,
+    ButtonB,
 }
 impl_from_lua_for_repr_enum!(ControllerButton);
 
-#[derive(Debug, Copy, Clone, TryFromPrimitive)]
+#[derive(
+    Debug, Copy, Clone, TryFromPrimitive, IntoPrimitive, Deserialize_repr, EnumIter, AsRefStr,
+)]
 #[repr(u8)]
 pub(crate) enum ControllerStick {
     LeftStick,

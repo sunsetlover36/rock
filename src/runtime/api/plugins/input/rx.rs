@@ -1,22 +1,25 @@
-use mlua::UserData;
-use shared::InputKind;
-use strum::IntoEnumIterator;
+use std::collections::hash_map;
 
-use crate::runtime::api::plugins::input::protocol::{
-    ControllerButton, ControllerStick, DefaultBinding, InputSource, KeyboardKey, Vector2DBindings,
-    Vector2DControllerBindings, Vector2DKeyboardBindings,
+use mlua::{LuaSerdeExt, UserData};
+use shared::InputKind;
+
+use crate::runtime::{
+    api::plugins::input::protocol::{
+        AxisBindings, ButtonBindings, InputBindings, Vector2DBindings,
+    },
+    app_data,
 };
 
 #[derive(Clone)]
 pub(super) struct InputRxBuilder {
     kind: Option<InputKind>,
-    binding: Option<DefaultBinding>,
+    bindings: Option<InputBindings>,
 }
 impl InputRxBuilder {
     pub fn new() -> Self {
         Self {
             kind: None,
-            binding: None,
+            bindings: None,
         }
     }
 
@@ -31,91 +34,8 @@ impl InputRxBuilder {
             }
         }
     }
-
-    fn construct_vector_bindings(&self, table: mlua::Table) -> mlua::Result<DefaultBinding> {
-        let mut bindings = Vector2DBindings {
-            keyboard: None,
-            controller: None,
-            stick: None,
-        };
-
-        for input_source in InputSource::iter() {
-            if let Ok(source_map) = table.get::<mlua::Value>(input_source.as_ref()) {
-                match source_map {
-                    mlua::Value::Table(source_table) => match input_source {
-                        InputSource::Keyboard => {
-                            let up_bindings = source_table.get::<Vec<KeyboardKey>>("up")?;
-                            let down_bindings = source_table.get::<Vec<KeyboardKey>>("down")?;
-                            let left_bindings = source_table.get::<Vec<KeyboardKey>>("left")?;
-                            let right_bindings = source_table.get::<Vec<KeyboardKey>>("right")?;
-
-                            bindings.keyboard = Some(Vector2DKeyboardBindings {
-                                up: up_bindings,
-                                down: down_bindings,
-                                left: left_bindings,
-                                right: right_bindings,
-                            });
-                        }
-                        InputSource::Mouse => {
-                            return Err(mlua::Error::runtime(
-                                "Failed to construct a Vector2D binding: cannot construct a Vector2D binding from a mouse input source",
-                            ));
-                        }
-                        InputSource::Controller => {
-                            let up_bindings = source_table.get::<Vec<ControllerButton>>("up")?;
-                            let down_bindings =
-                                source_table.get::<Vec<ControllerButton>>("down")?;
-                            let left_bindings =
-                                source_table.get::<Vec<ControllerButton>>("left")?;
-                            let right_bindings =
-                                source_table.get::<Vec<ControllerButton>>("right")?;
-
-                            bindings.controller = Some(Vector2DControllerBindings {
-                                up: up_bindings,
-                                down: down_bindings,
-                                left: left_bindings,
-                                right: right_bindings,
-                            });
-                        }
-                        InputSource::Stick => {
-                            return Err(mlua::Error::runtime(
-                                "Failed to construct a Vector2D binding: controller stick input key passed instead of a list of keys",
-                            ));
-                        }
-                    },
-                    mlua::Value::Integer(source_key) => {
-                        let raw = u8::try_from(source_key).map_err(|_| mlua::Error::runtime("Failed to construct a Vector2D binding: input key out of range for u8"))?;
-                        match input_source {
-                            InputSource::Stick => {
-                                let key = ControllerStick::try_from(raw).map_err(|_| {
-                                    mlua::Error::runtime(
-                                        "Failed to construct a Vector2D binding: key not found",
-                                    )
-                                })?;
-                                bindings.stick = Some(key);
-                            }
-                            _ => {
-                                return Err(mlua::Error::runtime(
-                                    "Failed to construct a Vector2D binding: cannot specify a non-stick input source as a single input key",
-                                ));
-                            }
-                        }
-                    }
-                    _ => {
-                        return Err(mlua::Error::runtime(
-                            "Failed to construct a Vector2D binding: unknown bindings schema, check the table structure",
-                        ));
-                    }
-                }
-            }
-        }
-
-        Ok(DefaultBinding::Vector2D(bindings))
-    }
 }
 impl UserData for InputRxBuilder {
-    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {}
-
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method_mut("vector", |_, this, ()| {
             this.change_kind(InputKind::Vector2D)?;
@@ -130,20 +50,48 @@ impl UserData for InputRxBuilder {
             Ok(this.clone())
         });
 
-        methods.add_method("defaults", |lua, this, table: mlua::Table| {
-            let kind = this.kind.ok_or_else(|| {
-                mlua::Error::runtime("Cannot set default bindings without an input kind")
-            })?;
+        methods.add_method_mut("defaults", |lua, this, table: mlua::Table| {
+            match this.bindings {
+                Some(_) => Err(mlua::Error::runtime("Cannot overwrite default bindings")),
+                None => {
+                    let kind = this.kind.ok_or_else(|| {
+                        mlua::Error::runtime("Cannot set default bindings without an input kind")
+                    })?;
 
-            let bindings = match kind {
-                InputKind::Vector2D => this.construct_vector_bindings(table)?,
-                _ => {} // InputKind::Button => this.construct_button_bindings(table),
-                        // InputKind::Axis => this.construct_axis_bindings(table)
-            };
+                    let table = mlua::Value::Table(table);
+                    let bindings = match kind {
+                        InputKind::Vector2D => {
+                            InputBindings::Vector2D(lua.from_value::<Vector2DBindings>(table)?)
+                        }
+                        InputKind::Button => {
+                            InputBindings::Button(lua.from_value::<ButtonBindings>(table)?)
+                        }
+                        InputKind::Axis => {
+                            InputBindings::Axis(lua.from_value::<AxisBindings>(table)?)
+                        }
+                    };
+                    this.bindings = Some(bindings);
 
-            Ok(this.clone())
+                    Ok(this.clone())
+                }
+            }
         });
 
-        methods.add_method("register", |lua, this, name: String| Ok(()));
+        methods.add_method("register", |lua, this, name: String| match &this.bindings {
+            Some(bindings) => {
+                let mut input_map = lua.app_data_mut::<app_data::InputMap>().ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+                let entry = input_map.entry(name.clone());
+                match entry {
+                    hash_map::Entry::Occupied(_) => Err(mlua::Error::runtime(format!("Failed to register an input event listener: input bindings for event `{}` already exist", name))),
+                    hash_map::Entry::Vacant(entry) => {
+                        entry.insert(bindings.clone());
+                        Ok(())
+                    }
+                }
+            },
+            None => Err(mlua::Error::runtime(
+                "Cannot register a new input event listener with empty bindings",
+            )),
+        });
     }
 }
