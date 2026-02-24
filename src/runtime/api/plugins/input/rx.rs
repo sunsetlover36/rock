@@ -4,8 +4,9 @@ use mlua::{LuaSerdeExt, UserData};
 use shared::InputKind;
 
 use crate::runtime::{
-    api::plugins::input::protocol::{
-        AxisBindings, ButtonBindings, InputBindings, Vector2DBindings,
+    api::{
+        InputEvent,
+        plugins::input::protocol::{AxisBindings, ButtonBindings, InputBindings, Vector2DBindings},
     },
     app_data,
 };
@@ -79,12 +80,15 @@ impl UserData for InputRxBuilder {
 
         methods.add_method("register", |lua, this, name: String| match &this.bindings {
             Some(bindings) => {
-                let mut input_map = lua.app_data_mut::<app_data::InputMap>().ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-                let entry = input_map.entry(name.clone());
+                let mut registry = lua.app_data_mut::<app_data::InputEventRegistry>().ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+                let next_event_id = registry.events.len();
+
+                let entry = registry.name_to_id.entry(name.clone());
                 match entry {
                     hash_map::Entry::Occupied(_) => Err(mlua::Error::runtime(format!("Failed to register an input event listener: input bindings for event `{}` already exist", name))),
                     hash_map::Entry::Vacant(entry) => {
-                        entry.insert(bindings.clone());
+                        entry.insert(next_event_id);
+                        registry.events.push(InputEvent { name: name.into(), bindings: bindings.clone() });
                         Ok(())
                     }
                 }

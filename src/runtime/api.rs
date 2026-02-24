@@ -7,7 +7,7 @@ mod plugins;
 pub use plugins::on;
 pub(super) use plugins::{
     entity::{EntityBlueprint, EntityPlugin},
-    input::{InputBindings, InputPlugin},
+    input::{InputEvent, InputPlugin},
     memory::MemoryPlugin,
     scene::*,
 };

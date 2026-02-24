@@ -1,9 +1,15 @@
 use mlua::UserData;
 
 use crate::runtime::{
-    api::on::{EventScope, GameModeEventKey, GameModeListener},
+    api::on::{EventScope, GameModeEventKey, GameModeListener, PlayerEventKey},
     app_data,
 };
+
+#[derive(Clone)]
+pub(crate) enum RxOperator {
+    Filter(mlua::Function),
+    Map(mlua::Function),
+}
 
 #[derive(Clone)]
 pub(super) struct RxBuilder {
@@ -11,7 +17,7 @@ pub(super) struct RxBuilder {
     scope: EventScope,
     name: Option<String>,
     limit: Option<u32>,
-    predicates: Vec<mlua::Function>,
+    operators: Vec<RxOperator>,
     consumed: bool,
 }
 impl RxBuilder {
@@ -21,7 +27,7 @@ impl RxBuilder {
             name: None,
             limit: None,
             scope,
-            predicates: Vec::new(),
+            operators: Vec::new(),
             consumed: false,
         }
     }
@@ -35,7 +41,7 @@ impl RxBuilder {
             call_count: 0,
             limit: self.limit,
             scope: self.scope,
-            predicates: builder.predicates,
+            operators: builder.operators,
         }
     }
     fn ensure_not_consumed(&self) -> mlua::Result<()> {
@@ -70,16 +76,50 @@ impl UserData for RxBuilder {
             Ok(next)
         });
 
-        methods.add_method("where", |_, this, predicate| {
+        methods.add_method("where", |_, this, predicate: mlua::Function| {
             let mut next = this.clone();
-            next.predicates.push(predicate);
+            next.operators.push(RxOperator::Filter(predicate));
+            Ok(next)
+        });
+        methods.add_method("select", |_, this, selector: mlua::Function| {
+            let mut next = this.clone();
+            next.operators.push(RxOperator::Map(selector));
+            Ok(next)
+        });
+
+        // DSL sugar -> where + select for input events
+        methods.add_method("bind_action", |lua, this, event_name: String| {
+            if this.event != GameModeEventKey::Player(PlayerEventKey::Input) {
+                return Err(mlua::Error::external(
+                    "Method `:bind_action()` can only be used with 'on.player.input' events",
+                ));
+            }
+
+            let mut next = this.clone();
+            let predicate =
+                RxOperator::Filter(lua.create_function(move |_, args: (u64, mlua::Table)| {
+                    let action_table: mlua::Table = args.1;
+                    let action_name: String = action_table.get("name")?;
+                    Ok(action_name == event_name)
+                })?);
+            next.operators.push(predicate);
+
+            let map =
+                RxOperator::Map(lua.create_function(move |_, args: (u64, mlua::Table)| {
+                    let pid: u64 = args.0;
+                    let action_table: mlua::Table = args.1;
+                    let data: mlua::Value = action_table.get("data")?;
+                    Ok((pid, data))
+                })?);
+            next.operators.push(map);
+
             Ok(next)
         });
 
         methods.add_method_mut("once", |lua, this, handle| {
             this.ensure_not_consumed()?;
-
             this.consumed = true;
+
             this.limit = Some(1);
 
             this.add_event_listener(lua, handle)?;

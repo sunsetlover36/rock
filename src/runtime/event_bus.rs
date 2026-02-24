@@ -3,11 +3,15 @@ use std::cell::RefCell;
 use color_eyre::eyre;
 use mlua::{IntoLuaMulti, Lua};
 
-use crate::runtime::{api::on::GameModeEventData, app_data, utils::LuaResultExt};
+use crate::runtime::{api::on::GameModeEvent, app_data, utils::LuaResultExt};
 
 struct QueuedEvent {
     created_at_seq: u64,
-    data: GameModeEventData,
+    event: GameModeEvent,
+}
+struct PendingHandle {
+    args: mlua::MultiValue,
+    func: mlua::Function,
 }
 
 struct EventBusInner {
@@ -33,21 +37,23 @@ impl EventBus {
         inner.sequence
     }
 
-    pub fn schedule_event(&self, data: GameModeEventData) {
+    pub fn schedule_event(&self, event: GameModeEvent) {
         let mut inner = self.inner.borrow_mut();
 
         let seq = inner.sequence;
         inner.sequence += 1;
         inner.queue.push(QueuedEvent {
             created_at_seq: seq,
-            data,
+            event,
         });
     }
 
-    fn emit(&self, event: QueuedEvent, lua: &Lua) -> eyre::Result<()> {
+    fn emit(&self, q_event: QueuedEvent, lua: &Lua) -> eyre::Result<()> {
+        let event = q_event.event;
+        let scopes = event.scopes.clone();
         let key = event.data.key();
 
-        let (pending_handles, args) = {
+        let pending_handles = {
             let mut listeners = match lua.app_data_mut::<app_data::EventListeners>() {
                 Some(d) => d,
                 None => return Err(eyre::eyre!("App data is not initialized")),
@@ -60,31 +66,36 @@ impl EventBus {
                 return Ok(());
             }
 
-            let mut pending_handles = Vec::new();
             let args = event
-                .data
                 .into_lua_multi(lua)
                 .wrap_err("Failed to materialize args")?;
 
-            for listener in listeners.iter_mut() {
-                if listener.created_at_seq > event.created_at_seq
-                    || listener.limit_reached()
-                    || !listener.passes_filters(&args)?
-                {
+            let mut pending_handles: Vec<PendingHandle> = Vec::new();
+            for listener in listeners.iter_mut().filter(|l| scopes.contains(&l.scope)) {
+                if listener.created_at_seq > q_event.created_at_seq || listener.limit_reached() {
                     continue;
                 }
 
-                listener.call_count += 1;
-                pending_handles.push(listener.handle.clone())
+                let handle_args = listener.process_chain(args.clone())?;
+                if let Some(args) = handle_args {
+                    listener.call_count += 1;
+                    pending_handles.push(PendingHandle {
+                        args,
+                        func: listener.handle.clone(),
+                    });
+                } else {
+                    continue;
+                }
             }
             listeners.retain(|l| !l.limit_reached());
 
-            (pending_handles, args)
+            pending_handles
         };
 
         for handle in pending_handles {
             handle
-                .call::<()>(&args)
+                .func
+                .call::<()>(handle.args)
                 .wrap_err(format!("Error in `{:?}` event listener", &key).as_str())?;
         }
 

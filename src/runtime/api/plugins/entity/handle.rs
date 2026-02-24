@@ -1,10 +1,11 @@
 use mlua::{LuaSerdeExt, UserData};
+use smallvec::smallvec;
 
 use crate::runtime::{
     api::{
         on::{
             EventScope, OnPluginLazy,
-            protocol::{EntityEventData, GameModeEventData},
+            protocol::{EntityEventData, GameModeEvent, GameModeEventData},
         },
         plugins::entity::{
             components::{
@@ -21,6 +22,7 @@ use crate::runtime::{
 #[derive(Clone)]
 pub(super) struct EntityHandle {
     pub entity: hecs::Entity,
+    pub blueprint_id: u64,
 }
 impl UserData for EntityHandle {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
@@ -58,9 +60,13 @@ impl UserData for EntityHandle {
                         })?;
                 }
 
-                event_bus.schedule_event(GameModeEventData::Entity(
-                    EntityEventData::CustomDataUpdate(table),
-                ));
+                event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![
+                        EventScope::Entity(this.entity.id().into()),
+                        EventScope::Blueprint(this.blueprint_id),
+                    ],
+                    data: GameModeEventData::Entity(EntityEventData::CustomDataUpdate(table)),
+                });
                 return Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?));
             } else {
                 if let Ok(comp) = world.get::<&CustomDataComponent>(this.entity) {

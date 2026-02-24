@@ -7,18 +7,22 @@ use std::{
 
 use color_eyre::eyre::{self};
 use mlua::Lua;
-use shared::GameModeClientRequest;
+use shared::IncomingRequest;
+use smallvec::smallvec;
 
 use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
-    runtime::api::{
-        InputPlugin, SceneManagerParams,
-        on::{
-            GameModeEventData, OnPlugin, PlayerEventData, WorldEventData,
-            event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
+    runtime::{
+        api::{
+            InputPlugin, SceneManagerParams,
+            on::{
+                EventScope, GameModeEvent, GameModeEventData, OnPlugin, PlayerEventData,
+                WorldEventData, event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
+            },
+            protocol::GameModePlugin,
         },
-        protocol::GameModePlugin,
+        app_data::InputEventRegistry,
     },
     world::{WorldNatives, WorldState},
 };
@@ -83,7 +87,7 @@ impl Runtime {
         lua.set_app_data::<app_data::World>(hecs::World::new());
         lua.set_app_data::<app_data::EventBus>(event_bus.clone());
         lua.set_app_data::<app_data::Blueprints>(HashMap::new());
-        lua.set_app_data::<app_data::InputMap>(HashMap::new());
+        lua.set_app_data::<app_data::InputEventRegistry>(InputEventRegistry::default());
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
@@ -137,8 +141,10 @@ impl Runtime {
     }
 
     pub fn awaken(&mut self) -> eyre::Result<Self> {
-        self.event_bus
-            .schedule_event(GameModeEventData::World(WorldEventData::Awake));
+        self.event_bus.schedule_event(GameModeEvent {
+            scopes: smallvec![EventScope::Global],
+            data: GameModeEventData::World(WorldEventData::Awake),
+        });
 
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();
@@ -151,7 +157,9 @@ impl Runtime {
                         self.on_system_callback(cb);
                     }
                     RuntimeCallback::Client(cb) => {
-                        self.on_client_request(cb);
+                        if let Err(err) = self.on_client_request(cb) {
+                            eprintln!("Failed to process a client message: {}", err);
+                        };
                     }
                 }
             }
@@ -178,27 +186,44 @@ impl Runtime {
     }
 
     // Untrusted input (called by the client)
-    fn on_client_request(&self, message: ClientRequest) {
+    fn on_client_request(&self, message: ClientRequest) -> eyre::Result<()> {
+        let id = message.sender.pack();
+
         match message.payload {
-            GameModeClientRequest::Input(action) => {
-                self.event_bus
-                    .schedule_event(GameModeEventData::Player(PlayerEventData::Input(action)));
+            IncomingRequest::Input(action) => {
+                let action_name = self
+                    .lua
+                    .app_data_ref::<app_data::InputEventRegistry>()
+                    .ok_or_else(|| eyre::eyre!("App data is not initialized"))?
+                    .get_action_name(action.clone())?;
+                self.event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![EventScope::Global],
+                    data: GameModeEventData::Player(PlayerEventData::Input {
+                        id,
+                        name: action_name,
+                        data: action.data,
+                    }),
+                });
             }
         }
+
+        Ok(())
     }
 
     // Trusted input (called by the engine)
     fn on_system_callback(&self, cb: SystemCallback) {
         match cb {
             SystemCallback::OnPlayerConnect { pk } => {
-                self.event_bus.schedule_event(GameModeEventData::Player(
-                    PlayerEventData::Connect { id: pk.pack() },
-                ));
+                self.event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![EventScope::Global],
+                    data: GameModeEventData::Player(PlayerEventData::Connect { id: pk.pack() }),
+                });
             }
             SystemCallback::OnPlayerDisconnect { pk } => {
-                self.event_bus.schedule_event(GameModeEventData::Player(
-                    PlayerEventData::Disconnect { id: pk.pack() },
-                ));
+                self.event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![EventScope::Global],
+                    data: GameModeEventData::Player(PlayerEventData::Disconnect { id: pk.pack() }),
+                });
             }
         }
     }

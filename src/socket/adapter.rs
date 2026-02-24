@@ -39,16 +39,12 @@ impl SocketAdapter {
     }
 
     async fn process_request(&self, request: IncomingRequest) -> eyre::Result<()> {
-        match request {
-            IncomingRequest::GameMode(payload) => {
-                self.runtime_callback_tx
-                    .send_async(RuntimeCallback::Client(ClientEnvelope {
-                        sender: self.session.pk,
-                        payload,
-                    }))
-                    .await?;
-            }
-        }
+        self.runtime_callback_tx
+            .send_async(RuntimeCallback::Client(ClientEnvelope {
+                sender: self.session.pk,
+                payload: request,
+            }))
+            .await?;
 
         Ok(())
     }
@@ -111,7 +107,9 @@ impl SocketAdapter {
                                         Ok(request) => {
                                             self.process_request(request).await?;
                                         }
-                                        Err(_) => {}
+                                        Err(err) => {
+                                            eprintln!("Unknown socket message: {}", err);
+                                        }
                                     }
                                 }
                                 Message::Close(_) => {

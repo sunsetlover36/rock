@@ -11,7 +11,7 @@ use crate::runtime::api::{
 mod rx;
 use rx::InputRxBuilder;
 mod protocol;
-pub use protocol::InputBindings;
+pub(crate) use protocol::InputEvent;
 
 pub struct InputPlugin {}
 impl InputPlugin {

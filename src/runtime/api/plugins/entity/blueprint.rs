@@ -131,7 +131,10 @@ impl UserData for EntityBlueprint {
                 .app_data_mut::<app_data::World>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
             let entity = world.spawn(builder.build());
-            Ok(EntityHandle { entity })
+            Ok(EntityHandle {
+                entity,
+                blueprint_id: this.id,
+            })
         });
     }
 }

@@ -1,8 +1,8 @@
-use shared::{GameModeClientRequest, PlayerKey};
+use shared::{IncomingRequest, PlayerKey};
 
 use crate::envelope::ClientEnvelope;
 
-pub type ClientRequest = ClientEnvelope<GameModeClientRequest>;
+pub type ClientRequest = ClientEnvelope<IncomingRequest>;
 
 #[derive(Debug, Clone)]
 pub enum GameModeClientCommand {

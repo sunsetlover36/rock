@@ -1,4 +1,7 @@
+use std::rc::Rc;
+
 use serde::Deserialize;
+use shared::InputKind;
 use strum::{AsRefStr, EnumDiscriminants, EnumString};
 
 mod keys;
@@ -65,8 +68,23 @@ pub(crate) struct AxisBindings {
 }
 
 #[derive(Debug, Clone)]
-pub enum InputBindings {
+pub(crate) enum InputBindings {
     Vector2D(Vector2DBindings),
     Button(ButtonBindings),
     Axis(AxisBindings),
+}
+impl InputBindings {
+    pub fn kind(&self) -> InputKind {
+        match self {
+            InputBindings::Vector2D(_) => InputKind::Vector2D,
+            InputBindings::Button(_) => InputKind::Button,
+            InputBindings::Axis(_) => InputKind::Axis,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct InputEvent {
+    pub name: Rc<str>,
+    pub bindings: InputBindings,
 }

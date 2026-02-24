@@ -16,7 +16,7 @@ pub(crate) use sprite_2d::Sprite2D;
 mod sprite_char;
 pub(crate) use sprite_char::SpriteChar;
 
-#[derive(EnumDiscriminants, Clone, Serialize)]
+#[derive(Debug, EnumDiscriminants, Clone, Serialize)]
 #[serde(untagged)]
 #[strum_discriminants(name(ComponentKey))]
 #[strum_discriminants(derive(Hash))]

@@ -49,9 +49,15 @@ macro_rules! add_handle_methods {
                         })?;
                 }
 
-                event_bus.schedule_event(GameModeEventData::Entity(
-                    EntityEventData::ComponentUpdate(ComponentData::$variant(comp_data)),
-                ));
+                event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![
+                        EventScope::Entity(this.entity.id().into()),
+                        EventScope::Blueprint(this.blueprint_id),
+                    ],
+                    data: GameModeEventData::Entity(EntityEventData::ComponentUpdate(
+                        ComponentData::$variant(comp_data),
+                    )),
+                });
                 return Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?));
             } else {
                 // get
