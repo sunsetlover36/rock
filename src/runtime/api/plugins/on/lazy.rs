@@ -1,6 +1,6 @@
 use mlua::{MetaMethod, UserData};
 
-use crate::runtime::api::on::{EventDescriptor, EventScope, RxBuilder};
+use crate::runtime::api::on::{EventDescriptor, EventScope, rx::OnRx};
 
 pub(crate) struct OnPluginLazy {
     pub scope: EventScope,
@@ -13,8 +13,7 @@ impl UserData for OnPluginLazy {
             if let Some(descriptor) = descriptor {
                 let event_key = descriptor.event_key;
                 let scope = this.scope;
-                let factory =
-                    lua.create_function(move |_, ()| Ok(RxBuilder::new(event_key, scope)))?;
+                let factory = lua.create_function(move |_, ()| Ok(OnRx::new(event_key, scope)))?;
 
                 return Ok(Some(factory));
             }

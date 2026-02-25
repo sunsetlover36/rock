@@ -25,6 +25,7 @@ mod meta_db;
 mod player_pool;
 mod router;
 mod runtime;
+mod rx;
 mod socket;
 mod utils;
 mod world;

@@ -72,13 +72,13 @@ impl EventBus {
 
             let mut pending_handles: Vec<PendingHandle> = Vec::new();
             for listener in listeners.iter_mut().filter(|l| scopes.contains(&l.scope)) {
-                if listener.created_at_seq > q_event.created_at_seq || listener.limit_reached() {
+                if !listener.can_process(q_event.created_at_seq) {
                     continue;
                 }
 
-                let handle_args = listener.process_chain(args.clone())?;
+                let handle_args = listener.process_pipeline(args.clone())?;
                 if let Some(args) = handle_args {
-                    listener.call_count += 1;
+                    listener.increment_call_count();
                     pending_handles.push(PendingHandle {
                         args,
                         func: listener.handle.clone(),

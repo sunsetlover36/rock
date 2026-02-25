@@ -7,7 +7,7 @@ pub(crate) mod event_descriptors;
 pub(crate) mod lazy;
 pub(crate) use lazy::OnPluginLazy;
 mod rx;
-use rx::RxBuilder;
+use rx::OnRx;
 pub mod protocol;
 pub use protocol::*;
 
@@ -34,7 +34,7 @@ impl OnPlugin {
 
             let key = descriptor.event_key;
             let listener =
-                lua.create_function(move |_, _: ()| Ok(RxBuilder::new(key, EventScope::Global)))?;
+                lua.create_function(move |_, _: ()| Ok(OnRx::new(key, EventScope::Global)))?;
             ns_table.set(descriptor.name, listener)?;
         }
 

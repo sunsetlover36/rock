@@ -12,11 +12,11 @@ use crate::runtime::{
 };
 
 #[derive(Clone)]
-pub(super) struct InputRxBuilder {
+pub(super) struct InputRx {
     kind: Option<InputKind>,
     bindings: Option<InputBindings>,
 }
-impl InputRxBuilder {
+impl InputRx {
     pub fn new() -> Self {
         Self {
             kind: None,
@@ -36,7 +36,7 @@ impl InputRxBuilder {
         }
     }
 }
-impl UserData for InputRxBuilder {
+impl UserData for InputRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method_mut("vector", |_, this, ()| {
             this.change_kind(InputKind::Vector2D)?;

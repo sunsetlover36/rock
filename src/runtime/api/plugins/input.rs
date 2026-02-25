@@ -9,7 +9,7 @@ use crate::runtime::api::{
 };
 
 mod rx;
-use rx::InputRxBuilder;
+use rx::InputRx;
 mod protocol;
 pub(crate) use protocol::InputEvent;
 
@@ -37,10 +37,7 @@ impl GameModePlugin for InputPlugin {
 
     fn create_global_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         let table = lua.create_table()?;
-        table.set(
-            "new",
-            lua.create_function(|_, ()| Ok(InputRxBuilder::new()))?,
-        )?;
+        table.set("new", lua.create_function(|_, ()| Ok(InputRx::new()))?)?;
 
         let keys_table = lua.create_table()?;
         keys_table.set(

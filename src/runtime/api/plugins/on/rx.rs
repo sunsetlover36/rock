@@ -1,57 +1,41 @@
 use mlua::UserData;
 
-use crate::runtime::{
-    api::on::{EventScope, GameModeEventKey, GameModeListener, PlayerEventKey},
-    app_data,
+use crate::{
+    runtime::{
+        api::on::{
+            EventScope, GameModeEventKey, GameModeListener, GameModeListenerParams, PlayerEventKey,
+        },
+        app_data,
+    },
+    rx::{HasRxPipeline, RxOperator, RxPipeline, add_rx_methods},
 };
 
 #[derive(Clone)]
-pub(crate) enum RxOperator {
-    Filter(mlua::Function),
-    Map(mlua::Function),
-}
-
-#[derive(Clone)]
-pub(super) struct RxBuilder {
+pub(super) struct OnRx {
     event: GameModeEventKey,
     scope: EventScope,
     name: Option<String>,
-    limit: Option<u32>,
-    operators: Vec<RxOperator>,
-    consumed: bool,
+    pipeline: RxPipeline,
 }
-impl RxBuilder {
+impl OnRx {
     pub fn new(event: GameModeEventKey, scope: EventScope) -> Self {
         Self {
             event,
             name: None,
-            limit: None,
             scope,
-            operators: Vec::new(),
-            consumed: false,
+            pipeline: RxPipeline::default(),
         }
     }
 
     fn construct_listener(&self, handle: mlua::Function, seq: u64) -> GameModeListener {
         let builder = self.clone();
-        GameModeListener {
+        GameModeListener::new(GameModeListenerParams {
             name: builder.name,
             created_at_seq: seq,
-            handle,
-            call_count: 0,
-            limit: self.limit,
             scope: self.scope,
-            operators: builder.operators,
-        }
-    }
-    fn ensure_not_consumed(&self) -> mlua::Result<()> {
-        if self.consumed {
-            Err(mlua::Error::runtime(
-                "This event chain was already consumed. Create a new event chain.",
-            ))
-        } else {
-            Ok(())
-        }
+            handle,
+            pipeline: self.pipeline.clone(),
+        })
     }
 
     fn add_event_listener(&self, lua: &mlua::Lua, handle: mlua::Function) -> mlua::Result<()> {
@@ -68,24 +52,14 @@ impl RxBuilder {
         Ok(())
     }
 }
-impl UserData for RxBuilder {
+impl HasRxPipeline for OnRx {
+    fn pipeline_mut(&mut self) -> &mut RxPipeline {
+        &mut self.pipeline
+    }
+}
+impl UserData for OnRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("take", |_, this, n: u32| {
-            let mut next = this.clone();
-            next.limit = Some(n);
-            Ok(next)
-        });
-
-        methods.add_method("where", |_, this, predicate: mlua::Function| {
-            let mut next = this.clone();
-            next.operators.push(RxOperator::Filter(predicate));
-            Ok(next)
-        });
-        methods.add_method("select", |_, this, selector: mlua::Function| {
-            let mut next = this.clone();
-            next.operators.push(RxOperator::Map(selector));
-            Ok(next)
-        });
+        add_rx_methods(methods);
 
         // DSL sugar -> where + select for input events
         methods.add_method("bind_action", |lua, this, event_name: String| {
@@ -102,7 +76,7 @@ impl UserData for RxBuilder {
                     let action_name: String = action_table.get("name")?;
                     Ok(action_name == event_name)
                 })?);
-            next.operators.push(predicate);
+            next.pipeline.operators.push(predicate);
 
             let map =
                 RxOperator::Map(lua.create_function(move |_, args: (u64, mlua::Table)| {
@@ -111,24 +85,12 @@ impl UserData for RxBuilder {
                     let data: mlua::Value = action_table.get("data")?;
                     Ok((pid, data))
                 })?);
-            next.operators.push(map);
+            next.pipeline.operators.push(map);
 
             Ok(next)
         });
 
-        methods.add_method_mut("once", |lua, this, handle| {
-            this.ensure_not_consumed()?;
-            this.consumed = true;
-
-            this.limit = Some(1);
-
-            this.add_event_listener(lua, handle)?;
-            Ok(())
-        });
-        methods.add_method_mut("each", |lua, this, handle| {
-            this.ensure_not_consumed()?;
-            this.consumed = true;
-
+        methods.add_method("each", |lua, this, handle| {
             this.add_event_listener(lua, handle)?;
             Ok(())
         });

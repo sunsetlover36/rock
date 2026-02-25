@@ -1,7 +1,10 @@
 use color_eyre::eyre;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::runtime::api::protocol::{GameModePlugin, PluginName};
+use crate::runtime::api::{
+    plugins::entity::rx::EntityRx,
+    protocol::{GameModePlugin, PluginName},
+};
 
 mod blueprint;
 pub(crate) use blueprint::EntityBlueprint;
@@ -10,6 +13,7 @@ pub(crate) use components::{ComponentData, ComponentKey};
 mod event_descriptors;
 mod handle;
 mod macros;
+mod rx;
 
 static BLUEPRINT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -28,6 +32,9 @@ impl GameModePlugin for EntityPlugin {
             ))
         })?;
         entity_table.set("blueprint", blueprint_fn)?;
+
+        let query_fn = lua.create_function(|_, _: ()| Ok(EntityRx::new()))?;
+        entity_table.set("query", query_fn)?;
 
         Ok(Some(entity_table))
     }

@@ -9,11 +9,11 @@ use crate::runtime::{
         },
         plugins::entity::{
             components::{
-                ComponentData, Control, CustomDataComponent, Sprite2D, SpriteChar, Transform2D,
-                Vector2D,
+                ComponentData, Control, CustomDataComponent, Name, OwnedBy, Sprite2D, SpriteChar,
+                Transform2D, Vector2D,
             },
             event_descriptors::ENTITY_EVENT_DESCRIPTORS,
-            macros::{add_handle_methods, for_each_component},
+            macros::{add_handle_methods, for_each_handle},
         },
     },
     app_data,
@@ -34,7 +34,7 @@ impl UserData for EntityHandle {
         });
     }
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        for_each_component!(methods, add_handle_methods);
+        for_each_handle!(methods, add_handle_methods);
 
         methods.add_method("custom", |lua, this, table: Option<mlua::Table>| {
             let event_bus = lua

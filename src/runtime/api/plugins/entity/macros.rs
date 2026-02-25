@@ -1,14 +1,30 @@
-macro_rules! for_each_component {
+// Component methods specification
+macro_rules! for_each_blueprint {
     ($methods:ident, $callback:ident) => {
         $callback!($methods, "vector", Vector2D, Vector2D);
         $callback!($methods, "transform", Transform2D, Transform2D);
         $callback!($methods, "control", Control, Control);
         $callback!($methods, "sprite", Sprite2D, Sprite2D);
         $callback!($methods, "sprite_char", SpriteChar, SpriteChar);
+        $callback!($methods, "owned_by", OwnedBy, OwnedBy);
     };
 }
-pub(crate) use for_each_component;
+pub(crate) use for_each_blueprint;
 
+macro_rules! for_each_handle {
+    ($methods:ident, $callback:ident) => {
+        $callback!($methods, "vector", Vector2D, Vector2D);
+        $callback!($methods, "transform", Transform2D, Transform2D);
+        $callback!($methods, "control", Control, Control);
+        $callback!($methods, "sprite", Sprite2D, Sprite2D);
+        $callback!($methods, "sprite_char", SpriteChar, SpriteChar);
+        $callback!($methods, "owned_by", OwnedBy, OwnedBy);
+        $callback!($methods, "name", Name, Name);
+    };
+}
+pub(crate) use for_each_handle;
+
+// Methods inclusion
 macro_rules! add_blueprint_methods {
     ($methods:ident, $lua_name:literal, $variant:ident, $comp_type:ty) => {
         $methods.add_method($lua_name, |lua, this, data: mlua::Value| {

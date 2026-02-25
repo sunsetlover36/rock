@@ -7,26 +7,28 @@ use crate::runtime::{
         on::{EventScope, OnPluginLazy},
         plugins::entity::{
             components::{
-                ComponentData, Control, CustomDataComponent, Sprite2D, SpriteChar, Transform2D,
-                Vector2D,
+                Blueprint, ComponentData, Control, CustomDataComponent, OwnedBy, Sprite2D,
+                SpriteChar, Transform2D, Vector2D,
             },
             event_descriptors::ENTITY_EVENT_DESCRIPTORS,
             handle::EntityHandle,
-            macros::{add_blueprint_methods, for_each_component},
+            macros::{add_blueprint_methods, for_each_blueprint},
         },
     },
     app_data,
 };
 
+pub type BlueprintId = u64;
+
 #[derive(Clone)]
 pub(crate) struct EntityBlueprint {
-    id: u64,
+    id: BlueprintId,
     pub name: Option<String>,
     pub components: Vec<ComponentData>,
     pub customs: HashMap<String, serde_json::Value>,
 }
 impl EntityBlueprint {
-    pub fn new(id: u64) -> Self {
+    pub fn new(id: BlueprintId) -> Self {
         Self {
             id,
             name: None,
@@ -46,7 +48,7 @@ impl UserData for EntityBlueprint {
     }
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        for_each_component!(methods, add_blueprint_methods);
+        for_each_blueprint!(methods, add_blueprint_methods);
 
         methods.add_method("from", |lua, this, name: String| {
             if !this.components.is_empty() || !this.customs.is_empty() {
@@ -112,15 +114,35 @@ impl UserData for EntityBlueprint {
             }
 
             let mut builder = hecs::EntityBuilder::new();
+            // TODO: repeated code
             for component in &this.components {
                 match component {
-                    ComponentData::Vector2D(c) => builder.add(c.clone()),
-                    ComponentData::Transform2D(c) => builder.add(c.clone()),
-                    ComponentData::Control(c) => builder.add(c.clone()),
-                    ComponentData::Sprite2D(c) => builder.add(c.clone()),
-                    ComponentData::SpriteChar(c) => builder.add(c.clone()),
+                    ComponentData::Vector2D(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::Transform2D(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::Control(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::Sprite2D(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::SpriteChar(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::OwnedBy(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::Name(c) => {
+                        builder.add(c.clone());
+                    }
+                    // Blueprint component cannot be attached manually
+                    ComponentData::Blueprint(_) => {}
                 };
             }
+            builder.add(Blueprint(this.id));
 
             if this.customs.len() != 0 {
                 let customs = lua.to_value(&this.customs)?;
