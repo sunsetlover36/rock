@@ -1,26 +1,28 @@
 use mlua::{LuaSerdeExt, UserData};
+use smallvec::smallvec;
 
 use crate::runtime::{
     api::{
         on::{
             EventScope, OnPluginLazy,
-            protocol::{EntityEventData, GameModeEventData},
+            protocol::{EntityEventData, GameModeEvent, GameModeEventData},
         },
         plugins::entity::{
             components::{
-                ComponentData, Control, CustomDataComponent, Sprite2D, SpriteChar, Transform2D,
-                Vector2D,
+                ComponentData, Control, CustomDataComponent, Name, OwnedBy, Sprite2D, SpriteChar,
+                Transform2D, Vector2D,
             },
             event_descriptors::ENTITY_EVENT_DESCRIPTORS,
-            macros::{add_handle_methods, for_each_component},
+            macros::{add_handle_methods, for_each_handle},
         },
     },
-    app_data::GameModeAppData,
+    app_data,
 };
 
 #[derive(Clone)]
 pub(super) struct EntityHandle {
     pub entity: hecs::Entity,
+    pub blueprint_id: u64,
 }
 impl UserData for EntityHandle {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
@@ -32,14 +34,16 @@ impl UserData for EntityHandle {
         });
     }
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        for_each_component!(methods, add_handle_methods);
+        for_each_handle!(methods, add_handle_methods);
 
         methods.add_method("custom", |lua, this, table: Option<mlua::Table>| {
-            let mut app_data = lua
-                .app_data_mut::<GameModeAppData>()
+            let event_bus = lua
+                .app_data_ref::<app_data::EventBus>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                .clone();
+            let mut world = lua
+                .app_data_mut::<app_data::World>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-            let event_bus = app_data.event_bus.clone();
-            let world = &mut app_data.world;
 
             if let Some(table) = table {
                 let rk = lua.create_registry_value(&table)?;
@@ -56,9 +60,13 @@ impl UserData for EntityHandle {
                         })?;
                 }
 
-                event_bus.schedule_event(GameModeEventData::Entity(
-                    EntityEventData::CustomDataUpdate(table),
-                ));
+                event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![
+                        EventScope::Entity(this.entity.id().into()),
+                        EventScope::Blueprint(this.blueprint_id),
+                    ],
+                    data: GameModeEventData::Entity(EntityEventData::CustomDataUpdate(table)),
+                });
                 return Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?));
             } else {
                 if let Ok(comp) = world.get::<&CustomDataComponent>(this.entity) {

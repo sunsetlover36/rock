@@ -7,12 +7,23 @@ use std::{
 
 use color_eyre::eyre::{self};
 use mlua::Lua;
-use shared::GameModeClientRequest;
+use shared::IncomingRequest;
+use smallvec::smallvec;
 
 use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
-    runtime::api::on::{GameModeEventData, PlayerEventData, WorldEventData},
+    runtime::{
+        api::{
+            InputPlugin, SceneManagerParams,
+            on::{
+                EventScope, GameModeEvent, GameModeEventData, OnPlugin, PlayerEventData,
+                WorldEventData, event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
+            },
+            protocol::GameModePlugin,
+        },
+        app_data::InputEventRegistry,
+    },
     world::{WorldNatives, WorldState},
 };
 
@@ -20,17 +31,21 @@ pub mod default_client_api;
 pub(crate) mod event_bus;
 pub(crate) use event_bus::EventBus;
 
+mod api;
+use api::{
+    EntityPlugin, MemoryPlugin, PluginComposer, SceneManager, SceneManagerMessage, ScenePlugin,
+};
+
+mod app_data;
+
+mod geode;
+use geode::{inject_geodes, scan_geodes};
+
 pub mod protocol;
 pub use protocol::*;
 
-mod app_data;
-use app_data::GameModeAppData;
-
 mod utils;
 use utils::LuaResultExt;
-
-mod api;
-use api::{ApiRegisterParams, SceneManager};
 
 pub struct RuntimeParams {
     pub name: String,
@@ -54,40 +69,61 @@ pub struct Runtime {
 }
 impl Runtime {
     pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
+        let lua = Lua::new();
+
+        // Dependencies
         let meta_db = Arc::new(params.meta_db);
         let world_state = Rc::new(WorldState::new());
         let world_natives = WorldNatives {
             state: world_state.clone(),
         };
-
         let event_bus = Rc::new(EventBus::new());
 
-        let lua = Lua::new();
-        let script_path = format!("gamemodes/{}.lua", params.name);
-        let script = std::fs::read_to_string(script_path)?;
-
-        let app_data = GameModeAppData {
-            event_listeners: HashMap::new(),
-            scenes: HashMap::new(),
-            scene_plugins: HashMap::new(),
-            yielder: None,
-            world: hecs::World::new(),
-            event_bus: event_bus.clone(),
-        };
-        lua.set_app_data(app_data);
+        // App data
+        lua.set_app_data::<app_data::EventListeners>(HashMap::new());
+        lua.set_app_data::<app_data::Scenes>(HashMap::new());
+        lua.set_app_data::<app_data::ScenePlugins>(HashMap::new());
+        lua.set_app_data::<app_data::Yielder>(None);
+        lua.set_app_data::<app_data::World>(hecs::World::new());
+        lua.set_app_data::<app_data::EventBus>(event_bus.clone());
+        lua.set_app_data::<app_data::Blueprints>(HashMap::new());
+        lua.set_app_data::<app_data::InputEventRegistry>(InputEventRegistry::default());
 
         // Plugins
-        let scene_manager = api::register(
-            &lua,
-            ApiRegisterParams {
-                tokio_handle: params.tokio_handle,
-                scene_manager_channel_buffer: 256,
-                meta_db: meta_db.clone(),
-            },
-        )?;
+        let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
 
-        // Load script
-        lua.load(&script)
+        let mut plugin_composer = PluginComposer::new(&lua)?;
+        let plugins: Vec<Box<dyn GameModePlugin>> = vec![
+            Box::new(InputPlugin {}),
+            Box::new(OnPlugin {
+                descriptors: GLOBAL_EVENT_DESCRIPTORS,
+            }),
+            Box::new(EntityPlugin {}),
+            Box::new(MemoryPlugin {
+                meta_db: meta_db.clone(),
+            }),
+            Box::new(ScenePlugin {
+                manager_tx: scene_manager_tx.clone(),
+            }),
+        ];
+        for plugin in plugins {
+            plugin_composer.add_plugin(&lua, plugin)?;
+        }
+
+        let scene_manager = SceneManager::new(SceneManagerParams {
+            plugins: plugin_composer.consume_plugins(),
+            tx: scene_manager_tx,
+            rx: scene_manager_rx,
+            tokio_handle: params.tokio_handle,
+        });
+
+        // Geodes injection
+        inject_geodes(&lua, &scan_geodes()?)?;
+
+        // Gamemode script string
+        let gamemode_path = format!("gamemodes/{}.lua", params.name);
+        let gamemode = std::fs::read_to_string(&gamemode_path)?;
+        lua.load(&gamemode)
             .exec()
             .wrap_err("Script execution error")?;
 
@@ -105,8 +141,10 @@ impl Runtime {
     }
 
     pub fn awaken(&mut self) -> eyre::Result<Self> {
-        self.event_bus
-            .schedule_event(GameModeEventData::World(WorldEventData::Awake));
+        self.event_bus.schedule_event(GameModeEvent {
+            scopes: smallvec![EventScope::Global],
+            data: GameModeEventData::World(WorldEventData::Awake),
+        });
 
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();
@@ -119,9 +157,10 @@ impl Runtime {
                         self.on_system_callback(cb);
                     }
                     RuntimeCallback::Client(cb) => {
-                        self.on_client_request(cb);
+                        if let Err(err) = self.on_client_request(cb) {
+                            eprintln!("Failed to process a client message: {}", err);
+                        };
                     }
-                    RuntimeCallback::Indexer(_) => {}
                 }
             }
 
@@ -147,33 +186,44 @@ impl Runtime {
     }
 
     // Untrusted input (called by the client)
-    fn on_client_request(&self, message: ClientRequest) {
-        println!("[gamemode] new client message: {:?}", message);
-        self.client_api.send(GameModeClientCommand::SendMessage {
-            pk: message.sender,
-            text: String::from("Hello from Wonderful RP!"),
-        });
+    fn on_client_request(&self, message: ClientRequest) -> eyre::Result<()> {
+        let id = message.sender.pack();
 
         match message.payload {
-            GameModeClientRequest::PlayerMove(dir) => {
-                // TODO: Who's being moved? How?
-                println!("[CLIENT] PlayerMove: {:?}", dir);
+            IncomingRequest::Input(action) => {
+                let action_name = self
+                    .lua
+                    .app_data_ref::<app_data::InputEventRegistry>()
+                    .ok_or_else(|| eyre::eyre!("App data is not initialized"))?
+                    .get_action_name(action.clone())?;
+                self.event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![EventScope::Global],
+                    data: GameModeEventData::Player(PlayerEventData::Input {
+                        id,
+                        name: action_name,
+                        data: action.data,
+                    }),
+                });
             }
         }
+
+        Ok(())
     }
 
     // Trusted input (called by the engine)
     fn on_system_callback(&self, cb: SystemCallback) {
         match cb {
             SystemCallback::OnPlayerConnect { pk } => {
-                self.event_bus.schedule_event(GameModeEventData::Player(
-                    PlayerEventData::Connect { id: pk.pack() },
-                ));
+                self.event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![EventScope::Global],
+                    data: GameModeEventData::Player(PlayerEventData::Connect { id: pk.pack() }),
+                });
             }
             SystemCallback::OnPlayerDisconnect { pk } => {
-                self.event_bus.schedule_event(GameModeEventData::Player(
-                    PlayerEventData::Disconnect { id: pk.pack() },
-                ));
+                self.event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![EventScope::Global],
+                    data: GameModeEventData::Player(PlayerEventData::Disconnect { id: pk.pack() }),
+                });
             }
         }
     }

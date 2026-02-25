@@ -1,6 +1,6 @@
 [package]
 name = "rock-engine"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
@@ -9,8 +9,8 @@ axum = { version = "0.8.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_repr = "0.1"
 color-eyre = "0.6.5"
-redis = { version = "1.0", features = ["tokio-comp", "connection-manager"] }
 futures-util = { version = "0.3.31", features = ["sink"] }
 async-trait = "0.1.89"
 arc-swap = "1.8.0"
@@ -22,4 +22,8 @@ mlua = { version = "0.11.5", features = ["lua54", "vendored", "async", "serde"] 
 slotmap = "1.1.1"
 strum = { version = "0.27", features = ["derive"] }
 hecs = "0.11.0"
-clap = "4.5.59"
+clap = { version = "4.5.5", features = ["derive"] }
+walkdir = "2"
+rayon = "1.11.0"
+num_enum = "0.7.5"
+smallvec = "1.15.1"

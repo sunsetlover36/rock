@@ -16,7 +16,16 @@ pub(crate) use sprite_2d::Sprite2D;
 mod sprite_char;
 pub(crate) use sprite_char::SpriteChar;
 
-#[derive(EnumDiscriminants, Clone, Serialize)]
+mod owned_by;
+pub(crate) use owned_by::OwnedBy;
+
+mod blueprint;
+pub(crate) use blueprint::Blueprint;
+
+mod name;
+pub(crate) use name::Name;
+
+#[derive(Debug, EnumDiscriminants, Clone, Serialize)]
 #[serde(untagged)]
 #[strum_discriminants(name(ComponentKey))]
 #[strum_discriminants(derive(Hash))]
@@ -26,5 +35,8 @@ pub(crate) enum ComponentData {
     Control(Control),
     Sprite2D(Sprite2D),
     SpriteChar(SpriteChar),
+    OwnedBy(OwnedBy),
+    Blueprint(Blueprint),
+    Name(Name),
 }
 pub(crate) struct CustomDataComponent(pub mlua::RegistryKey);

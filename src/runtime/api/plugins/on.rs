@@ -1,16 +1,13 @@
 use color_eyre::eyre;
 use mlua::{Lua, Table};
 
-use crate::runtime::{
-    api::protocol::{AsyncTask, GameModePlugin},
-    utils::LuaResultExt,
-};
+use crate::runtime::api::protocol::{AsyncTask, GameModePlugin, PluginName};
 
 pub(crate) mod event_descriptors;
 pub(crate) mod lazy;
 pub(crate) use lazy::OnPluginLazy;
 mod rx;
-use rx::RxBuilder;
+use rx::OnRx;
 pub mod protocol;
 pub use protocol::*;
 
@@ -37,7 +34,7 @@ impl OnPlugin {
 
             let key = descriptor.event_key;
             let listener =
-                lua.create_function(move |_, _: ()| Ok(RxBuilder::new(key, EventScope::Global)))?;
+                lua.create_function(move |_, _: ()| Ok(OnRx::new(key, EventScope::Global)))?;
             ns_table.set(descriptor.name, listener)?;
         }
 
@@ -45,17 +42,15 @@ impl OnPlugin {
     }
 }
 impl GameModePlugin for OnPlugin {
-    fn name(&self) -> &str {
-        "on"
+    fn name(&self) -> PluginName {
+        PluginName::On
     }
 
-    fn create_global_api(&self, lua: &Lua) -> eyre::Result<Option<Table>> {
-        Ok(Some(self.create_listeners_table(lua).wrap_err(
-            format!("Failed to initialize `{}` plugin", self.name()).as_str(),
-        )?))
+    fn create_global_api(&self, lua: &Lua) -> mlua::Result<Option<Table>> {
+        Ok(Some(self.create_listeners_table(lua)?))
     }
 
-    fn create_scene_api(&self, _: &Lua) -> eyre::Result<Option<Table>> {
+    fn create_scene_api(&self, _: &Lua) -> mlua::Result<Option<Table>> {
         Ok(None)
     }
 

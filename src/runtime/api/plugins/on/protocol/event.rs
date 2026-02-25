@@ -1,6 +1,7 @@
-use mlua::IntoLuaMulti;
+use mlua::{IntoLua, IntoLuaMulti};
 
 pub(crate) mod world;
+use smallvec::SmallVec;
 pub(crate) use world::*;
 
 pub(crate) mod player;
@@ -15,7 +16,7 @@ pub(crate) struct EventDescriptor {
     pub event_key: GameModeEventKey,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EventScope {
     Global,
     Entity(u64),
@@ -50,5 +51,28 @@ impl IntoLuaMulti for GameModeEventData {
             GameModeEventData::Player(e) => e.into_lua_multi(lua),
             GameModeEventData::Entity(e) => e.into_lua_multi(lua),
         }
+    }
+}
+
+pub(crate) struct GameModeEvent {
+    pub scopes: SmallVec<[EventScope; 2]>,
+    pub data: GameModeEventData,
+}
+impl IntoLuaMulti for GameModeEvent {
+    fn into_lua_multi(self, lua: &mlua::Lua) -> mlua::Result<mlua::MultiValue> {
+        let entity_id = self.scopes.iter().find_map(|scope| {
+            if let EventScope::Entity(id) = scope {
+                Some(id.clone())
+            } else {
+                None
+            }
+        });
+
+        let mut lua_args = self.data.into_lua_multi(lua)?.into_vec();
+        if let Some(id) = entity_id {
+            lua_args.insert(0, id.into_lua(lua)?);
+        }
+
+        Ok(mlua::MultiValue::from_vec(lua_args))
     }
 }

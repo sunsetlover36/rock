@@ -5,7 +5,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
 };
 use shared::{IncomingRequest, OutgoingPacket, SystemPacket};
-use tokio::sync::{broadcast::error::RecvError, mpsc};
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
     envelope::ClientEnvelope,
@@ -19,15 +19,13 @@ use crate::{
 pub struct SocketAdapterParams {
     pub socket: WebSocket,
     pub session: Session,
-    pub client_messenger_tx: mpsc::Sender<ClientEnvelope<IncomingRequest>>,
-    pub gamemode_callback_tx: flume::Sender<RuntimeCallback>,
+    pub runtime_callback_tx: flume::Sender<RuntimeCallback>,
 }
 pub struct SocketAdapter {
     ws_tx: SplitSink<WebSocket, Message>,
     ws_rs: SplitStream<WebSocket>,
     session: Session,
-    client_messenger_tx: mpsc::Sender<ClientEnvelope<IncomingRequest>>,
-    gamemode_callback_tx: flume::Sender<RuntimeCallback>,
+    runtime_callback_tx: flume::Sender<RuntimeCallback>,
 }
 impl SocketAdapter {
     pub fn new(params: SocketAdapterParams) -> Self {
@@ -36,13 +34,23 @@ impl SocketAdapter {
             ws_tx,
             ws_rs,
             session: params.session,
-            client_messenger_tx: params.client_messenger_tx,
-            gamemode_callback_tx: params.gamemode_callback_tx,
+            runtime_callback_tx: params.runtime_callback_tx,
         }
     }
 
+    async fn process_request(&self, request: IncomingRequest) -> eyre::Result<()> {
+        self.runtime_callback_tx
+            .send_async(RuntimeCallback::Client(ClientEnvelope {
+                sender: self.session.pk,
+                payload: request,
+            }))
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn activate(mut self) -> eyre::Result<()> {
-        self.gamemode_callback_tx
+        self.runtime_callback_tx
             .send_async(RuntimeCallback::System(SystemCallback::OnPlayerConnect {
                 pk: self.session.pk,
             }))
@@ -96,13 +104,12 @@ impl SocketAdapter {
                             match msg {
                                 Message::Text(text) => {
                                     match serde_json::from_str::<IncomingRequest>(&text) {
-                                        Ok(payload) => {
-                                            let _ = self.client_messenger_tx.send(ClientEnvelope {
-                                                sender: self.session.pk,
-                                                payload
-                                            }).await;
+                                        Ok(request) => {
+                                            self.process_request(request).await?;
                                         }
-                                        Err(_) => {}
+                                        Err(err) => {
+                                            eprintln!("Unknown socket message: {}", err);
+                                        }
                                     }
                                 }
                                 Message::Close(_) => {
@@ -117,7 +124,7 @@ impl SocketAdapter {
             }
         }
 
-        self.gamemode_callback_tx
+        self.runtime_callback_tx
             .send_async(RuntimeCallback::System(
                 SystemCallback::OnPlayerDisconnect {
                     pk: self.session.pk,

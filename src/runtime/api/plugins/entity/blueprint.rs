@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map};
 
 use mlua::{LuaSerdeExt, UserData};
 
@@ -7,26 +7,28 @@ use crate::runtime::{
         on::{EventScope, OnPluginLazy},
         plugins::entity::{
             components::{
-                ComponentData, Control, CustomDataComponent, Sprite2D, SpriteChar, Transform2D,
-                Vector2D,
+                Blueprint, ComponentData, Control, CustomDataComponent, OwnedBy, Sprite2D,
+                SpriteChar, Transform2D, Vector2D,
             },
             event_descriptors::ENTITY_EVENT_DESCRIPTORS,
             handle::EntityHandle,
-            macros::{add_blueprint_methods, for_each_component},
+            macros::{add_blueprint_methods, for_each_blueprint},
         },
     },
-    app_data::GameModeAppData,
+    app_data,
 };
 
+pub type BlueprintId = u64;
+
 #[derive(Clone)]
-pub(super) struct EntityBlueprint {
-    id: u64,
+pub(crate) struct EntityBlueprint {
+    id: BlueprintId,
     pub name: Option<String>,
     pub components: Vec<ComponentData>,
     pub customs: HashMap<String, serde_json::Value>,
 }
 impl EntityBlueprint {
-    pub fn new(id: u64) -> Self {
+    pub fn new(id: BlueprintId) -> Self {
         Self {
             id,
             name: None,
@@ -46,7 +48,43 @@ impl UserData for EntityBlueprint {
     }
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        for_each_component!(methods, add_blueprint_methods);
+        for_each_blueprint!(methods, add_blueprint_methods);
+
+        methods.add_method("from", |lua, this, name: String| {
+            if !this.components.is_empty() || !this.customs.is_empty() {
+                return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint already contains components or custom data", name)));
+            }
+
+            let blueprints = lua
+                .app_data_ref::<app_data::Blueprints>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            if let Some(blueprint) = blueprints.get(&name) {
+                let blueprint = blueprint.clone();
+                let mut this = this.clone();
+                this.components = blueprint.components;
+                this.customs = blueprint.customs;
+
+                return Ok(this);
+            } else {
+                return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint not found", name)));
+            }
+        });
+        methods.add_method("register", |lua, this, name: String| {
+            match lua
+                .app_data_mut::<app_data::Blueprints>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                .entry(name.clone())
+            {
+                hash_map::Entry::Occupied(_) => Err(mlua::Error::runtime(format!(
+                    "Cannot call `register(\"{}\")`: blueprint with this name already exists",
+                    name
+                ))),
+                hash_map::Entry::Vacant(entry) => {
+                    entry.insert(this.clone());
+                    Ok(())
+                }
+            }
+        });
 
         methods.add_method("name", |_, this, name: String| {
             let mut next = this.clone();
@@ -66,27 +104,59 @@ impl UserData for EntityBlueprint {
         });
 
         methods.add_method_mut("spawn", |lua, this, _: ()| {
+            let runtime_phase = lua
+                .app_data_ref::<app_data::RuntimePhase>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            if *runtime_phase == app_data::RuntimePhase::Blueprints {
+                return Err(mlua::Error::runtime(
+                    "Access denied: cannot spawn during blueprint loading phase",
+                ));
+            }
+
             let mut builder = hecs::EntityBuilder::new();
+            // TODO: repeated code
             for component in &this.components {
                 match component {
-                    ComponentData::Vector2D(c) => builder.add(c.clone()),
-                    ComponentData::Transform2D(c) => builder.add(c.clone()),
-                    ComponentData::Control(c) => builder.add(c.clone()),
-                    ComponentData::Sprite2D(c) => builder.add(c.clone()),
-                    ComponentData::SpriteChar(c) => builder.add(c.clone()),
+                    ComponentData::Vector2D(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::Transform2D(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::Control(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::Sprite2D(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::SpriteChar(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::OwnedBy(c) => {
+                        builder.add(c.clone());
+                    }
+                    ComponentData::Name(c) => {
+                        builder.add(c.clone());
+                    }
+                    // Blueprint component cannot be attached manually
+                    ComponentData::Blueprint(_) => {}
                 };
             }
+            builder.add(Blueprint(this.id));
 
             if this.customs.len() != 0 {
                 let customs = lua.to_value(&this.customs)?;
                 builder.add(CustomDataComponent(lua.create_registry_value(customs)?));
             }
 
-            let mut app_data = lua
-                .app_data_mut::<GameModeAppData>()
+            let mut world = lua
+                .app_data_mut::<app_data::World>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-            let entity = app_data.world.spawn(builder.build());
-            Ok(EntityHandle { entity })
+            let entity = world.spawn(builder.build());
+            Ok(EntityHandle {
+                entity,
+                blueprint_id: this.id,
+            })
         });
     }
 }

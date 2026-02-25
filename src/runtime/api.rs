@@ -1,40 +1,34 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use color_eyre::eyre;
 use mlua::Lua;
 
 mod plugins;
-use plugins::{
-    entity::EntityPlugin,
+pub use plugins::on;
+pub(super) use plugins::{
+    entity::{EntityBlueprint, EntityPlugin},
+    input::{InputEvent, InputPlugin},
     memory::MemoryPlugin,
-    on::OnPlugin,
-    scene::{SceneManagerMessage, ScenePlugin},
+    scene::*,
 };
-pub use plugins::{on, scene::SceneManager};
 pub mod protocol;
 use protocol::GameModePlugin;
 
-use crate::{
-    meta_db::MetaDb,
-    runtime::{
-        api::{
-            on::event_descriptors::GLOBAL_EVENT_DESCRIPTORS, plugins::scene::SceneManagerParams,
-        },
-        app_data::GameModeAppData,
-        utils::LuaResultExt,
-    },
+use crate::runtime::{
+    api::protocol::PluginName,
+    app_data::{self},
+    utils::LuaResultExt,
 };
 
 pub struct Yielder {}
 impl Yielder {
-    pub fn get(lua: &Lua) -> eyre::Result<mlua::Function> {
-        let app_data = lua
-            .app_data_ref::<GameModeAppData>()
-            .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
-        let yielder_fn = app_data
-            .yielder
+    pub fn get(lua: &Lua) -> mlua::Result<mlua::Function> {
+        let yielder = lua
+            .app_data_ref::<app_data::Yielder>()
+            .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+        let yielder_fn = yielder
             .clone()
-            .ok_or_else(|| eyre::eyre!("`yielder` function not found in app data"))?;
+            .ok_or_else(|| mlua::Error::runtime("`yielder` function not found in app data"))?;
 
         Ok(yielder_fn)
     }
@@ -56,66 +50,71 @@ impl Yielder {
     }
 }
 
-pub struct ApiRegisterParams {
-    pub tokio_handle: tokio::runtime::Handle,
-    pub scene_manager_channel_buffer: usize,
-    pub meta_db: Arc<MetaDb>,
+pub struct PluginComposer {
+    plugins: HashMap<PluginName, Box<dyn GameModePlugin>>,
 }
-pub fn register(lua: &Lua, params: ApiRegisterParams) -> eyre::Result<SceneManager> {
-    let (scene_manager_tx, scene_manager_rx) =
-        flume::bounded::<SceneManagerMessage>(params.scene_manager_channel_buffer);
-
-    let plugins: Vec<Box<dyn GameModePlugin>> = vec![
-        Box::new(OnPlugin {
-            descriptors: GLOBAL_EVENT_DESCRIPTORS,
-        }),
-        Box::new(EntityPlugin {}),
-        Box::new(MemoryPlugin {
-            meta_db: params.meta_db,
-        }),
-        Box::new(ScenePlugin {
-            manager_tx: scene_manager_tx.clone(),
-        }),
-    ];
-    let mut registered_plugins = HashMap::new();
-
-    let globals = lua.globals();
-    {
-        let mut app_data = lua
-            .app_data_mut::<GameModeAppData>()
+impl PluginComposer {
+    pub fn new(lua: &Lua) -> eyre::Result<Self> {
+        let mut yielder = lua
+            .app_data_mut::<app_data::Yielder>()
             .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
-        app_data.yielder = Some(Yielder::create(&lua)?);
+        *yielder = Some(Yielder::create(lua)?);
+
+        Ok(Self {
+            plugins: HashMap::new(),
+        })
     }
 
-    // Global APIs
-    for plugin in &plugins {
-        if let Some(global_api_table) = plugin.create_global_api(&lua)? {
-            let name = plugin.name().to_owned();
-            let err_msg = format!("Failed to register global API for `{}` plugin", &name);
-            globals.set(name, global_api_table).wrap_err(&err_msg)?;
-        }
-    }
-
-    // Scene APIs
-    let mut scene_plugins: HashMap<String, mlua::Table> = HashMap::new();
-    for plugin in plugins {
-        let name = plugin.name().to_owned();
-        if let Some(scene_api) = plugin.create_scene_api(&lua)? {
-            scene_plugins.insert(name.clone(), scene_api);
+    pub fn add_plugin(&mut self, lua: &Lua, plugin: Box<dyn GameModePlugin>) -> eyre::Result<()> {
+        let plugin_name = plugin.name();
+        if self.plugins.contains_key(&plugin_name) {
+            return Ok(());
         }
 
-        registered_plugins.insert(name, plugin);
+        let globals = lua.globals();
+
+        let err_msg = format!("Failed to initialize `{}` plugin", plugin_name);
+        if let Some(global_api) = plugin.create_global_api(lua).wrap_err(&err_msg)? {
+            globals
+                .set(plugin_name.as_ref(), global_api)
+                .wrap_err(&format!(
+                    "Failed to call `add_plugin(\"{}\")`: failed to set a global table",
+                    plugin_name.as_ref()
+                ))?;
+        };
+        if let Some(scene_api) = plugin.create_scene_api(lua).wrap_err(&err_msg)? {
+            let mut scene_plugins = lua
+                .app_data_mut::<app_data::ScenePlugins>()
+                .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
+            if !scene_plugins.contains_key(&plugin_name) {
+                scene_plugins.insert(plugin_name, scene_api);
+            }
+
+            self.plugins.insert(plugin_name, plugin);
+        };
+
+        Ok(())
+    }
+    pub fn remove_plugin(&mut self, lua: &Lua, name: PluginName) -> eyre::Result<()> {
+        let globals = lua.globals();
+        globals
+            .set(name.as_ref(), mlua::Value::Nil)
+            .wrap_err(&format!(
+                "Failed to call `remove_plugin(\"{}\")`: cannot replace a plugin with `nil` value",
+                name.as_ref()
+            ))?;
+
+        if self.plugins.contains_key(&name) {
+            self.plugins.remove(&name);
+            lua.app_data_mut::<app_data::ScenePlugins>()
+                .ok_or_else(|| eyre::eyre!("App data is not initialized"))?
+                .remove(&name);
+        }
+
+        Ok(())
     }
 
-    let mut app_data = lua
-        .app_data_mut::<GameModeAppData>()
-        .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
-    app_data.scene_plugins = scene_plugins;
-
-    Ok(SceneManager::new(SceneManagerParams {
-        plugins: registered_plugins,
-        rx: scene_manager_rx,
-        tx: scene_manager_tx,
-        tokio_handle: params.tokio_handle,
-    }))
+    pub fn consume_plugins(self) -> HashMap<PluginName, Box<dyn GameModePlugin>> {
+        self.plugins
+    }
 }

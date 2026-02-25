@@ -6,7 +6,7 @@ use slotmap::{SlotMap, new_key_type};
 
 use crate::{
     runtime::{
-        api::protocol::{AsyncTaskResult, GameModePlugin},
+        api::protocol::{AsyncTaskResult, GameModePlugin, PluginName},
         utils::LuaResultExt,
     },
     utils::json_to_lua,
@@ -31,7 +31,7 @@ pub enum SceneManagerMessage {
 }
 
 pub struct SceneManagerParams {
-    pub plugins: HashMap<String, Box<dyn GameModePlugin>>,
+    pub plugins: HashMap<PluginName, Box<dyn GameModePlugin>>,
     pub rx: flume::Receiver<SceneManagerMessage>,
     pub tx: flume::Sender<SceneManagerMessage>,
     pub tokio_handle: tokio::runtime::Handle,
@@ -39,10 +39,10 @@ pub struct SceneManagerParams {
 
 pub struct SceneManager {
     threads: SlotMap<TaskId, mlua::RegistryKey>,
-    rx: flume::Receiver<SceneManagerMessage>,
     tx: flume::Sender<SceneManagerMessage>,
+    rx: flume::Receiver<SceneManagerMessage>,
     tokio_handle: tokio::runtime::Handle,
-    plugins: HashMap<String, Box<dyn GameModePlugin>>,
+    plugins: HashMap<PluginName, Box<dyn GameModePlugin>>,
 }
 impl SceneManager {
     pub fn new(params: SceneManagerParams) -> Self {
@@ -118,7 +118,8 @@ impl SceneManager {
             .split_once("_")
             .ok_or_else(|| eyre::eyre!("handle_yield: invalid format for opcode ({})", opcode))?;
 
-        match self.plugins.get(&prefix.to_lowercase()) {
+        let plugin_name = prefix.to_lowercase().parse::<PluginName>()?;
+        match self.plugins.get(&plugin_name) {
             Some(plugin) => {
                 let args: mlua::Table = t
                     .get("args")

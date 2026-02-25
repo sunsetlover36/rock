@@ -1,8 +1,8 @@
-use shared::{GameModeClientRequest, PlayerKey};
+use shared::{IncomingRequest, PlayerKey};
 
-use crate::{actor::indexer::protocol::IndexerEvent, envelope::ClientEnvelope};
+use crate::envelope::ClientEnvelope;
 
-pub type ClientRequest = ClientEnvelope<GameModeClientRequest>;
+pub type ClientRequest = ClientEnvelope<IncomingRequest>;
 
 #[derive(Debug, Clone)]
 pub enum GameModeClientCommand {
@@ -22,5 +22,4 @@ pub enum SystemCallback {
 pub enum RuntimeCallback {
     System(SystemCallback),
     Client(ClientRequest),
-    Indexer(IndexerEvent),
 }
