@@ -22,6 +22,7 @@ pub(super) struct OnRx {
     event_key: GameModeEventKey,
     scope: EventScope,
     name: Option<String>,
+    priority: u32,
     pipeline: RxPipeline,
 }
 impl OnRx {
@@ -30,6 +31,7 @@ impl OnRx {
             event_key,
             scope,
             name: None,
+            priority: 0,
             pipeline: RxPipeline::default(),
         }
     }
@@ -42,6 +44,7 @@ impl OnRx {
             scope: self.scope,
             context: params.context,
             handle: params.handle,
+            priority: self.priority,
             pipeline: self.pipeline.clone(),
         })
     }
@@ -76,6 +79,8 @@ impl OnRx {
                     context,
                 }));
             }
+
+            entry.sort_by(|a, b| b.priority.cmp(&a.priority));
         }
 
         // Layer garbage collection
@@ -91,11 +96,11 @@ impl OnRx {
 
                 Ok(())
             })?;
-            lua.app_data_mut::<app_data::LayerCleaners>()
+            lua.app_data_mut::<app_data::LayerRegistry>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                .layers
                 .entry(layer.to_owned())
-                .or_default()
-                .push(cleaner);
+                .and_modify(|l| l.cleaners.push(cleaner));
         }
 
         Ok(current_seq)
@@ -113,6 +118,12 @@ impl UserData for OnRx {
         methods.add_method("name", |_, this, name: String| {
             let mut next = this.clone();
             next.name = Some(name);
+            Ok(next)
+        });
+
+        methods.add_method("priority", |_, this, priority: u32| {
+            let mut next = this.clone();
+            next.priority = priority;
             Ok(next)
         });
 

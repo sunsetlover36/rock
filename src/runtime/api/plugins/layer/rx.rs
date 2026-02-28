@@ -1,31 +1,35 @@
+use std::collections::hash_map;
+
 use mlua::UserData;
 
-use crate::runtime::{api::plugins::layer::handle::LayerHandle, app_data};
+use crate::runtime::{
+    api::{LayerEntry, LayerId, plugins::layer::handle::LayerHandle},
+    app_data,
+};
 
 struct LayerGuard<'lua> {
     lua: &'lua mlua::Lua,
-    is_active: bool,
 }
 impl<'lua> Drop for LayerGuard<'lua> {
     fn drop(&mut self) {
-        if self.is_active {
-            if let Some(mut layers) = self.lua.app_data_mut::<app_data::ActiveLayers>() {
-                layers.pop();
-            }
+        if let Some(mut layers) = self.lua.app_data_mut::<app_data::ActiveLayers>() {
+            layers.pop();
         }
     }
 }
 
 #[derive(Clone)]
 pub(super) struct LayerRx {
-    callbacks: Vec<mlua::Function>,
+    id: LayerId,
     name: Option<String>,
+    callbacks: Vec<mlua::Function>,
 }
 impl LayerRx {
-    pub fn new() -> Self {
+    pub fn new(id: LayerId) -> Self {
         Self {
-            callbacks: Vec::new(),
+            id,
             name: None,
+            callbacks: Vec::new(),
         }
     }
 }
@@ -46,40 +50,51 @@ impl UserData for LayerRx {
         });
 
         methods.add_method("commit", |lua, this, _: ()| {
-            let mut cleaners: Vec<mlua::Function> = Vec::new();
-
-            let mut is_active = false;
-            if let Some(name) = &this.name {
-                lua.app_data_mut::<app_data::ActiveLayers>()
-                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
-                    .push(name.to_owned());
-                is_active = true;
-            }
-
-            let _guard = LayerGuard { lua, is_active };
-            for cb in &this.callbacks {
-                let cleaner = cb.call::<Option<mlua::Function>>(())?;
-                if let Some(cleaner) = cleaner {
-                    match &this.name {
-                        Some(name) => {
-                            let mut layer_cleaners = lua
-                                .app_data_mut::<app_data::LayerCleaners>()
-                                .ok_or_else(|| {
-                                    mlua::Error::runtime("App data is not initialized")
-                                })?;
-                            layer_cleaners
-                                .entry(name.to_owned())
-                                .or_default()
-                                .push(cleaner);
+            {
+                let mut registry = lua
+                    .app_data_mut::<app_data::LayerRegistry>()
+                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+                if let Some(name) = &this.name {
+                    match registry.aliases.entry(name.to_owned()) {
+                        hash_map::Entry::Occupied(e) => {
+                            if *e.get() != this.id {
+                                return Err(mlua::Error::runtime(format!(
+                                    "Failed to commit a new layer with the same name {}: layer already exists",
+                                    name
+                                )));
+                            }
                         }
-                        None => {
-                            cleaners.push(cleaner);
+                        hash_map::Entry::Vacant(e) => {
+                            e.insert(this.id);
                         }
                     }
                 }
+
+                registry.layers.entry(this.id).or_insert(LayerEntry {
+                    name: this.name.clone(),
+                    cleaners: Vec::new(),
+                });
             }
 
-            Ok(LayerHandle::new(cleaners))
+            lua.app_data_mut::<app_data::ActiveLayers>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                .push(this.id);
+            let _guard = LayerGuard { lua };
+
+            for cb in &this.callbacks {
+                let cleaner = cb.call::<Option<mlua::Function>>(())?;
+                if let Some(cleaner) = cleaner {
+                    let mut registry = lua
+                        .app_data_mut::<app_data::LayerRegistry>()
+                        .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+                    registry
+                        .layers
+                        .entry(this.id)
+                        .and_modify(|l| l.cleaners.push(cleaner));
+                }
+            }
+
+            Ok(LayerHandle::new(this.id))
         });
     }
 }

@@ -15,12 +15,14 @@ pub(crate) struct GameModeListenerParams {
     pub context: ExecutionContext,
     pub handle: mlua::Function,
     pub pipeline: RxPipeline,
+    pub priority: u32,
 }
 pub struct GameModeListener {
     pub name: Option<String>,
     pub scope: EventScope,
     pub context: ExecutionContext,
     pub handle: mlua::Function,
+    pub priority: u32,
     created_at_seq: u64,
     call_count: u32,
     pipeline: RxPipeline,
@@ -32,6 +34,7 @@ impl GameModeListener {
             scope: params.scope,
             context: params.context,
             handle: params.handle,
+            priority: params.priority,
             created_at_seq: params.created_at_seq,
             call_count: 0,
             pipeline: params.pipeline,

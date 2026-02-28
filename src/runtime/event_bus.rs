@@ -99,10 +99,15 @@ impl EventBus {
         };
 
         for handle in pending_handles {
-            let result = handle.func.call::<()>(handle.args);
+            let result = handle.func.call::<Option<bool>>(handle.args);
             match handle.context {
                 ExecutionContext::Global => {
-                    result.wrap_err(format!("Error in `{:?}` event listener", &key).as_str())?;
+                    let result = result
+                        .wrap_err(format!("Error in `{:?}` event listener", &key).as_str())?
+                        .unwrap_or(false);
+                    if result {
+                        return Ok(());
+                    }
                 }
                 ExecutionContext::Impromptu => {
                     // TODO: propagate the error to commit router? to logger?
@@ -112,6 +117,12 @@ impl EventBus {
                         "Error in `{:?}` event listener (registered during the impromptu)",
                         &key
                     );
+
+                    if let Ok(result) = result {
+                        if result.unwrap_or(false) {
+                            return Ok(());
+                        }
+                    }
                 }
             }
         }

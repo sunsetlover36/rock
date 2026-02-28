@@ -2,11 +2,20 @@ use std::collections::hash_map;
 
 use mlua::UserData;
 
-use crate::runtime::app_data;
+use crate::runtime::{SceneManagerMessage, api::plugins::scene::to_coroutine, app_data};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(super) struct SceneRx {
+    manager_tx: flume::Sender<SceneManagerMessage>,
     scripts: Vec<mlua::Function>,
+}
+impl SceneRx {
+    pub fn new(manager_tx: flume::Sender<SceneManagerMessage>) -> Self {
+        Self {
+            manager_tx,
+            scripts: Vec::new(),
+        }
+    }
 }
 impl UserData for SceneRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
@@ -14,6 +23,19 @@ impl UserData for SceneRx {
             let mut next = this.clone();
             next.scripts.push(script);
             Ok(next)
+        });
+
+        methods.add_method("play", |lua, this, _: ()| {
+            this.manager_tx
+                .send(SceneManagerMessage::AddTask(to_coroutine(
+                    lua,
+                    &this.scripts,
+                )?))
+                .map_err(|e| {
+                    mlua::Error::runtime(format!("scene.play: Failed to add task ({})", e))
+                })?;
+
+            Ok(())
         });
 
         methods.add_method("register", |lua, this, name: String| {

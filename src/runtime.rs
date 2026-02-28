@@ -22,7 +22,7 @@ use crate::{
             },
             protocol::GameModePlugin,
         },
-        app_data::{ExecutionContext, InputEventRegistry},
+        app_data::{ExecutionContext, InputEventRegistry, LayerRegistry},
     },
     world::{WorldNatives, WorldState},
 };
@@ -89,7 +89,7 @@ impl Runtime {
         lua.set_app_data::<app_data::Blueprints>(HashMap::new());
         lua.set_app_data::<app_data::InputEventRegistry>(InputEventRegistry::default());
         lua.set_app_data::<app_data::ExecutionContext>(ExecutionContext::Global);
-        lua.set_app_data::<app_data::LayerCleaners>(HashMap::new());
+        lua.set_app_data::<app_data::LayerRegistry>(LayerRegistry::new());
         lua.set_app_data::<app_data::ActiveLayers>(Vec::new());
 
         // Plugins

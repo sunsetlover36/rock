@@ -6,7 +6,7 @@ use shared::{InputAction, InputKind};
 use crate::runtime::{
     EventBus as EventBusStruct,
     api::{
-        EntityBlueprint, InputEvent,
+        EntityBlueprint, InputEvent, LayerEntry, LayerId,
         on::{GameModeEventKey, GameModeListener},
         protocol::PluginName,
     },
@@ -61,8 +61,27 @@ pub enum ExecutionContext {
 }
 
 // Layer management
-// -- Cleaner functions for each layer
-pub type LayerCleaners = HashMap<String, Vec<mlua::Function>>;
+// -- Registry
+#[derive(Debug)]
+pub struct LayerRegistry {
+    last_id: LayerId,
+    pub layers: HashMap<LayerId, LayerEntry>,
+    pub aliases: HashMap<String, LayerId>,
+}
+impl LayerRegistry {
+    pub fn new() -> Self {
+        Self {
+            last_id: 0,
+            layers: HashMap::new(),
+            aliases: HashMap::new(),
+        }
+    }
+
+    pub fn increment_id(&mut self) -> LayerId {
+        self.last_id += 1;
+        self.last_id
+    }
+}
 
 // -- Active layers at initialization phase
-pub type ActiveLayers = Vec<String>;
+pub type ActiveLayers = Vec<LayerId>;
