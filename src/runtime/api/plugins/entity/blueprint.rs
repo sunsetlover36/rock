@@ -149,10 +149,31 @@ impl UserData for EntityBlueprint {
                 builder.add(CustomDataComponent(lua.create_registry_value(customs)?));
             }
 
-            let mut world = lua
+            let entity = lua
                 .app_data_mut::<app_data::World>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                .spawn(builder.build());
+
+            // Layer garbage collection
+            let layers = lua
+                .app_data_ref::<app_data::ActiveLayers>()
                 .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-            let entity = world.spawn(builder.build());
+            if let Some(layer) = layers.last() {
+                let cleaner = lua.create_function(move |lua, _: ()| {
+                    let _ = lua
+                        .app_data_mut::<app_data::World>()
+                        .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                        .despawn(entity.clone());
+                    Ok(())
+                })?;
+
+                lua.app_data_mut::<app_data::LayerCleaners>()
+                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                    .entry(layer.to_owned())
+                    .or_default()
+                    .push(cleaner);
+            }
+
             Ok(EntityHandle {
                 entity,
                 blueprint_id: this.id,

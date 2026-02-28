@@ -53,3 +53,16 @@ impl InputEventRegistry {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum ExecutionContext {
+    Global,
+    Impromptu,
+}
+
+// Layer management
+// -- Cleaner functions for each layer
+pub type LayerCleaners = HashMap<String, Vec<mlua::Function>>;
+
+// -- Active layers at initialization phase
+pub type ActiveLayers = Vec<String>;

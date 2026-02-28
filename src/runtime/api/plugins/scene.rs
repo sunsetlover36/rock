@@ -8,6 +8,7 @@ use crate::runtime::{
 
 mod manager;
 pub use manager::{SceneManager, SceneManagerMessage, SceneManagerParams};
+mod rx;
 
 fn get_scene_env(lua: &Lua) -> mlua::Result<Table> {
     let env = lua.create_table()?;

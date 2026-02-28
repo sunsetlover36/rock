@@ -18,6 +18,7 @@ pub trait GameModeClientApi: Send {
 pub enum SystemCallback {
     OnPlayerConnect { pk: PlayerKey },
     OnPlayerDisconnect { pk: PlayerKey },
+    OnImpromptuRequest { name: Option<String>, code: String },
 }
 pub enum RuntimeCallback {
     System(SystemCallback),

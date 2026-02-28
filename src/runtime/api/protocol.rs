@@ -28,4 +28,5 @@ pub enum PluginName {
     Scene,
     Memory,
     Input,
+    Layer,
 }

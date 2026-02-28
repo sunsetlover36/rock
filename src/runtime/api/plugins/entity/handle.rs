@@ -26,6 +26,7 @@ pub(super) struct EntityHandle {
 }
 impl UserData for EntityHandle {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
+        // TODO: every get call creates a new table
         fields.add_field_method_get("on", |_, this| {
             Ok(OnPluginLazy {
                 descriptors: ENTITY_EVENT_DESCRIPTORS,
@@ -75,6 +76,25 @@ impl UserData for EntityHandle {
                     return Ok(mlua::Value::Nil);
                 }
             }
+        });
+
+        methods.add_method("despawn", |lua, this, _: ()| {
+            if let Err(err) = lua
+                .app_data_mut::<app_data::World>()
+                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                .despawn(this.entity)
+            {
+                match err {
+                    hecs::NoSuchEntity => {
+                        return Err(mlua::Error::runtime(format!(
+                            "Failed to despawn an entity with ID {}: no such entity",
+                            this.entity.id()
+                        )));
+                    }
+                }
+            };
+
+            Ok(())
         });
     }
 }
