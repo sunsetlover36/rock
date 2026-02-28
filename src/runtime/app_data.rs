@@ -21,7 +21,7 @@ pub enum RuntimePhase {
 }
 
 pub type EventListeners = HashMap<GameModeEventKey, Vec<GameModeListener>>;
-pub type Scenes = HashMap<String, mlua::Function>;
+pub type Scenes = HashMap<String, Vec<mlua::Function>>;
 pub type ScenePlugins = HashMap<PluginName, mlua::Table>;
 pub type Yielder = Option<mlua::Function>;
 pub type World = hecs::World;

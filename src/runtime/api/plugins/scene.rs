@@ -2,7 +2,10 @@ use color_eyre::eyre;
 use mlua::{Function, Lua, Table};
 
 use crate::runtime::{
-    api::protocol::{AsyncTask, GameModePlugin, PluginName},
+    api::{
+        plugins::scene::rx::SceneRx,
+        protocol::{AsyncTask, GameModePlugin, PluginName},
+    },
     app_data,
 };
 
@@ -43,64 +46,52 @@ impl GameModePlugin for ScenePlugin {
 
     fn create_global_api(&self, lua: &Lua) -> mlua::Result<Option<Table>> {
         let plugin_name = self.name();
-        let scene_table = lua.create_table()?;
+        let table = lua.create_table()?;
 
-        let scene_create_fn = lua.create_function(move |lua, table: Table| {
-            let name: String = table.get("name").map_err(|_| {
-                mlua::Error::runtime(format!(
-                    "{}.create: missing `name`. Use `{}.run` for unnamed scenes",
-                    plugin_name, plugin_name
-                ))
-            })?;
-
-            let action: Function = table.get("action").map_err(|_| {
-                mlua::Error::runtime(format!("{}.create: missing `action`", plugin_name))
-            })?;
-
-            lua.app_data_mut::<app_data::Scenes>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
-                .insert(name, action);
-
-            Ok(())
-        })?;
-        scene_table.set("create", scene_create_fn)?;
+        let create_fn = lua.create_function(move |_, _: ()| Ok(SceneRx::default()))?;
+        table.set("create", create_fn)?;
 
         let manager_tx = self.manager_tx.clone();
-        let scene_run_fn = lua.create_function(move |lua, table: Table| {
-            let action: Function = table.get("action").map_err(|_| {
-                mlua::Error::runtime(format!("{}.run: missing `action`", plugin_name))
-            })?;
+        let scene_run_fn = lua.create_function(move |lua, script: mlua::Function| {
             manager_tx
-                .send(SceneManagerMessage::AddTask(to_coroutine(lua, action)?))
+                .send(SceneManagerMessage::AddTask(to_coroutine(lua, script)?))
                 .map_err(|e| {
                     mlua::Error::runtime(format!("{}.run: Failed to add task ({})", plugin_name, e))
                 })?;
             Ok(())
         })?;
-        scene_table.set("run", scene_run_fn)?;
+        table.set("run", scene_run_fn)?;
 
         let manager_tx = self.manager_tx.clone();
         let scene_play_fn = lua.create_function(move |lua, name: String| {
-            let scenes = lua
-                .app_data_ref::<app_data::Scenes>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-            let action = scenes.get(&name).ok_or_else(|| {
-                mlua::Error::runtime(format!("{}.play: scene {} not found", plugin_name, name))
+            let combined_script = lua.create_function(move |lua, _: ()| {
+                let scenes = lua
+                    .app_data_ref::<app_data::Scenes>()
+                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+                let scripts = scenes.get(&name).ok_or_else(|| {
+                    mlua::Error::runtime(format!("{}.play: scene {} not found", plugin_name, name))
+                })?;
+
+                for script in scripts {
+                    script.call::<()>(())?;
+                }
+
+                Ok(())
             })?;
 
             manager_tx
                 .send(SceneManagerMessage::AddTask(to_coroutine(
                     lua,
-                    action.clone(),
+                    combined_script,
                 )?))
                 .map_err(|e| {
                     mlua::Error::runtime(format!("{}.run: Failed to add task ({})", plugin_name, e))
                 })?;
             Ok(())
         })?;
-        scene_table.set("play", scene_play_fn)?;
+        table.set("play", scene_play_fn)?;
 
-        Ok(Some(scene_table))
+        Ok(Some(table))
     }
 
     fn create_scene_api(&self, _: &Lua) -> mlua::Result<Option<Table>> {
