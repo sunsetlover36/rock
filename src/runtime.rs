@@ -15,14 +15,14 @@ use crate::{
     router::CommitRouter,
     runtime::{
         api::{
-            InputPlugin, LayerPlugin, SceneManagerParams,
+            InputPlugin, LayerPlugin, PlayerHandle, PlayerPlugin, SceneManagerParams,
             on::{
                 EventScope, GameModeEvent, GameModeEventData, OnPlugin, PlayerEventData,
                 WorldEventData, event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
             },
             protocol::GameModePlugin,
         },
-        app_data::{ExecutionContext, InputEventRegistry, LayerRegistry},
+        app_data::{BlueprintRegistry, ExecutionContext, InputEventRegistry, LayerRegistry},
     },
     world::{WorldNatives, WorldState},
 };
@@ -49,7 +49,7 @@ use utils::LuaResultExt;
 
 pub struct RuntimeParams {
     pub name: String,
-    pub client_api: Box<dyn GameModeClientApi>,
+    pub client_api: Arc<dyn GameModeClientApi>,
     pub callback_rx: flume::Receiver<RuntimeCallback>,
     pub commit_router: CommitRouter,
     pub meta_db: MetaDb,
@@ -58,7 +58,6 @@ pub struct RuntimeParams {
 
 pub struct Runtime {
     lua: Lua,
-    client_api: Box<dyn GameModeClientApi>,
     callback_rx: flume::Receiver<RuntimeCallback>,
     world_state: Rc<WorldState>,
     world_natives: WorldNatives,
@@ -86,11 +85,12 @@ impl Runtime {
         lua.set_app_data::<app_data::Yielder>(None);
         lua.set_app_data::<app_data::World>(hecs::World::new());
         lua.set_app_data::<app_data::EventBus>(event_bus.clone());
-        lua.set_app_data::<app_data::Blueprints>(HashMap::new());
+        lua.set_app_data::<app_data::BlueprintRegistry>(BlueprintRegistry::new());
         lua.set_app_data::<app_data::InputEventRegistry>(InputEventRegistry::default());
         lua.set_app_data::<app_data::ExecutionContext>(ExecutionContext::Global);
         lua.set_app_data::<app_data::LayerRegistry>(LayerRegistry::new());
         lua.set_app_data::<app_data::ActiveLayers>(Vec::new());
+        lua.set_app_data::<app_data::ClientApi>(params.client_api);
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
@@ -106,6 +106,7 @@ impl Runtime {
                 meta_db: meta_db.clone(),
             }),
             Box::new(LayerPlugin {}),
+            Box::new(PlayerPlugin {}),
             Box::new(ScenePlugin {
                 manager_tx: scene_manager_tx.clone(),
             }),
@@ -133,7 +134,6 @@ impl Runtime {
 
         Ok(Self {
             lua,
-            client_api: params.client_api,
             callback_rx: params.callback_rx,
             world_state,
             world_natives,
@@ -185,7 +185,7 @@ impl Runtime {
 
     // Untrusted input (called by the client)
     fn on_client_request(&self, message: ClientRequest) -> eyre::Result<()> {
-        let id = message.sender.pack();
+        let player = PlayerHandle::new(message.sender);
 
         match message.payload {
             IncomingRequest::Input(action) => {
@@ -197,7 +197,7 @@ impl Runtime {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Input {
-                        id,
+                        player,
                         name: action_name,
                         data: action.data,
                     }),
@@ -214,13 +214,17 @@ impl Runtime {
             SystemCallback::OnPlayerConnect { pk } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
-                    data: GameModeEventData::Player(PlayerEventData::Connect { id: pk.pack() }),
+                    data: GameModeEventData::Player(PlayerEventData::Connect {
+                        player: PlayerHandle::new(pk),
+                    }),
                 });
             }
             SystemCallback::OnPlayerDisconnect { pk } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
-                    data: GameModeEventData::Player(PlayerEventData::Disconnect { id: pk.pack() }),
+                    data: GameModeEventData::Player(PlayerEventData::Disconnect {
+                        player: PlayerHandle::new(pk),
+                    }),
                 });
             }
             SystemCallback::OnImpromptuRequest { name, code } => {

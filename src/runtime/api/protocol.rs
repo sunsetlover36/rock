@@ -23,10 +23,11 @@ pub trait GameModePlugin {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, EnumString, AsRefStr, Display)]
 #[strum(serialize_all = "lowercase")]
 pub enum PluginName {
-    On,
     Entity,
-    Scene,
-    Memory,
     Input,
     Layer,
+    Memory,
+    On,
+    Player,
+    Scene,
 }

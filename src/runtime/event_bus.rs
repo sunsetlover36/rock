@@ -9,8 +9,10 @@ use crate::runtime::{
     utils::LuaResultExt,
 };
 
+pub type SequenceId = u64;
+
 struct QueuedEvent {
-    created_at_seq: u64,
+    created_at_seq: SequenceId,
     event: GameModeEvent,
 }
 struct PendingHandle {
@@ -21,7 +23,7 @@ struct PendingHandle {
 
 struct EventBusInner {
     queue: Vec<QueuedEvent>,
-    sequence: u64,
+    sequence: SequenceId,
 }
 pub(crate) struct EventBus {
     inner: RefCell<EventBusInner>,
@@ -36,7 +38,7 @@ impl EventBus {
         }
     }
 
-    pub fn increment_sequence(&self) -> u64 {
+    pub fn increment_sequence(&self) -> SequenceId {
         let mut inner = self.inner.borrow_mut();
         inner.sequence += 1;
         inner.sequence

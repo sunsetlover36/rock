@@ -1,6 +1,6 @@
 use mlua::UserData;
 
-use crate::runtime::{api::on::GameModeEventKey, app_data};
+use crate::runtime::{api::on::GameModeEventKey, app_data, utils::get_app_data_mut};
 
 pub(super) struct ListenerHandle {
     pub event_key: GameModeEventKey,
@@ -14,8 +14,7 @@ impl UserData for ListenerHandle {
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("off", |lua, this, _: ()| {
-            lua.app_data_mut::<app_data::EventListeners>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialiezd"))?
+            get_app_data_mut::<app_data::EventListeners>(lua)?
                 .entry(this.event_key)
                 .and_modify(|listeners| listeners.retain(|l| l.get_seq() != this.seq));
 

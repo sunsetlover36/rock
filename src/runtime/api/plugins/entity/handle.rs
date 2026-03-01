@@ -17,6 +17,7 @@ use crate::runtime::{
         },
     },
     app_data,
+    utils::{get_app_data, get_app_data_mut},
 };
 
 #[derive(Clone)]
@@ -38,13 +39,8 @@ impl UserData for EntityHandle {
         for_each_handle!(methods, add_handle_methods);
 
         methods.add_method("custom", |lua, this, table: Option<mlua::Table>| {
-            let event_bus = lua
-                .app_data_ref::<app_data::EventBus>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
-                .clone();
-            let mut world = lua
-                .app_data_mut::<app_data::World>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            let event_bus = get_app_data::<app_data::EventBus>(lua)?.clone();
+            let mut world = get_app_data_mut::<app_data::World>(lua)?;
 
             if let Some(table) = table {
                 let rk = lua.create_registry_value(&table)?;
@@ -79,11 +75,7 @@ impl UserData for EntityHandle {
         });
 
         methods.add_method("despawn", |lua, this, _: ()| {
-            if let Err(err) = lua
-                .app_data_mut::<app_data::World>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
-                .despawn(this.entity)
-            {
+            if let Err(err) = get_app_data_mut::<app_data::World>(lua)?.despawn(this.entity) {
                 match err {
                     hecs::NoSuchEntity => {
                         return Err(mlua::Error::runtime(format!(

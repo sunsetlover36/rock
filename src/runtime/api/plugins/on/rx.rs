@@ -7,13 +7,15 @@ use crate::{
             handle::ListenerHandle,
         },
         app_data::{self, ExecutionContext},
+        event_bus::SequenceId,
+        utils::{get_app_data, get_app_data_mut},
     },
     rx::{HasRxPipeline, RxOperator, RxPipeline, add_rx_methods},
 };
 
 struct NewListenerParams {
     handle: mlua::Function,
-    seq: u64,
+    seq: SequenceId,
     context: ExecutionContext,
 }
 
@@ -49,20 +51,17 @@ impl OnRx {
         })
     }
 
-    fn add_event_listener(&self, lua: &mlua::Lua, handle: mlua::Function) -> mlua::Result<u64> {
+    fn add_event_listener(
+        &self,
+        lua: &mlua::Lua,
+        handle: mlua::Function,
+    ) -> mlua::Result<SequenceId> {
         let event_key = self.event_key;
 
-        let current_seq = lua
-            .app_data_mut::<app_data::EventBus>()
-            .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
-            .increment_sequence();
-        let context = *lua
-            .app_data_ref::<app_data::ExecutionContext>()
-            .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+        let current_seq = get_app_data_mut::<app_data::EventBus>(lua)?.increment_sequence();
+        let context = *get_app_data::<app_data::ExecutionContext>(lua)?;
         {
-            let mut listeners = lua
-                .app_data_mut::<app_data::EventListeners>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialiezd"))?;
+            let mut listeners = get_app_data_mut::<app_data::EventListeners>(lua)?;
             let entry = listeners.entry(event_key).or_default();
 
             if let Some(name) = &self.name
@@ -84,20 +83,17 @@ impl OnRx {
         }
 
         // Layer garbage collection
-        let layers = lua
-            .app_data_ref::<app_data::ActiveLayers>()
-            .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+        let layers = get_app_data::<app_data::ActiveLayers>(lua)?;
         if let Some(layer) = layers.last() {
             let cleaner = lua.create_function(move |lua, _: ()| {
-                lua.app_data_mut::<app_data::EventListeners>()
-                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                get_app_data_mut::<app_data::EventListeners>(lua)?
                     .entry(event_key)
                     .and_modify(|listeners| listeners.retain(|l| l.get_seq() != current_seq));
 
                 Ok(())
             })?;
-            lua.app_data_mut::<app_data::LayerRegistry>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+
+            get_app_data_mut::<app_data::LayerRegistry>(lua)?
                 .layers
                 .entry(layer.to_owned())
                 .and_modify(|l| l.cleaners.push(cleaner));
@@ -136,21 +132,23 @@ impl UserData for OnRx {
             }
 
             let mut next = this.clone();
-            let predicate =
-                RxOperator::Filter(lua.create_function(move |_, args: (u64, mlua::Table)| {
+            let predicate = RxOperator::Filter(lua.create_function(
+                move |_, args: (SequenceId, mlua::Table)| {
                     let action_table: mlua::Table = args.1;
                     let action_name: String = action_table.get("name")?;
                     Ok(action_name == event_name)
-                })?);
+                },
+            )?);
             next.pipeline.operators.push(predicate);
 
-            let map =
-                RxOperator::Map(lua.create_function(move |_, args: (u64, mlua::Table)| {
-                    let pid: u64 = args.0;
-                    let action_table: mlua::Table = args.1;
+            let map = RxOperator::Map(lua.create_function(
+                move |_, args: (SequenceId, mlua::Table)| {
+                    let pid = args.0;
+                    let action_table = args.1;
                     let data: mlua::Value = action_table.get("data")?;
                     Ok((pid, data))
-                })?);
+                },
+            )?);
             next.pipeline.operators.push(map);
 
             Ok(next)

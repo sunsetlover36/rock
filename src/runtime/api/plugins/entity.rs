@@ -1,21 +1,22 @@
 use color_eyre::eyre;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::runtime::api::{
-    plugins::entity::rx::EntityRx,
-    protocol::{GameModePlugin, PluginName},
+use crate::runtime::{
+    api::{
+        plugins::entity::rx::EntityRx,
+        protocol::{GameModePlugin, PluginName},
+    },
+    app_data,
+    utils::get_app_data_mut,
 };
 
 mod blueprint;
-pub(crate) use blueprint::EntityBlueprint;
+pub(crate) use {blueprint::BlueprintId, blueprint::EntityBlueprint};
 mod components;
 pub(crate) use components::{ComponentData, ComponentKey};
 mod event_descriptors;
 mod handle;
 mod macros;
 mod rx;
-
-static BLUEPRINT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub struct EntityPlugin {}
 impl GameModePlugin for EntityPlugin {
@@ -26,10 +27,9 @@ impl GameModePlugin for EntityPlugin {
     fn create_global_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         let entity_table = lua.create_table()?;
 
-        let blueprint_fn = lua.create_function(|_, _: ()| {
-            Ok(EntityBlueprint::new(
-                BLUEPRINT_COUNTER.fetch_add(1, Ordering::Relaxed),
-            ))
+        let blueprint_fn = lua.create_function(|lua, _: ()| {
+            let id = get_app_data_mut::<app_data::BlueprintRegistry>(lua)?.increment_id();
+            Ok(EntityBlueprint::new(id))
         })?;
         entity_table.set("blueprint", blueprint_fn)?;
 

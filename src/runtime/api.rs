@@ -6,10 +6,11 @@ use mlua::Lua;
 mod plugins;
 pub use plugins::on;
 pub(super) use plugins::{
-    entity::{EntityBlueprint, EntityPlugin},
+    entity::{BlueprintId, EntityBlueprint, EntityPlugin},
     input::{InputEvent, InputPlugin},
     layer::{LayerEntry, LayerId, LayerPlugin},
     memory::MemoryPlugin,
+    player::{PlayerHandle, PlayerPlugin},
     scene::*,
 };
 pub mod protocol;
@@ -18,16 +19,13 @@ use protocol::GameModePlugin;
 use crate::runtime::{
     api::protocol::PluginName,
     app_data::{self},
-    utils::LuaResultExt,
+    utils::{LuaResultExt, get_app_data},
 };
 
 pub struct Yielder {}
 impl Yielder {
     pub fn get(lua: &Lua) -> mlua::Result<mlua::Function> {
-        let yielder = lua
-            .app_data_ref::<app_data::Yielder>()
-            .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-        let yielder_fn = yielder
+        let yielder_fn = get_app_data::<app_data::Yielder>(lua)?
             .clone()
             .ok_or_else(|| mlua::Error::runtime("`yielder` function not found in app data"))?;
 

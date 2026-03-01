@@ -3,6 +3,7 @@ use color_eyre::eyre;
 use crate::runtime::{
     api::protocol::{AsyncTask, GameModePlugin, PluginName},
     app_data,
+    utils::{get_app_data, get_app_data_mut},
 };
 
 mod rx;
@@ -18,10 +19,7 @@ pub(crate) type LayerId = u64;
 
 fn clear_layer_by_id(lua: &mlua::Lua, id: LayerId) -> mlua::Result<()> {
     let layer = {
-        let mut registry = lua
-            .app_data_mut::<app_data::LayerRegistry>()
-            .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
-
+        let mut registry = get_app_data_mut::<app_data::LayerRegistry>(lua)?;
         if let Some(layer) = registry.layers.remove(&id) {
             if let Some(name) = &layer.name {
                 registry.aliases.remove(name);
@@ -42,9 +40,7 @@ fn clear_layer_by_id(lua: &mlua::Lua, id: LayerId) -> mlua::Result<()> {
     Ok(())
 }
 fn clear_layer_by_name(lua: &mlua::Lua, name: String) -> mlua::Result<()> {
-    let id = lua
-        .app_data_ref::<app_data::LayerRegistry>()
-        .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+    let id = get_app_data::<app_data::LayerRegistry>(lua)?
         .aliases
         .get(&name)
         .copied();
@@ -71,10 +67,7 @@ impl GameModePlugin for LayerPlugin {
         let table = lua.create_table()?;
 
         let create_fn = lua.create_function(|lua, _: ()| {
-            let layer_id = lua
-                .app_data_mut::<app_data::LayerRegistry>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
-                .increment_id();
+            let layer_id = get_app_data_mut::<app_data::LayerRegistry>(lua)?.increment_id();
             Ok(LayerRx::new(layer_id))
         })?;
         table.set("create", create_fn)?;

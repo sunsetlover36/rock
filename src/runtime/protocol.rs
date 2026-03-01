@@ -11,7 +11,9 @@ pub enum GameModeClientCommand {
     Log { text: String },
     KickPlayer { pk: PlayerKey },
 }
-pub trait GameModeClientApi: Send {
+pub trait GameModeClientApi: Send + Sync {
+    fn has(&self, pk: PlayerKey) -> bool;
+    fn list(&self) -> Vec<PlayerKey>;
     fn send(&self, event: GameModeClientCommand);
 }
 

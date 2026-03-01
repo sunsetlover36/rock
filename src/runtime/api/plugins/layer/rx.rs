@@ -5,6 +5,7 @@ use mlua::UserData;
 use crate::runtime::{
     api::{LayerEntry, LayerId, plugins::layer::handle::LayerHandle},
     app_data,
+    utils::get_app_data_mut,
 };
 
 struct LayerGuard<'lua> {
@@ -51,9 +52,7 @@ impl UserData for LayerRx {
 
         methods.add_method("commit", |lua, this, _: ()| {
             {
-                let mut registry = lua
-                    .app_data_mut::<app_data::LayerRegistry>()
-                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+                let mut registry = get_app_data_mut::<app_data::LayerRegistry>(lua)?;
                 if let Some(name) = &this.name {
                     match registry.aliases.entry(name.to_owned()) {
                         hash_map::Entry::Occupied(e) => {
@@ -76,17 +75,13 @@ impl UserData for LayerRx {
                 });
             }
 
-            lua.app_data_mut::<app_data::ActiveLayers>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
-                .push(this.id);
+            get_app_data_mut::<app_data::ActiveLayers>(lua)?.push(this.id);
             let _guard = LayerGuard { lua };
 
             for cb in &this.callbacks {
                 let cleaner = cb.call::<Option<mlua::Function>>(())?;
                 if let Some(cleaner) = cleaner {
-                    let mut registry = lua
-                        .app_data_mut::<app_data::LayerRegistry>()
-                        .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+                    let mut registry = get_app_data_mut::<app_data::LayerRegistry>(lua)?;
                     registry
                         .layers
                         .entry(this.id)

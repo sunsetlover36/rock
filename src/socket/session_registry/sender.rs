@@ -116,4 +116,11 @@ impl SessionSender {
             _ => Err(SessionSendError::Prohibited),
         }
     }
+
+    pub fn has_session(&self, pk: &PlayerKey) -> bool {
+        self.inner.sessions.contains_key(pk)
+    }
+    pub fn player_keys(&self) -> Vec<PlayerKey> {
+        self.inner.sessions.iter().map(|e| *e.key()).collect()
+    }
 }

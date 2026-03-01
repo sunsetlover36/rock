@@ -9,6 +9,7 @@ use crate::runtime::{
         plugins::input::protocol::{AxisBindings, ButtonBindings, InputBindings, Vector2DBindings},
     },
     app_data,
+    utils::get_app_data_mut,
 };
 
 #[derive(Clone)]
@@ -80,7 +81,7 @@ impl UserData for InputRx {
 
         methods.add_method("register", |lua, this, name: String| match &this.bindings {
             Some(bindings) => {
-                let mut registry = lua.app_data_mut::<app_data::InputEventRegistry>().ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+                let mut registry = get_app_data_mut::<app_data::InputEventRegistry>(lua)?;
                 let next_event_id = registry.events.len();
 
                 let entry = registry.name_to_id.entry(name.clone());

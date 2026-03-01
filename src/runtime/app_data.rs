@@ -1,12 +1,12 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use color_eyre::eyre;
 use shared::{InputAction, InputKind};
 
 use crate::runtime::{
-    EventBus as EventBusStruct,
+    EventBus as EventBusStruct, GameModeClientApi,
     api::{
-        EntityBlueprint, InputEvent, LayerEntry, LayerId,
+        BlueprintId, EntityBlueprint, InputEvent, LayerEntry, LayerId,
         on::{GameModeEventKey, GameModeListener},
         protocol::PluginName,
     },
@@ -26,7 +26,24 @@ pub type ScenePlugins = HashMap<PluginName, mlua::Table>;
 pub type Yielder = Option<mlua::Function>;
 pub type World = hecs::World;
 pub type EventBus = Rc<EventBusStruct>;
-pub type Blueprints = HashMap<String, EntityBlueprint>;
+
+pub struct BlueprintRegistry {
+    last_id: BlueprintId,
+    pub blueprints: HashMap<String, EntityBlueprint>,
+}
+impl BlueprintRegistry {
+    pub fn new() -> Self {
+        Self {
+            last_id: 0,
+            blueprints: HashMap::new(),
+        }
+    }
+
+    pub fn increment_id(&mut self) -> BlueprintId {
+        self.last_id += 1;
+        self.last_id
+    }
+}
 
 #[derive(Default, Debug, Clone)]
 pub struct InputEventRegistry {
@@ -62,7 +79,6 @@ pub enum ExecutionContext {
 
 // Layer management
 // -- Registry
-#[derive(Debug)]
 pub struct LayerRegistry {
     last_id: LayerId,
     pub layers: HashMap<LayerId, LayerEntry>,
@@ -85,3 +101,5 @@ impl LayerRegistry {
 
 // -- Active layers at initialization phase
 pub type ActiveLayers = Vec<LayerId>;
+
+pub type ClientApi = Arc<dyn GameModeClientApi>;

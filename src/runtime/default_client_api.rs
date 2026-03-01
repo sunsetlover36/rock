@@ -1,4 +1,4 @@
-use shared::{ChatPacket, OutgoingPacket};
+use shared::{ChatPacket, OutgoingPacket, PlayerKey};
 
 use crate::{
     envelope::{EnvelopeRecipient, ServerEnvelope},
@@ -9,10 +9,19 @@ use crate::{
     },
 };
 
+#[derive(Clone)]
 pub struct GameModeDefaultClientApi {
     pub ws_session_sender: SessionSender,
 }
 impl GameModeClientApi for GameModeDefaultClientApi {
+    fn has(&self, pk: PlayerKey) -> bool {
+        self.ws_session_sender.has_session(&pk)
+    }
+
+    fn list(&self) -> Vec<PlayerKey> {
+        self.ws_session_sender.player_keys()
+    }
+
     fn send(&self, event: GameModeClientCommand) {
         match event {
             GameModeClientCommand::SendMessage { pk, text } => {

@@ -2,7 +2,9 @@ use std::collections::hash_map;
 
 use mlua::UserData;
 
-use crate::runtime::{SceneManagerMessage, api::plugins::scene::to_coroutine, app_data};
+use crate::runtime::{
+    SceneManagerMessage, api::plugins::scene::to_coroutine, app_data, utils::get_app_data_mut,
+};
 
 #[derive(Clone)]
 pub(super) struct SceneRx {
@@ -39,9 +41,7 @@ impl UserData for SceneRx {
         });
 
         methods.add_method("register", |lua, this, name: String| {
-            let mut scenes = lua
-                .app_data_mut::<app_data::Scenes>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            let mut scenes = get_app_data_mut::<app_data::Scenes>(lua)?;
             match scenes.entry(name.clone()) {
                 hash_map::Entry::Occupied(_) => {
                     return Err(mlua::Error::runtime(format!(

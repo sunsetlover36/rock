@@ -8,6 +8,7 @@ use crate::{
             handle::EntityHandle,
         },
         app_data,
+        utils::get_app_data,
     },
     rx::{HasRxPipeline, RxPipeline, add_rx_methods},
 };
@@ -43,9 +44,7 @@ impl UserData for EntityRx {
         methods.add_method("each", |lua, this, handle: mlua::Function| {
             let mut entities = Vec::new();
             {
-                let world = lua
-                    .app_data_ref::<app_data::World>()
-                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+                let world = get_app_data::<app_data::World>(lua)?;
 
                 for (entity, owned_by, blueprint) in
                     world.query::<(hecs::Entity, &OwnedBy, &Blueprint)>().iter()

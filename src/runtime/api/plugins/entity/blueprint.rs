@@ -16,6 +16,7 @@ use crate::runtime::{
         },
     },
     app_data,
+    utils::{get_app_data, get_app_data_mut},
 };
 
 pub type BlueprintId = u64;
@@ -55,9 +56,8 @@ impl UserData for EntityBlueprint {
                 return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint already contains components or custom data", name)));
             }
 
-            let blueprints = lua
-                .app_data_ref::<app_data::Blueprints>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            let registry = get_app_data::<app_data::BlueprintRegistry>(lua)?;
+            let blueprints = &registry.blueprints;
             if let Some(blueprint) = blueprints.get(&name) {
                 let blueprint = blueprint.clone();
                 let mut this = this.clone();
@@ -69,10 +69,10 @@ impl UserData for EntityBlueprint {
                 return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint not found", name)));
             }
         });
-        methods.add_method("register", |lua, this, name: String| {
-            match lua
-                .app_data_mut::<app_data::Blueprints>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+        methods.add_method(
+            "register",
+            |lua, this, name: String| match get_app_data_mut::<app_data::BlueprintRegistry>(lua)?
+                .blueprints
                 .entry(name.clone())
             {
                 hash_map::Entry::Occupied(_) => Err(mlua::Error::runtime(format!(
@@ -83,8 +83,8 @@ impl UserData for EntityBlueprint {
                     entry.insert(this.clone());
                     Ok(())
                 }
-            }
-        });
+            },
+        );
 
         methods.add_method("name", |_, this, name: String| {
             let mut next = this.clone();
@@ -104,9 +104,7 @@ impl UserData for EntityBlueprint {
         });
 
         methods.add_method_mut("spawn", |lua, this, _: ()| {
-            let runtime_phase = lua
-                .app_data_ref::<app_data::RuntimePhase>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            let runtime_phase = get_app_data::<app_data::RuntimePhase>(lua)?;
             if *runtime_phase == app_data::RuntimePhase::Blueprints {
                 return Err(mlua::Error::runtime(
                     "Access denied: cannot spawn during blueprint loading phase",
@@ -149,26 +147,17 @@ impl UserData for EntityBlueprint {
                 builder.add(CustomDataComponent(lua.create_registry_value(customs)?));
             }
 
-            let entity = lua
-                .app_data_mut::<app_data::World>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
-                .spawn(builder.build());
+            let entity = get_app_data_mut::<app_data::World>(lua)?.spawn(builder.build());
 
             // Layer garbage collection
-            let layers = lua
-                .app_data_ref::<app_data::ActiveLayers>()
-                .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?;
+            let layers = get_app_data::<app_data::ActiveLayers>(lua)?;
             if let Some(layer_id) = layers.last() {
                 let cleaner = lua.create_function(move |lua, _: ()| {
-                    let _ = lua
-                        .app_data_mut::<app_data::World>()
-                        .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
-                        .despawn(entity.clone());
+                    let _ = get_app_data_mut::<app_data::World>(lua)?.despawn(entity.clone());
                     Ok(())
                 })?;
 
-                lua.app_data_mut::<app_data::LayerRegistry>()
-                    .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))?
+                get_app_data_mut::<app_data::LayerRegistry>(lua)?
                     .layers
                     .entry(layer_id.to_owned())
                     .and_modify(|layer| layer.cleaners.push(cleaner));
