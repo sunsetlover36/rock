@@ -10,6 +10,7 @@ mod rx;
 use rx::OnRx;
 pub mod protocol;
 pub use protocol::*;
+mod handle;
 
 #[derive(Clone)]
 pub struct OnPlugin {
@@ -32,9 +33,9 @@ impl OnPlugin {
                 None => table.clone(),
             };
 
-            let key = descriptor.event_key;
+            let event_key = descriptor.event_key;
             let listener =
-                lua.create_function(move |_, _: ()| Ok(OnRx::new(key, EventScope::Global)))?;
+                lua.create_function(move |_, _: ()| Ok(OnRx::new(event_key, EventScope::Global)))?;
             ns_table.set(descriptor.name, listener)?;
         }
 

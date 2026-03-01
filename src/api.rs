@@ -1,14 +1,16 @@
 use axum::{
-    Router,
+    Json, Router,
     extract::{State, WebSocketUpgrade},
+    http::StatusCode,
     response::Response,
-    routing::{any, get},
+    routing::{any, get, post},
 };
 use color_eyre::eyre;
+use shared::ImpromptuRequest;
 use tokio::net::TcpListener;
 
 use crate::{
-    runtime::RuntimeCallback,
+    runtime::{RuntimeCallback, SystemCallback},
     socket::{
         adapter::{SocketAdapter, SocketAdapterParams},
         session_registry::SessionRegistrar,
@@ -32,11 +34,13 @@ impl Api {
     pub fn new(params: ApiParams) -> Self {
         let state = AppState {
             session_registrar: params.session_registrar,
-            runtime_callback_tx: params.runtime_callback_tx,
+            runtime_callback_tx: params.runtime_callback_tx.clone(),
         };
+
         let app = Router::new()
             .route("/", get(async || "Hello, World!"))
             .route("/ws", any(Api::handle_ws))
+            .route("/impromptu", post(Api::process_impromptu))
             .with_state(state);
 
         Self { app }
@@ -52,6 +56,23 @@ impl Api {
             .activate()
             .await;
         })
+    }
+
+    async fn process_impromptu(
+        State(state): State<AppState>,
+        Json(payload): Json<ImpromptuRequest>,
+    ) -> Result<&'static str, StatusCode> {
+        state
+            .runtime_callback_tx
+            .send_async(RuntimeCallback::System(
+                SystemCallback::OnImpromptuRequest {
+                    name: payload.name,
+                    code: payload.code,
+                },
+            ))
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        Ok("ok")
     }
 
     pub async fn listen(self) -> eyre::Result<()> {

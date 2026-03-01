@@ -1,6 +1,9 @@
 use color_eyre::eyre;
 
-use crate::{runtime::utils::LuaResultExt, rx::RxPipeline};
+use crate::{
+    runtime::{app_data::ExecutionContext, utils::LuaResultExt},
+    rx::RxPipeline,
+};
 
 pub(crate) mod event;
 pub(crate) use event::*;
@@ -9,13 +12,17 @@ pub(crate) struct GameModeListenerParams {
     pub name: Option<String>,
     pub created_at_seq: u64,
     pub scope: EventScope,
+    pub context: ExecutionContext,
     pub handle: mlua::Function,
     pub pipeline: RxPipeline,
+    pub priority: u32,
 }
 pub struct GameModeListener {
     pub name: Option<String>,
     pub scope: EventScope,
+    pub context: ExecutionContext,
     pub handle: mlua::Function,
+    pub priority: u32,
     created_at_seq: u64,
     call_count: u32,
     pipeline: RxPipeline,
@@ -25,7 +32,9 @@ impl GameModeListener {
         Self {
             name: params.name,
             scope: params.scope,
+            context: params.context,
             handle: params.handle,
+            priority: params.priority,
             created_at_seq: params.created_at_seq,
             call_count: 0,
             pipeline: params.pipeline,
@@ -55,5 +64,9 @@ impl GameModeListener {
             "Failed to process a chain for the event listener (name: {:?})",
             self.name
         ))
+    }
+
+    pub fn get_seq(&self) -> u64 {
+        self.created_at_seq
     }
 }

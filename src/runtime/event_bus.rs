@@ -3,13 +3,18 @@ use std::cell::RefCell;
 use color_eyre::eyre;
 use mlua::{IntoLuaMulti, Lua};
 
-use crate::runtime::{api::on::GameModeEvent, app_data, utils::LuaResultExt};
+use crate::runtime::{
+    api::on::GameModeEvent,
+    app_data::{self, ExecutionContext},
+    utils::LuaResultExt,
+};
 
 struct QueuedEvent {
     created_at_seq: u64,
     event: GameModeEvent,
 }
 struct PendingHandle {
+    context: ExecutionContext,
     args: mlua::MultiValue,
     func: mlua::Function,
 }
@@ -80,6 +85,7 @@ impl EventBus {
                 if let Some(args) = handle_args {
                     listener.increment_call_count();
                     pending_handles.push(PendingHandle {
+                        context: listener.context,
                         args,
                         func: listener.handle.clone(),
                     });
@@ -93,10 +99,32 @@ impl EventBus {
         };
 
         for handle in pending_handles {
-            handle
-                .func
-                .call::<()>(handle.args)
-                .wrap_err(format!("Error in `{:?}` event listener", &key).as_str())?;
+            let result = handle.func.call::<Option<bool>>(handle.args);
+            match handle.context {
+                ExecutionContext::Global => {
+                    let result = result
+                        .wrap_err(format!("Error in `{:?}` event listener", &key).as_str())?
+                        .unwrap_or(false);
+                    if result {
+                        return Ok(());
+                    }
+                }
+                ExecutionContext::Impromptu => {
+                    // TODO: propagate the error to commit router? to logger?
+                    //       how to know if such event failed from the outside.
+                    //       delete a failed listener from listeners list
+                    eprintln!(
+                        "Error in `{:?}` event listener (registered during the impromptu)",
+                        &key
+                    );
+
+                    if let Ok(result) = result {
+                        if result.unwrap_or(false) {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())

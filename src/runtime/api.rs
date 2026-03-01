@@ -8,6 +8,7 @@ pub use plugins::on;
 pub(super) use plugins::{
     entity::{EntityBlueprint, EntityPlugin},
     input::{InputEvent, InputPlugin},
+    layer::{LayerEntry, LayerId, LayerPlugin},
     memory::MemoryPlugin,
     scene::*,
 };

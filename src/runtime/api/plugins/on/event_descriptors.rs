@@ -7,6 +7,11 @@ pub(crate) const GLOBAL_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
         event_key: GameModeEventKey::World(WorldEventKey::Awake),
     },
     EventDescriptor {
+        namespace: Some("world"),
+        name: "impromptu",
+        event_key: GameModeEventKey::World(WorldEventKey::Impromptu),
+    },
+    EventDescriptor {
         namespace: Some("player"),
         name: "connect",
         event_key: GameModeEventKey::Player(PlayerEventKey::Connect),

@@ -6,7 +6,7 @@ use shared::{InputAction, InputKind};
 use crate::runtime::{
     EventBus as EventBusStruct,
     api::{
-        EntityBlueprint, InputEvent,
+        EntityBlueprint, InputEvent, LayerEntry, LayerId,
         on::{GameModeEventKey, GameModeListener},
         protocol::PluginName,
     },
@@ -21,7 +21,7 @@ pub enum RuntimePhase {
 }
 
 pub type EventListeners = HashMap<GameModeEventKey, Vec<GameModeListener>>;
-pub type Scenes = HashMap<String, mlua::Function>;
+pub type Scenes = HashMap<String, Vec<mlua::Function>>;
 pub type ScenePlugins = HashMap<PluginName, mlua::Table>;
 pub type Yielder = Option<mlua::Function>;
 pub type World = hecs::World;
@@ -53,3 +53,35 @@ impl InputEventRegistry {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum ExecutionContext {
+    Global,
+    Impromptu,
+}
+
+// Layer management
+// -- Registry
+#[derive(Debug)]
+pub struct LayerRegistry {
+    last_id: LayerId,
+    pub layers: HashMap<LayerId, LayerEntry>,
+    pub aliases: HashMap<String, LayerId>,
+}
+impl LayerRegistry {
+    pub fn new() -> Self {
+        Self {
+            last_id: 0,
+            layers: HashMap::new(),
+            aliases: HashMap::new(),
+        }
+    }
+
+    pub fn increment_id(&mut self) -> LayerId {
+        self.last_id += 1;
+        self.last_id
+    }
+}
+
+// -- Active layers at initialization phase
+pub type ActiveLayers = Vec<LayerId>;

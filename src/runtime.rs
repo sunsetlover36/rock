@@ -7,7 +7,7 @@ use std::{
 
 use color_eyre::eyre::{self};
 use mlua::Lua;
-use shared::IncomingRequest;
+use shared::{ImpromptuRequest, IncomingRequest};
 use smallvec::smallvec;
 
 use crate::{
@@ -15,14 +15,14 @@ use crate::{
     router::CommitRouter,
     runtime::{
         api::{
-            InputPlugin, SceneManagerParams,
+            InputPlugin, LayerPlugin, SceneManagerParams,
             on::{
                 EventScope, GameModeEvent, GameModeEventData, OnPlugin, PlayerEventData,
                 WorldEventData, event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
             },
             protocol::GameModePlugin,
         },
-        app_data::InputEventRegistry,
+        app_data::{ExecutionContext, InputEventRegistry, LayerRegistry},
     },
     world::{WorldNatives, WorldState},
 };
@@ -88,6 +88,9 @@ impl Runtime {
         lua.set_app_data::<app_data::EventBus>(event_bus.clone());
         lua.set_app_data::<app_data::Blueprints>(HashMap::new());
         lua.set_app_data::<app_data::InputEventRegistry>(InputEventRegistry::default());
+        lua.set_app_data::<app_data::ExecutionContext>(ExecutionContext::Global);
+        lua.set_app_data::<app_data::LayerRegistry>(LayerRegistry::new());
+        lua.set_app_data::<app_data::ActiveLayers>(Vec::new());
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
@@ -102,6 +105,7 @@ impl Runtime {
             Box::new(MemoryPlugin {
                 meta_db: meta_db.clone(),
             }),
+            Box::new(LayerPlugin {}),
             Box::new(ScenePlugin {
                 manager_tx: scene_manager_tx.clone(),
             }),
@@ -164,13 +168,7 @@ impl Runtime {
                 }
             }
 
-            // Lua callbacks
-            // OnTick callback (at least)
-
-            // Read your Writes err
-            // Lua sends a game intent then can't get the result in the same tick
-
-            // world.step
+            // Physics step
 
             self.event_bus.flush(&self.lua)?;
 
@@ -225,6 +223,42 @@ impl Runtime {
                     data: GameModeEventData::Player(PlayerEventData::Disconnect { id: pk.pack() }),
                 });
             }
+            SystemCallback::OnImpromptuRequest { name, code } => {
+                self.process_impromptu(ImpromptuRequest { name, code });
+            }
         }
+    }
+
+    fn process_impromptu(&self, impromptu: ImpromptuRequest) -> mlua::Result<()> {
+        self.event_bus.schedule_event(GameModeEvent {
+            scopes: smallvec![EventScope::Global],
+            data: GameModeEventData::World(WorldEventData::Impromptu {
+                name: impromptu.name.clone(),
+            }),
+        });
+
+        let name = impromptu.name.as_deref().unwrap_or("anonymous impromptu");
+
+        let env = self.lua.create_table()?;
+        env.set("_G", env.clone())?;
+
+        let globals = self.lua.globals();
+        let mt = self.lua.create_table()?;
+        mt.set("__index", globals)?;
+        env.set_metatable(Some(mt))?;
+
+        self.lua
+            .set_app_data::<app_data::ExecutionContext>(ExecutionContext::Impromptu);
+        let result = self
+            .lua
+            .load(impromptu.code)
+            .set_name(name)
+            .set_environment(env)
+            .exec();
+        self.lua
+            .set_app_data::<app_data::ExecutionContext>(ExecutionContext::Global);
+
+        result?;
+        Ok(())
     }
 }
