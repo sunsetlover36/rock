@@ -44,6 +44,7 @@ impl GameModePlugin for EntityPlugin {
 
     fn handle_op(
         &self,
+        _: &mlua::Lua,
         _: &str,
         _: mlua::Table,
     ) -> eyre::Result<Option<crate::runtime::api::protocol::AsyncTask>> {

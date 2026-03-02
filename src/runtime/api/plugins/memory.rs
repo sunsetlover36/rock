@@ -1,7 +1,7 @@
 use std::{str::FromStr, sync::Arc};
 
 use color_eyre::eyre::{self, Context};
-use mlua::{Function, Lua, Table};
+use mlua::{Function, Lua, LuaSerdeExt, Table};
 use strum::{AsRefStr, Display, EnumString};
 
 use crate::{
@@ -20,6 +20,8 @@ use crate::{
 pub enum MemoryOp {
     Fetch,
     Recall,
+    Store,
+    Delete,
 }
 
 pub struct MemoryPlugin {
@@ -31,10 +33,22 @@ impl GameModePlugin for MemoryPlugin {
     }
 
     fn create_global_api(&self, lua: &Lua) -> mlua::Result<Option<Table>> {
+        let plugin_name = self.name();
         let table = lua.create_table()?;
 
         let meta_db = self.meta_db.clone();
-        let peek_fn = lua.create_function(move |_, key: String| Ok(meta_db.get(key.as_str())))?;
+        let peek_fn = lua.create_function(move |_, key: String| {
+            let v = meta_db.get(key.as_str()).map_err(|e| {
+                let report = eyre::ErrReport::from(e).wrap_err(format!(
+                    "{}.peek: failed to get a value from key '{}'",
+                    plugin_name, key
+                ));
+
+                mlua::Error::external(format!("{:#}", report))
+            })?;
+
+            Ok(v)
+        })?;
         table.set("peek", peek_fn)?;
 
         Ok(Some(table))
@@ -59,9 +73,19 @@ impl GameModePlugin for MemoryPlugin {
         let fetch_fn = yielder_fn.call::<Function>(fetch_op)?;
         table.set("fetch", fetch_fn)?;
 
+        let store_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Store);
+        let store_fn = yielder_fn.call::<Function>(store_op)?;
+        table.set("store", store_fn)?;
+
         Ok(Some(table))
     }
-    fn handle_op(&self, op: &str, args: mlua::Table) -> eyre::Result<Option<AsyncTask>> {
+    fn handle_op(
+        &self,
+        lua: &mlua::Lua,
+        op: &str,
+        args: mlua::Table,
+    ) -> eyre::Result<Option<AsyncTask>> {
+        let plugin_name = self.name();
         let meta_db = self.meta_db.clone();
 
         let op =
@@ -70,7 +94,7 @@ impl GameModePlugin for MemoryPlugin {
             MemoryOp::Recall => {
                 let key: String = args
                     .get(1)
-                    .wrap_err("Missing argument for `memory.recall` method")?;
+                    .wrap_err(&format!("{}.recall: missing argument `key`", plugin_name))?;
                 let future = Box::pin(async move {
                     let res = if key.ends_with("/") {
                         meta_db.get_or_ensure_prefix(&key).await?
@@ -89,7 +113,7 @@ impl GameModePlugin for MemoryPlugin {
             MemoryOp::Fetch => {
                 let key: String = args
                     .get(1)
-                    .wrap_err("Missing argument for `memory.fetch` method")?;
+                    .wrap_err(&format!("{}.fetch: missing argument `key`", plugin_name))?;
                 let future = Box::pin(async move {
                     let res = if key.ends_with("/") {
                         meta_db.ensure_prefix(&key).await?
@@ -101,6 +125,60 @@ impl GameModePlugin for MemoryPlugin {
                         Some(v) => AsyncTaskResult::JsonValue(v),
                         None => AsyncTaskResult::Nil,
                     })
+                });
+
+                Ok(Some(future))
+            }
+            MemoryOp::Store => {
+                let key: String = args
+                    .get(1)
+                    .wrap_err(&format!("{}.store: missing argument `key`", plugin_name))?;
+                let value: mlua::Value = args
+                    .get(2)
+                    .wrap_err(&format!("{}.store: missing argument `value`", plugin_name))?;
+
+                if key.ends_with("/") && value.is_nil() {
+                    return Err(eyre::eyre!(format!(
+                        "{}.store: cannot delete a prefix using `{}.store`. Use `{}.delete`",
+                        plugin_name, plugin_name, plugin_name
+                    )));
+                }
+
+                let value: Option<serde_json::Value> = lua.from_value(value).wrap_err(&format!(
+                    "{}.store: failed to parse an invalid JSON",
+                    plugin_name
+                ))?;
+
+                let future = Box::pin(async move {
+                    if key.ends_with("/") {
+                        match value {
+                            Some(v) => {
+                                meta_db.update_prefix(&key, v).await?;
+                            }
+                            None => {}
+                        }
+                    } else {
+                        meta_db.update_key(&key, value).await?;
+                    }
+
+                    Ok(AsyncTaskResult::Nil)
+                });
+
+                Ok(Some(future))
+            }
+            MemoryOp::Delete => {
+                let key: String = args
+                    .get(1)
+                    .wrap_err(&format!("{}.delete: missing argument `key`", plugin_name))?;
+
+                let future = Box::pin(async move {
+                    if key.ends_with("/") {
+                        meta_db.delete_prefix(&key).await?;
+                    } else {
+                        meta_db.update_key(&key, None).await?;
+                    }
+
+                    Ok(AsyncTaskResult::Nil)
                 });
 
                 Ok(Some(future))

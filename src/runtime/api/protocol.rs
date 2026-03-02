@@ -17,7 +17,7 @@ pub trait GameModePlugin {
     fn create_global_api(&self, lua: &Lua) -> mlua::Result<Option<Table>>;
 
     fn create_scene_api(&self, lua: &Lua) -> mlua::Result<Option<Table>>;
-    fn handle_op(&self, op: &str, args: mlua::Table) -> eyre::Result<Option<AsyncTask>>;
+    fn handle_op(&self, lua: &Lua, op: &str, args: mlua::Table) -> eyre::Result<Option<AsyncTask>>;
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, EnumString, AsRefStr, Display)]

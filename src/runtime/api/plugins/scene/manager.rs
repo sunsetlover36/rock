@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use color_eyre::eyre;
-use mlua::Lua;
 use slotmap::{SlotMap, new_key_type};
 
 use crate::{
@@ -55,7 +54,7 @@ impl SceneManager {
         }
     }
 
-    fn add_task(&mut self, lua: &Lua, thread_rk: mlua::RegistryKey) -> eyre::Result<()> {
+    fn add_task(&mut self, lua: &mlua::Lua, thread_rk: mlua::RegistryKey) -> eyre::Result<()> {
         let task_id = self.threads.insert(thread_rk);
         if let Err(e) = self.advance_task(lua, task_id, ()) {
             self.threads.remove(task_id);
@@ -67,7 +66,7 @@ impl SceneManager {
 
     fn advance_task(
         &mut self,
-        lua: &Lua,
+        lua: &mlua::Lua,
         task_id: TaskId,
         args: impl mlua::IntoLuaMulti,
     ) -> eyre::Result<()> {
@@ -90,7 +89,7 @@ impl SceneManager {
             }
             Ok(yielded_val) => match thread.status() {
                 mlua::ThreadStatus::Resumable => {
-                    self.handle_yield(task_id, yielded_val)?;
+                    self.handle_yield(lua, task_id, yielded_val)?;
                 }
                 _ => {
                     self.threads.remove(task_id);
@@ -101,7 +100,12 @@ impl SceneManager {
         Ok(())
     }
 
-    fn handle_yield(&self, task_id: TaskId, yielded_val: mlua::Value) -> eyre::Result<()> {
+    fn handle_yield(
+        &self,
+        lua: &mlua::Lua,
+        task_id: TaskId,
+        yielded_val: mlua::Value,
+    ) -> eyre::Result<()> {
         let t = match yielded_val {
             mlua::Value::Table(t) => t,
             _ => {
@@ -125,7 +129,7 @@ impl SceneManager {
                     .get("args")
                     .wrap_err("handle_yield: cannot find `args` in the yield output")?;
 
-                let Some(task) = plugin.handle_op(suffix, args)? else {
+                let Some(task) = plugin.handle_op(lua, suffix, args)? else {
                     return Ok(());
                 };
                 let tx = self.tx.clone();
@@ -149,7 +153,7 @@ impl SceneManager {
         Ok(())
     }
 
-    pub fn tick(&mut self, lua: &Lua) {
+    pub fn tick(&mut self, lua: &mlua::Lua) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 SceneManagerMessage::AddTask(thread_rk) => {

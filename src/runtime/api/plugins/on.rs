@@ -55,7 +55,7 @@ impl GameModePlugin for OnPlugin {
         Ok(None)
     }
 
-    fn handle_op(&self, _: &str, _: Table) -> eyre::Result<Option<AsyncTask>> {
+    fn handle_op(&self, _: &Lua, _: &str, _: Table) -> eyre::Result<Option<AsyncTask>> {
         Ok(None)
     }
 }

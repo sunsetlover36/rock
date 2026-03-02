@@ -39,13 +39,24 @@ impl GameModePlugin for PlayerPlugin {
         })?;
         table.set("broadcast", broadcast_fn)?;
 
+        let list_fn = lua.create_function(|lua, _: ()| {
+            let players: Vec<PlayerHandle> = get_app_data::<app_data::ClientApi>(lua)?
+                .list()
+                .iter()
+                .map(|pk| PlayerHandle::new(*pk))
+                .collect();
+
+            Ok(players)
+        })?;
+        table.set("list", list_fn)?;
+
         Ok(Some(table))
     }
 
     fn create_scene_api(&self, _: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         Ok(None)
     }
-    fn handle_op(&self, _: &str, _: mlua::Table) -> eyre::Result<Option<AsyncTask>> {
+    fn handle_op(&self, _: &mlua::Lua, _: &str, _: mlua::Table) -> eyre::Result<Option<AsyncTask>> {
         Ok(None)
     }
 }
