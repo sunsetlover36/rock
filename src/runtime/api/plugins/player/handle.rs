@@ -13,6 +13,8 @@ impl PlayerHandle {
 }
 impl UserData for PlayerHandle {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("id", |_, this, _: ()| Ok(this.pk.slot_idx));
+
         methods.add_method("message", |lua, this, text: String| {
             get_app_data::<app_data::ClientApi>(lua)?
                 .send(GameModeClientCommand::SendMessage { pk: this.pk, text });
