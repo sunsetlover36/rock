@@ -10,6 +10,7 @@ use crate::runtime::{
         on::{GameModeEventKey, GameModeListener},
         protocol::PluginName,
     },
+    timer_manager,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -103,3 +104,4 @@ impl LayerRegistry {
 pub type ActiveLayers = Vec<LayerId>;
 
 pub type ClientApi = Arc<dyn GameModeClientApi>;
+pub type TimerManager = Rc<timer_manager::TimerManager>;

@@ -12,6 +12,7 @@ pub(super) use plugins::{
     memory::MemoryPlugin,
     player::{PlayerHandle, PlayerPlugin},
     scene::*,
+    timer::TimerPlugin,
 };
 pub mod protocol;
 use protocol::GameModePlugin;

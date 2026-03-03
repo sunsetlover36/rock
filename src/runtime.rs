@@ -15,7 +15,7 @@ use crate::{
     router::CommitRouter,
     runtime::{
         api::{
-            InputPlugin, LayerPlugin, PlayerHandle, PlayerPlugin, SceneManagerParams,
+            InputPlugin, LayerPlugin, PlayerHandle, PlayerPlugin, SceneManagerParams, TimerPlugin,
             on::{
                 EventScope, GameModeEvent, GameModeEventData, OnPlugin, PlayerEventData,
                 WorldEventData, event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
@@ -23,6 +23,7 @@ use crate::{
             protocol::GameModePlugin,
         },
         app_data::{BlueprintRegistry, ExecutionContext, InputEventRegistry, LayerRegistry},
+        timer_manager::{TimerManager, TimerManagerParams},
     },
     world::{WorldNatives, WorldState},
 };
@@ -43,6 +44,8 @@ use geode::{inject_geodes, scan_geodes};
 
 pub mod protocol;
 pub use protocol::*;
+
+mod timer_manager;
 
 mod utils;
 use utils::LuaResultExt;
@@ -65,6 +68,7 @@ pub struct Runtime {
     meta_db: Arc<MetaDb>,
     scene_manager: SceneManager,
     event_bus: Rc<EventBus>,
+    timer_manager: Rc<TimerManager>,
 }
 impl Runtime {
     pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
@@ -77,6 +81,10 @@ impl Runtime {
             state: world_state.clone(),
         };
         let event_bus = Rc::new(EventBus::new());
+        let timer_manager = Rc::new(TimerManager::new(TimerManagerParams {
+            tokio_handle: params.tokio_handle.clone(),
+            event_bus: event_bus.clone(),
+        }));
 
         // App data
         lua.set_app_data::<app_data::EventListeners>(HashMap::new());
@@ -91,6 +99,7 @@ impl Runtime {
         lua.set_app_data::<app_data::LayerRegistry>(LayerRegistry::new());
         lua.set_app_data::<app_data::ActiveLayers>(Vec::new());
         lua.set_app_data::<app_data::ClientApi>(params.client_api);
+        lua.set_app_data::<app_data::TimerManager>(timer_manager.clone());
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
@@ -107,6 +116,7 @@ impl Runtime {
             }),
             Box::new(LayerPlugin {}),
             Box::new(PlayerPlugin {}),
+            Box::new(TimerPlugin {}),
             Box::new(ScenePlugin {
                 manager_tx: scene_manager_tx.clone(),
             }),
@@ -141,6 +151,7 @@ impl Runtime {
             meta_db,
             scene_manager,
             event_bus,
+            timer_manager,
         })
     }
 
@@ -170,6 +181,7 @@ impl Runtime {
 
             // Physics step
 
+            self.timer_manager.tick();
             self.event_bus.flush(&self.lua)?;
 
             let now = Instant::now();

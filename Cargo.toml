@@ -1,6 +1,6 @@
 [package]
 name = "rock-engine"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 
 [dependencies]
@@ -27,3 +27,5 @@ walkdir = "2"
 rayon = "1.11.0"
 num_enum = "0.7.5"
 smallvec = "1.15.1"
+cron = "0.15.0"
+chrono = "0.4.44"

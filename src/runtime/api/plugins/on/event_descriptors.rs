@@ -1,4 +1,6 @@
-use crate::runtime::api::on::{EventDescriptor, GameModeEventKey, PlayerEventKey, WorldEventKey};
+use crate::runtime::api::on::{
+    EventDescriptor, GameModeEventKey, PlayerEventKey, TimerEventKey, WorldEventKey,
+};
 
 pub(crate) const GLOBAL_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
     EventDescriptor {
@@ -25,5 +27,10 @@ pub(crate) const GLOBAL_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
         namespace: Some("player"),
         name: "input",
         event_key: GameModeEventKey::Player(PlayerEventKey::Input),
+    },
+    EventDescriptor {
+        namespace: Some("timer"),
+        name: "fire",
+        event_key: GameModeEventKey::Timer(TimerEventKey::Fire),
     },
 ];

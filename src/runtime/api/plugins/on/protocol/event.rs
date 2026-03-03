@@ -10,6 +10,9 @@ pub(crate) use player::*;
 pub(crate) mod entity;
 pub(crate) use entity::*;
 
+pub(crate) mod timer;
+pub(crate) use timer::*;
+
 pub(crate) struct EventDescriptor {
     pub namespace: Option<&'static str>,
     pub name: &'static str,
@@ -28,12 +31,14 @@ pub(crate) enum GameModeEventKey {
     World(WorldEventKey),
     Player(PlayerEventKey),
     Entity(EntityEventKey),
+    Timer(TimerEventKey),
 }
 
 pub(crate) enum GameModeEventData {
     World(WorldEventData),
     Player(PlayerEventData),
     Entity(EntityEventData),
+    Timer(TimerEventData),
 }
 impl GameModeEventData {
     pub fn key(&self) -> GameModeEventKey {
@@ -41,6 +46,7 @@ impl GameModeEventData {
             GameModeEventData::World(e) => GameModeEventKey::World(e.key()),
             GameModeEventData::Player(e) => GameModeEventKey::Player(e.key()),
             GameModeEventData::Entity(e) => GameModeEventKey::Entity(e.key()),
+            GameModeEventData::Timer(e) => GameModeEventKey::Timer(e.key()),
         }
     }
 }
@@ -50,6 +56,7 @@ impl IntoLuaMulti for GameModeEventData {
             GameModeEventData::World(e) => e.into_lua_multi(lua),
             GameModeEventData::Player(e) => e.into_lua_multi(lua),
             GameModeEventData::Entity(e) => e.into_lua_multi(lua),
+            GameModeEventData::Timer(e) => e.into_lua_multi(lua),
         }
     }
 }

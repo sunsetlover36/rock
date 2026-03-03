@@ -58,7 +58,7 @@ impl OnRx {
     ) -> mlua::Result<SequenceId> {
         let event_key = self.event_key;
 
-        let current_seq = get_app_data_mut::<app_data::EventBus>(lua)?.increment_sequence();
+        let current_seq = get_app_data::<app_data::EventBus>(lua)?.increment_sequence();
         let context = *get_app_data::<app_data::ExecutionContext>(lua)?;
         {
             let mut listeners = get_app_data_mut::<app_data::EventListeners>(lua)?;

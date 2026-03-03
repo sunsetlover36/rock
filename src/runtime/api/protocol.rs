@@ -30,4 +30,5 @@ pub enum PluginName {
     On,
     Player,
     Scene,
+    Timer,
 }
