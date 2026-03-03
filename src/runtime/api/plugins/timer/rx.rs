@@ -1,8 +1,6 @@
-use std::str::FromStr;
-
-use color_eyre::eyre;
 use cron::Schedule;
 use mlua::{LuaSerdeExt, UserData};
+use std::str::FromStr;
 
 use crate::runtime::{
     api::plugins::timer::handle::TimerHandle,
