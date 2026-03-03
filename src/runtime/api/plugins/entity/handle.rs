@@ -104,22 +104,6 @@ impl UserData for EntityHandle {
             }
         });
 
-        methods.add_method("named", |lua, this, _: ()| {
-            let world = get_app_data::<app_data::World>(lua)?;
-            let name = world.get::<&Name>(this.entity);
-
-            match name {
-                Ok(name) => Ok(lua.to_value(&*name)?),
-                Err(err) => match err {
-                    hecs::ComponentError::NoSuchEntity => Err(mlua::Error::runtime(format!(
-                        "Failed to call `:named` on entity with ID {}: entity does not exist",
-                        this.entity.id()
-                    ))),
-                    hecs::ComponentError::MissingComponent(_) => Ok(mlua::Value::Nil),
-                },
-            }
-        });
-
         methods.add_method("exists", |lua, this, _: ()| {
             Ok(get_app_data::<app_data::World>(lua)?.contains(this.entity))
         });

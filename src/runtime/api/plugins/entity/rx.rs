@@ -4,7 +4,7 @@ use shared::PlayerId;
 use crate::{
     runtime::{
         api::plugins::entity::{
-            components::{Blueprint, OwnedBy},
+            components::{Blueprint, Name, OwnedBy},
             handle::EntityHandle,
         },
         app_data,
@@ -16,12 +16,14 @@ use crate::{
 #[derive(Clone)]
 pub(crate) struct EntityRx {
     owned_by: Option<PlayerId>,
+    named: Option<String>,
     pipeline: RxPipeline,
 }
 impl EntityRx {
     pub fn new() -> Self {
         EntityRx {
             owned_by: None,
+            named: None,
             pipeline: RxPipeline::default(),
         }
     }
@@ -41,15 +43,28 @@ impl UserData for EntityRx {
             Ok(next)
         });
 
+        methods.add_method("named", |_, this, name: String| {
+            let mut next = this.clone();
+            next.named = Some(name);
+            Ok(next)
+        });
+
         methods.add_method("each", |lua, this, handle: mlua::Function| {
             let mut entities = Vec::new();
             {
                 let world = get_app_data::<app_data::World>(lua)?;
 
-                for (entity, owned_by, blueprint) in
-                    world.query::<(hecs::Entity, &OwnedBy, &Blueprint)>().iter()
+                for (entity, name, owned_by, blueprint) in world
+                    .query::<(hecs::Entity, &Name, &OwnedBy, &Blueprint)>()
+                    .iter()
                 {
-                    if this.owned_by == Some(owned_by.0) {
+                    let ownership_check = this.owned_by.map_or(true, |owner| owner == owned_by.0);
+                    let name_check = this
+                        .named
+                        .as_ref()
+                        .map_or(true, |filter_name| filter_name == &name.0);
+
+                    if ownership_check && name_check {
                         entities.push((entity, blueprint.0));
                     }
                 }
