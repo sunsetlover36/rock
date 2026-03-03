@@ -55,14 +55,20 @@ impl UserData for EntityRx {
                 let world = get_app_data::<app_data::World>(lua)?;
 
                 for (entity, name, owned_by, blueprint) in world
-                    .query::<(hecs::Entity, &Name, &OwnedBy, &Blueprint)>()
+                    .query::<(hecs::Entity, Option<&Name>, Option<&OwnedBy>, &Blueprint)>()
                     .iter()
                 {
-                    let ownership_check = this.owned_by.map_or(true, |owner| owner == owned_by.0);
-                    let name_check = this
-                        .named
-                        .as_ref()
-                        .map_or(true, |filter_name| filter_name == &name.0);
+                    let ownership_check = match owned_by {
+                        Some(owned_by) => this.owned_by.map_or(true, |owner| owner == owned_by.0),
+                        None => this.owned_by.is_none(),
+                    };
+                    let name_check = match name {
+                        Some(name) => this
+                            .named
+                            .as_ref()
+                            .map_or(true, |filter_name| filter_name == &name.0),
+                        None => this.named.is_none(),
+                    };
 
                     if ownership_check && name_check {
                         entities.push((entity, blueprint.0));
