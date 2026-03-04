@@ -1,5 +1,8 @@
 use mlua::{UserData, UserDataMethods};
 
+mod sync;
+pub(crate) use sync::{RxSync, SyncTarget};
+
 #[derive(Debug, Clone)]
 pub(crate) enum RxOperator {
     Filter(mlua::Function),

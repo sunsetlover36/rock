@@ -1,8 +1,8 @@
 // Component methods specification
 macro_rules! for_each_blueprint {
     ($methods:ident, $callback:ident) => {
-        $callback!($methods, "vector", Vector2D, Vector2D);
-        $callback!($methods, "transform", Transform2D, Transform2D);
+        $callback!($methods, "position", Position, Position);
+        $callback!($methods, "rotation", Rotation, Rotation);
         $callback!($methods, "control", Control, Control);
         $callback!($methods, "sprite", Sprite2D, Sprite2D);
         $callback!($methods, "sprite_char", SpriteChar, SpriteChar);
@@ -13,8 +13,8 @@ pub(crate) use for_each_blueprint;
 
 macro_rules! for_each_handle {
     ($methods:ident, $callback:ident) => {
-        $callback!($methods, "vector", Vector2D, Vector2D);
-        $callback!($methods, "transform", Transform2D, Transform2D);
+        $callback!($methods, "position", Position, Position);
+        $callback!($methods, "rotation", Rotation, Rotation);
         $callback!($methods, "control", Control, Control);
         $callback!($methods, "sprite", Sprite2D, Sprite2D);
         $callback!($methods, "sprite_char", SpriteChar, SpriteChar);

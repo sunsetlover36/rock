@@ -32,12 +32,14 @@ pub mod default_client_api;
 pub(crate) mod event_bus;
 pub(crate) use event_bus::EventBus;
 
-mod api;
+pub mod api;
 use api::{
     EntityPlugin, MemoryPlugin, PluginComposer, SceneManager, SceneManagerMessage, ScenePlugin,
 };
 
 mod app_data;
+
+pub mod network_replicator;
 
 mod geode;
 use geode::{inject_geodes, scan_geodes};

@@ -7,8 +7,8 @@ use crate::runtime::{
         on::{EventScope, OnPluginLazy},
         plugins::entity::{
             components::{
-                Blueprint, ComponentData, Control, CustomDataComponent, OwnedBy, Sprite2D,
-                SpriteChar, Transform2D, Vector2D,
+                Blueprint, ComponentData, Control, CustomDataComponent, OwnedBy, Position,
+                Rotation, Sprite2D, SpriteChar,
             },
             event_descriptors::ENTITY_EVENT_DESCRIPTORS,
             handle::EntityHandle,
@@ -36,6 +36,10 @@ impl EntityBlueprint {
             components: Vec::new(),
             customs: HashMap::new(),
         }
+    }
+
+    pub fn id(&self) -> BlueprintId {
+        self.id
     }
 }
 impl UserData for EntityBlueprint {
@@ -115,10 +119,10 @@ impl UserData for EntityBlueprint {
             // TODO: repeated code
             for component in &this.components {
                 match component {
-                    ComponentData::Vector2D(c) => {
+                    ComponentData::Position(c) => {
                         builder.add(c.clone());
                     }
-                    ComponentData::Transform2D(c) => {
+                    ComponentData::Rotation(c) => {
                         builder.add(c.clone());
                     }
                     ComponentData::Control(c) => {

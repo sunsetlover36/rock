@@ -12,7 +12,7 @@ use crate::runtime::{
 mod blueprint;
 pub(crate) use {blueprint::BlueprintId, blueprint::EntityBlueprint};
 mod components;
-pub(crate) use components::{ComponentData, ComponentKey};
+pub(crate) use components::{ComponentData, ComponentKey, CustomDataComponent};
 mod event_descriptors;
 mod handle;
 mod macros;

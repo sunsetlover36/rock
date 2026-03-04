@@ -1,7 +1,10 @@
 mod ws;
 use ws::WsCommitRouter;
 
-use crate::{socket::session_registry::SessionSender, world::protocol::WorldCommit};
+use crate::socket::session_registry::SessionSender;
+
+mod protocol;
+pub(crate) use protocol::*;
 
 pub struct CommitRouter {
     // db: DatabaseSystem
@@ -15,7 +18,7 @@ impl CommitRouter {
             ws_session_sender: WsCommitRouter { ws_session_sender },
         }
     }
-    pub fn emit(&self, commit: WorldCommit) {
+    pub fn emit(&self, commit: CommitKind) {
         self.ws_session_sender.publish(commit);
     }
 }

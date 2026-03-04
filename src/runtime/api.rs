@@ -4,9 +4,10 @@ use color_eyre::eyre;
 use mlua::Lua;
 
 mod plugins;
+pub(crate) use plugins::entity::{BlueprintId, ComponentKey};
 pub use plugins::on;
 pub(super) use plugins::{
-    entity::{BlueprintId, EntityBlueprint, EntityPlugin},
+    entity::{CustomDataComponent, EntityBlueprint, EntityPlugin},
     input::{InputEvent, InputPlugin},
     layer::{LayerEntry, LayerId, LayerPlugin},
     memory::MemoryPlugin,

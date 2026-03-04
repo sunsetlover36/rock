@@ -1,11 +1,11 @@
 use serde::Serialize;
-use strum::EnumDiscriminants;
+use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumString};
 
-mod vector_2d;
-pub(crate) use vector_2d::Vector2D;
+mod position;
+pub(crate) use position::Position;
 
-mod transform_2d;
-pub(crate) use transform_2d::Transform2D;
+mod rotation;
+pub(crate) use rotation::Rotation;
 
 mod control;
 pub(crate) use control::Control;
@@ -28,10 +28,11 @@ pub(crate) use name::Name;
 #[derive(Debug, EnumDiscriminants, Clone, Serialize)]
 #[serde(untagged)]
 #[strum_discriminants(name(ComponentKey))]
-#[strum_discriminants(derive(Hash))]
+#[strum_discriminants(derive(Hash, EnumIter, EnumString, AsRefStr))]
+#[strum_discriminants(strum(serialize_all = "lowercase"))]
 pub(crate) enum ComponentData {
-    Vector2D(Vector2D),
-    Transform2D(Transform2D),
+    Position(Position),
+    Rotation(Rotation),
     Control(Control),
     Sprite2D(Sprite2D),
     SpriteChar(SpriteChar),
@@ -39,4 +40,6 @@ pub(crate) enum ComponentData {
     Blueprint(Blueprint),
     Name(Name),
 }
+
+#[derive(Debug, Eq, PartialEq, Hash)]
 pub(crate) struct CustomDataComponent(pub mlua::RegistryKey);

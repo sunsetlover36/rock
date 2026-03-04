@@ -5,7 +5,7 @@ pub(crate) const ENTITY_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
         namespace: None,
         name: "move",
         event_key: GameModeEventKey::Entity(EntityEventKey::ComponentUpdate(
-            super::ComponentKey::Transform2D,
+            super::ComponentKey::Position,
         )),
     },
     EventDescriptor {

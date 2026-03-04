@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
-
-use crate::runtime::api::plugins::entity::components::Vector2D;
+use shared::components::Vector2D;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Sprite2D {

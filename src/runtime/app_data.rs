@@ -4,13 +4,13 @@ use color_eyre::eyre;
 use shared::{InputAction, InputKind};
 
 use crate::runtime::{
-    EventBus as EventBusStruct, GameModeClientApi,
+    GameModeClientApi,
     api::{
         BlueprintId, EntityBlueprint, InputEvent, LayerEntry, LayerId,
         on::{GameModeEventKey, GameModeListener},
         protocol::PluginName,
     },
-    timer_manager,
+    event_bus, network_replicator, timer_manager,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -26,7 +26,7 @@ pub type Scenes = HashMap<String, Vec<mlua::Function>>;
 pub type ScenePlugins = HashMap<PluginName, mlua::Table>;
 pub type Yielder = Option<mlua::Function>;
 pub type World = hecs::World;
-pub type EventBus = Rc<EventBusStruct>;
+pub type EventBus = Rc<event_bus::EventBus>;
 
 pub struct BlueprintRegistry {
     last_id: BlueprintId,
@@ -105,3 +105,4 @@ pub type ActiveLayers = Vec<LayerId>;
 
 pub type ClientApi = Arc<dyn GameModeClientApi>;
 pub type TimerManager = Rc<timer_manager::TimerManager>;
+pub type NetworkReplicator = Rc<network_replicator::NetworkReplicator>;

@@ -9,8 +9,8 @@ use crate::runtime::{
         },
         plugins::entity::{
             components::{
-                ComponentData, Control, CustomDataComponent, Name, OwnedBy, Sprite2D, SpriteChar,
-                Transform2D, Vector2D,
+                ComponentData, Control, CustomDataComponent, Name, OwnedBy, Position, Rotation,
+                Sprite2D, SpriteChar,
             },
             event_descriptors::ENTITY_EVENT_DESCRIPTORS,
             macros::{add_handle_methods, for_each_handle},

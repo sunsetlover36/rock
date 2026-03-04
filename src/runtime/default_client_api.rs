@@ -25,7 +25,7 @@ impl GameModeClientApi for GameModeDefaultClientApi {
     fn send(&self, event: GameModeClientCommand) {
         match event {
             GameModeClientCommand::SendMessage { pk, text } => {
-                let _ = self.ws_session_sender.send_ephemeral(ServerMessage {
+                let _ = self.ws_session_sender.send_message(ServerMessage {
                     recipient: EnvelopeRecipient::Single(pk),
                     payload: OutgoingPacket::Chat(ChatPacket::GlobalMessage {
                         message: text,
