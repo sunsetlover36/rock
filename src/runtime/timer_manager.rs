@@ -12,7 +12,7 @@ use tokio::{
 
 use crate::runtime::{
     EventBus,
-    api::on::{EventScope, GameModeEvent, GameModeEventData, TimerEventData},
+    plugins::on::protocol::{EventScope, GameModeEvent, GameModeEventData, TimerEventData},
 };
 
 #[derive(Debug, Clone, EnumDiscriminants)]

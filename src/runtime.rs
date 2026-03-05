@@ -13,18 +13,6 @@ use smallvec::smallvec;
 use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
-    runtime::{
-        api::{
-            InputPlugin, LayerPlugin, PlayerHandle, PlayerPlugin, SceneManagerParams, TimerPlugin,
-            on::{
-                EventScope, GameModeEvent, GameModeEventData, OnPlugin, PlayerEventData,
-                WorldEventData, event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
-            },
-            protocol::GameModePlugin,
-        },
-        app_data::{BlueprintRegistry, ExecutionContext, InputEventRegistry, LayerRegistry},
-        timer_manager::{TimerManager, TimerManagerParams},
-    },
     world::{WorldNatives, WorldState},
 };
 
@@ -32,13 +20,21 @@ pub mod default_client_api;
 pub(crate) mod event_bus;
 pub(crate) use event_bus::EventBus;
 
-pub mod api;
-use api::{
-    EntityPlugin, MemoryPlugin, PluginComposer, SceneManager, SceneManagerMessage, ScenePlugin,
+pub mod plugins;
+use plugins::{
+    EntityPlugin, InputPlugin, LayerPlugin, MemoryPlugin, OnPlugin, PlayerPlugin, PluginComposer,
+    ScenePlugin, TimerPlugin,
+    on::{
+        event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
+        protocol::{EventScope, GameModeEvent, GameModeEventData, PlayerEventData, WorldEventData},
+    },
+    player::PlayerHandle,
+    protocol::GameModePlugin,
+    scene::{SceneManager, SceneManagerMessage, SceneManagerParams},
 };
 
 mod app_data;
-
+use app_data::{BlueprintRegistry, ExecutionContext, InputEventRegistry, LayerRegistry};
 pub mod network_replicator;
 
 mod geode;
@@ -48,6 +44,7 @@ pub mod protocol;
 pub use protocol::*;
 
 mod timer_manager;
+use timer_manager::{TimerManager, TimerManagerParams};
 
 mod utils;
 use utils::LuaResultExt;

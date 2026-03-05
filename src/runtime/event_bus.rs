@@ -4,8 +4,8 @@ use color_eyre::eyre;
 use mlua::{IntoLuaMulti, Lua};
 
 use crate::runtime::{
-    api::on::GameModeEvent,
     app_data::{self, ExecutionContext},
+    plugins::on::protocol::GameModeEvent,
     utils::LuaResultExt,
 };
 

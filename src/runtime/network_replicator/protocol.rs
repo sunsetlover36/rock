@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use shared::Position;
 
-use crate::runtime::{BlueprintId, ComponentKey, api::CustomDataComponent};
+use crate::runtime::plugins::entity::{
+    BlueprintId,
+    components::{ComponentKey, CustomDataComponent},
+};
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub(crate) enum EntityDirtyComponent {

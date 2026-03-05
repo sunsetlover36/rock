@@ -4,13 +4,15 @@ use color_eyre::eyre;
 use shared::{InputAction, InputKind};
 
 use crate::runtime::{
-    GameModeClientApi,
-    api::{
-        BlueprintId, EntityBlueprint, InputEvent, LayerEntry, LayerId,
-        on::{GameModeEventKey, GameModeListener},
+    GameModeClientApi, event_bus, network_replicator,
+    plugins::{
+        entity::{BlueprintId, EntityBlueprint},
+        input::protocol::InputEvent,
+        layer::{LayerEntry, LayerId},
+        on::{GameModeListener, protocol::GameModeEventKey},
         protocol::PluginName,
     },
-    event_bus, network_replicator, timer_manager,
+    timer_manager,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

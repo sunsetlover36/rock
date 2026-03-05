@@ -2,11 +2,10 @@ use std::time::Duration;
 
 use mlua::{LuaSerdeExt, UserData};
 use shared::Position;
-use strum::IntoEnumIterator;
 
 use crate::runtime::{
-    ComponentKey,
     network_replicator::protocol::{ReplicationPolicy, ReplicationTarget},
+    plugins::entity::components::ComponentKey,
 };
 
 mod handle;

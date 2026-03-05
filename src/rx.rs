@@ -1,7 +1,7 @@
 use mlua::{UserData, UserDataMethods};
 
 mod sync;
-pub(crate) use sync::{RxSync, SyncTarget};
+pub(crate) use sync::RxSync;
 
 #[derive(Debug, Clone)]
 pub(crate) enum RxOperator {
