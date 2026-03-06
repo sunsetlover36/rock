@@ -20,7 +20,7 @@ pub mod default_client_api;
 pub(crate) mod event_bus;
 pub(crate) use event_bus::EventBus;
 
-pub mod plugins;
+pub(crate) mod plugins;
 use plugins::{
     EntityPlugin, InputPlugin, LayerPlugin, MemoryPlugin, OnPlugin, PlayerPlugin, PluginComposer,
     ScenePlugin, TimerPlugin,
@@ -33,21 +33,23 @@ use plugins::{
     scene::{SceneManager, SceneManagerMessage, SceneManagerParams},
 };
 
-mod app_data;
+pub(crate) mod app_data;
 use app_data::{BlueprintRegistry, ExecutionContext, InputEventRegistry, LayerRegistry};
-pub mod network_replicator;
+
+pub(crate) mod network_replicator;
+use network_replicator::NetworkReplicator;
 
 mod geode;
 use geode::{inject_geodes, scan_geodes};
 
-pub mod protocol;
+pub(crate) mod protocol;
 pub use protocol::*;
 
 mod timer_manager;
 use timer_manager::{TimerManager, TimerManagerParams};
 
 mod utils;
-use utils::LuaResultExt;
+pub use utils::*;
 
 pub struct RuntimeParams {
     pub name: String,
@@ -72,6 +74,7 @@ pub struct Runtime {
 impl Runtime {
     pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
         let lua = Lua::new();
+        let client_api = params.client_api.clone();
 
         // Dependencies
         let meta_db = Arc::new(params.meta_db);
@@ -84,6 +87,7 @@ impl Runtime {
             tokio_handle: params.tokio_handle.clone(),
             event_bus: event_bus.clone(),
         }));
+        let network_replicator = Rc::new(NetworkReplicator::new(client_api.clone()));
 
         // App data
         lua.set_app_data::<app_data::EventListeners>(HashMap::new());
@@ -97,8 +101,9 @@ impl Runtime {
         lua.set_app_data::<app_data::ExecutionContext>(ExecutionContext::Global);
         lua.set_app_data::<app_data::LayerRegistry>(LayerRegistry::new());
         lua.set_app_data::<app_data::ActiveLayers>(Vec::new());
-        lua.set_app_data::<app_data::ClientApi>(params.client_api);
+        lua.set_app_data::<app_data::ClientApi>(client_api.clone());
         lua.set_app_data::<app_data::TimerManager>(timer_manager.clone());
+        lua.set_app_data::<app_data::NetworkReplicator>(network_replicator.clone());
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);

@@ -1,11 +1,18 @@
 use std::time::Duration;
 
-use shared::Position;
+use shared::{PlayerKey, components::RadialArea};
 
 use crate::runtime::plugins::entity::{
     BlueprintId,
     components::{ComponentKey, CustomDataComponent},
 };
+
+#[derive(Debug, Clone)]
+pub(crate) enum SpatialFilter {
+    Global,
+    Radius(u32),
+    Area(RadialArea),
+}
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub(crate) enum EntityDirtyComponent {
@@ -30,10 +37,43 @@ pub(crate) enum ReplicationTarget {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ReplicationPolicy {
+    pub target: ReplicationTarget,
     pub only_fields: Vec<String>,
     pub hidden_fields: Vec<String>,
     pub room: Option<String>,
-    pub radius: Option<u32>,
-    pub nearest: Option<Position>,
+    pub spatial: Option<SpatialFilter>,
     pub throttle: Option<Duration>,
+}
+impl ReplicationPolicy {
+    pub fn new(target: ReplicationTarget) -> Self {
+        Self {
+            target,
+            only_fields: Vec::new(),
+            hidden_fields: Vec::new(),
+            room: None,
+            spatial: None,
+            throttle: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum PolicyFieldUpdate {
+    Spatial { filter: Option<SpatialFilter> },
+    Room { name: Option<String> },
+    Throttle { throttle: Option<Duration> },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingSignal {
+    pub name: Option<String>,
+    pub data: serde_json::Map<String, serde_json::Value>,
+    pub area: Option<RadialArea>,
+    pub scope: SignalScope,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SignalScope {
+    Global,
+    Player(PlayerKey),
 }

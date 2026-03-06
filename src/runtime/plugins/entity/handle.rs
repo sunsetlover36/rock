@@ -9,13 +9,17 @@ use super::{
     event_descriptors::ENTITY_EVENT_DESCRIPTORS,
     macros::{add_handle_methods, for_each_handle},
 };
-use crate::runtime::{
-    app_data,
-    plugins::{
-        OnPluginLazy,
-        on::protocol::{EntityEventData, EventScope, GameModeEvent, GameModeEventData},
+use crate::{
+    runtime::{
+        app_data,
+        network_replicator::protocol::ReplicationTarget,
+        plugins::{
+            OnPluginLazy,
+            on::protocol::{EntityEventData, EventScope, GameModeEvent, GameModeEventData},
+        },
+        utils::{get_app_data, get_app_data_mut},
     },
-    utils::{get_app_data, get_app_data_mut},
+    rx::RxSync,
 };
 
 #[derive(Clone)]
@@ -104,6 +108,10 @@ impl UserData for EntityHandle {
 
         methods.add_method("exists", |lua, this, _: ()| {
             Ok(get_app_data::<app_data::World>(lua)?.contains(this.entity))
+        });
+
+        methods.add_method("sync", |lua, this, _: ()| {
+            Ok(RxSync::new(lua, ReplicationTarget::Entity(this.entity)))
         });
     }
 }

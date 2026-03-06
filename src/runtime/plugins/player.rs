@@ -11,6 +11,9 @@ use crate::runtime::{
 mod handle;
 pub(crate) use handle::PlayerHandle;
 
+mod broadcast_rx;
+use broadcast_rx::BroadcastRx;
+
 pub(crate) struct PlayerPlugin {}
 impl GameModePlugin for PlayerPlugin {
     fn name(&self) -> PluginName {
@@ -30,12 +33,7 @@ impl GameModePlugin for PlayerPlugin {
         })?;
         table.set("get", get_fn)?;
 
-        let broadcast_fn = lua.create_function(|lua, text: String| {
-            get_app_data::<app_data::ClientApi>(lua)?
-                .send(GameModeClientCommand::Broadcast { text });
-
-            Ok(())
-        })?;
+        let broadcast_fn = lua.create_function(|_, _: ()| Ok(BroadcastRx {}))?;
         table.set("broadcast", broadcast_fn)?;
 
         let list_fn = lua.create_function(|lua, _: ()| {

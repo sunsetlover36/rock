@@ -1,4 +1,4 @@
-use shared::{IncomingRequest, PlayerKey};
+use shared::{IncomingRequest, PlayerKey, WorldSnapshot};
 
 use crate::envelope::ClientEnvelope;
 
@@ -10,6 +10,7 @@ pub enum GameModeClientCommand {
     Broadcast { text: String },
     Log { text: String },
     KickPlayer { pk: PlayerKey },
+    Snapshot(WorldSnapshot),
 }
 pub trait GameModeClientApi: Send + Sync {
     fn has(&self, pk: PlayerKey) -> bool;

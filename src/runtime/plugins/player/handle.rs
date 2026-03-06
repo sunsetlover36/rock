@@ -1,7 +1,13 @@
 use mlua::UserData;
 use shared::PlayerKey;
 
-use crate::runtime::{GameModeClientCommand, app_data, utils::get_app_data};
+use crate::{
+    runtime::{
+        GameModeClientCommand, app_data, network_replicator::protocol::SignalScope,
+        utils::get_app_data,
+    },
+    rx::RxSignal,
+};
 
 pub(crate) struct PlayerHandle {
     pub pk: PlayerKey,
@@ -25,6 +31,10 @@ impl UserData for PlayerHandle {
             get_app_data::<app_data::ClientApi>(lua)?
                 .send(GameModeClientCommand::KickPlayer { pk: this.pk });
             Ok(())
+        });
+
+        methods.add_method("signal", |_, this, name: Option<String>| {
+            Ok(RxSignal::new(SignalScope::Player(this.pk), name))
         });
     }
 }

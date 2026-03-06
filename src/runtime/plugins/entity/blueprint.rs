@@ -11,10 +11,14 @@ use super::{
     handle::EntityHandle,
     macros::{add_blueprint_methods, for_each_blueprint},
 };
-use crate::runtime::{
-    app_data,
-    plugins::{OnPluginLazy, on::protocol::EventScope},
-    utils::{get_app_data, get_app_data_mut},
+use crate::{
+    runtime::{
+        app_data,
+        network_replicator::protocol::ReplicationTarget,
+        plugins::{OnPluginLazy, on::protocol::EventScope},
+        utils::{get_app_data, get_app_data_mut},
+    },
+    rx::RxSync,
 };
 
 pub type BlueprintId = u64;
@@ -169,6 +173,10 @@ impl UserData for EntityBlueprint {
                 entity,
                 blueprint_id: this.id,
             })
+        });
+
+        methods.add_method("sync", |lua, this, _: ()| {
+            Ok(RxSync::new(lua, ReplicationTarget::Blueprint(this.id)))
         });
     }
 }

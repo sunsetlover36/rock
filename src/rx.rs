@@ -3,6 +3,9 @@ use mlua::{UserData, UserDataMethods};
 mod sync;
 pub(crate) use sync::RxSync;
 
+mod signal;
+pub(crate) use signal::RxSignal;
+
 #[derive(Debug, Clone)]
 pub(crate) enum RxOperator {
     Filter(mlua::Function),

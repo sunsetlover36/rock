@@ -41,6 +41,11 @@ impl GameModeClientApi for GameModeDefaultClientApi {
             }
             GameModeClientCommand::Broadcast { text } => {}
             GameModeClientCommand::Log { text } => {}
+            GameModeClientCommand::Snapshot(snapshot) => {
+                // let _ = self.ws_session_sender.send_message(ServerMessage {
+                //     recipient: EnvelopeRe
+                // })
+            }
         }
     }
 }
