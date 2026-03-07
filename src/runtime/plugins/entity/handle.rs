@@ -3,15 +3,15 @@ use smallvec::smallvec;
 
 use super::{
     components::{
-        ComponentData, Control, CustomDataComponent, Name, OwnedBy, Position, Rotation, Sprite2D,
-        SpriteChar,
+        ComponentData, Control, CustomDataComponent, Name, OwnedBy, Position, Room, Rotation,
+        Sprite2D, SpriteChar,
     },
     event_descriptors::ENTITY_EVENT_DESCRIPTORS,
     macros::{add_handle_methods, for_each_handle},
 };
 use crate::{
     runtime::{
-        app_data,
+        app_data, get_str_hash,
         network_replicator::protocol::ReplicationTarget,
         plugins::{
             OnPluginLazy,
@@ -78,6 +78,22 @@ impl UserData for EntityHandle {
     }
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         for_each_handle!(methods, add_handle_methods);
+
+        methods.add_method("room", |lua, this, name: Option<String>| {
+            let mut world = get_app_data_mut::<app_data::World>(lua)?;
+            match name {
+                Some(name) => {
+                    if let Ok(mut field) = world.get::<&mut Room>(this.entity) {
+                        *field = Room(get_str_hash(&name));
+                    }
+                }
+                None => {
+                    let _ = world.remove_one::<Room>(this.entity);
+                }
+            }
+
+            Ok(())
+        });
 
         methods.add_method("custom", |lua, this, value: mlua::Value| match value {
             mlua::Value::Table(table) => {

@@ -4,16 +4,11 @@ use color_eyre::eyre::{self, Context};
 use mlua::{Function, Lua, LuaSerdeExt, Table};
 use strum::{AsRefStr, Display, EnumString};
 
-use crate::{
-    meta_db::MetaDb,
-    runtime::{
-        plugins::{
-            Yielder,
-            protocol::{AsyncTask, AsyncTaskResult, GameModePlugin, PluginName},
-        },
-        utils::LuaResultExt,
-    },
+use super::{
+    Yielder,
+    protocol::{AsyncTask, AsyncTaskResult, GameModePlugin, PluginName},
 };
+use crate::{meta_db::MetaDb, runtime::utils::LuaResultExt};
 
 #[derive(Debug, Clone, Copy, EnumString, Display, AsRefStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]

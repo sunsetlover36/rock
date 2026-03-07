@@ -1,11 +1,8 @@
 use color_eyre::eyre;
 use mlua::Lua;
 
-use crate::runtime::{
-    app_data,
-    plugins::protocol::{AsyncTask, GameModePlugin, PluginName},
-    utils::get_app_data,
-};
+use super::protocol::{AsyncTask, GameModePlugin, PluginName};
+use crate::runtime::{app_data, utils::get_app_data};
 
 mod manager;
 pub use manager::{SceneManager, SceneManagerMessage, SceneManagerParams};

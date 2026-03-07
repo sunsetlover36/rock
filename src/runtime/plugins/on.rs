@@ -1,7 +1,7 @@
 use color_eyre::eyre;
 use mlua::{Lua, Table};
 
-use crate::runtime::plugins::protocol::{AsyncTask, GameModePlugin, PluginName};
+use super::protocol::{AsyncTask, GameModePlugin, PluginName};
 
 pub(crate) mod event_descriptors;
 pub(crate) mod lazy;

@@ -14,6 +14,8 @@ pub(crate) enum SpatialFilter {
     Area(RadialArea),
 }
 
+pub(crate) type RoomId = u64;
+
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub(crate) enum EntityDirtyComponent {
     Core(ComponentKey),
@@ -33,14 +35,22 @@ pub(crate) enum ReplicationTarget {
     Blueprint(BlueprintId),
     Entity(hecs::Entity),
     MemoryNode(String),
+    Player(PlayerKey),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum PolicyRouting {
+    DynamicFollow,
+    Pinned(RoomId),
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ReplicationPolicy {
     pub target: ReplicationTarget,
+    pub routing: PolicyRouting,
     pub only_fields: Vec<String>,
     pub hidden_fields: Vec<String>,
-    pub room: Option<String>,
+    pub room: Option<RoomId>,
     pub spatial: Option<SpatialFilter>,
     pub throttle: Option<Duration>,
 }
@@ -48,6 +58,8 @@ impl ReplicationPolicy {
     pub fn new(target: ReplicationTarget) -> Self {
         Self {
             target,
+            // Policy automatically follows any room given to its target
+            routing: PolicyRouting::DynamicFollow,
             only_fields: Vec::new(),
             hidden_fields: Vec::new(),
             room: None,
@@ -60,7 +72,7 @@ impl ReplicationPolicy {
 #[derive(Debug, Clone)]
 pub(crate) enum PolicyFieldUpdate {
     Spatial { filter: Option<SpatialFilter> },
-    Room { name: Option<String> },
+    Room { id: Option<RoomId> },
     Throttle { throttle: Option<Duration> },
 }
 

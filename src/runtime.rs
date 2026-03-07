@@ -23,7 +23,7 @@ pub(crate) use event_bus::EventBus;
 pub(crate) mod plugins;
 use plugins::{
     EntityPlugin, InputPlugin, LayerPlugin, MemoryPlugin, OnPlugin, PlayerPlugin, PluginComposer,
-    ScenePlugin, TimerPlugin,
+    RoomPlugin, ScenePlugin, TimerPlugin,
     on::{
         event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
         protocol::{EventScope, GameModeEvent, GameModeEventData, PlayerEventData, WorldEventData},
@@ -121,6 +121,7 @@ impl Runtime {
             Box::new(LayerPlugin {}),
             Box::new(PlayerPlugin {}),
             Box::new(TimerPlugin {}),
+            Box::new(RoomPlugin {}),
             Box::new(ScenePlugin {
                 manager_tx: scene_manager_tx.clone(),
             }),

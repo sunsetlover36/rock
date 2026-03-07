@@ -29,6 +29,7 @@ pub enum PluginName {
     Memory,
     On,
     Player,
+    Room,
     Scene,
     Timer,
 }

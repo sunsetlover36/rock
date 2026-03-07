@@ -21,6 +21,9 @@ pub(crate) use on::{OnPlugin, OnPluginLazy};
 pub(crate) mod player;
 pub(crate) use player::PlayerPlugin;
 
+pub(crate) mod room;
+pub(crate) use room::RoomPlugin;
+
 pub(crate) mod scene;
 pub(crate) use scene::ScenePlugin;
 

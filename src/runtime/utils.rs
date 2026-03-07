@@ -1,3 +1,6 @@
+use std::hash::{Hash, Hasher};
+
+use ahash::AHasher;
 use color_eyre::eyre;
 
 pub trait LuaResultExt {
@@ -24,4 +27,10 @@ where
 {
     lua.app_data_mut::<T>()
         .ok_or_else(|| mlua::Error::runtime("App data is not initialized"))
+}
+
+pub fn get_str_hash(s: &str) -> u64 {
+    let mut hasher = AHasher::default();
+    s.hash(&mut hasher);
+    hasher.finish()
 }

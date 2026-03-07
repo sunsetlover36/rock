@@ -1,7 +1,7 @@
 use color_eyre::eyre;
 use strum::IntoEnumIterator;
 
-use crate::runtime::plugins::protocol::{AsyncTask, GameModePlugin, PluginName};
+use super::protocol::{AsyncTask, GameModePlugin, PluginName};
 
 mod rx;
 use rx::InputRx;

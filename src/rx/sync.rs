@@ -6,9 +6,11 @@ use strum::IntoEnumIterator;
 
 use crate::{
     runtime::{
-        app_data, get_app_data,
-        network_replicator::protocol::{ReplicationPolicy, ReplicationTarget, SpatialFilter},
-        plugins::entity::components::ComponentKey,
+        app_data, get_app_data, get_str_hash,
+        network_replicator::protocol::{
+            PolicyRouting, ReplicationPolicy, ReplicationTarget, SpatialFilter,
+        },
+        plugins::entity::components::{ComponentKey, Room},
     },
     rx::sync::handle::PolicyHandle,
 };
@@ -96,15 +98,20 @@ impl UserData for RxSync {
 
         methods.add_method("room", |_, this, name: String| {
             let mut next = this.clone();
-            next.policy.room = Some(name);
+            let id = get_str_hash(&name);
+            next.policy.room = Some(id);
+
+            // Pin this room to the policy
+            next.policy.routing = PolicyRouting::Pinned(id);
+
             Ok(next)
         });
 
-        methods.add_method("in_radius", |_, this, radius: u32| {
+        methods.add_method("radius", |_, this, radius: u32| {
             match this.policy.target {
                 ReplicationTarget::MemoryNode(_) => {
                     return Err(mlua::Error::runtime(
-                        "Cannot apply `:in_radius()` to a memory node",
+                        "Cannot apply `:radius()` to a memory node",
                     ));
                 }
                 _ => {}
@@ -122,6 +129,12 @@ impl UserData for RxSync {
             Ok(next)
         });
 
+        methods.add_method("global", |_, this, _: ()| {
+            let mut next = this.clone();
+            next.policy.spatial = None;
+            Ok(next)
+        });
+
         methods.add_method("throttle", |_, this, seconds: f64| {
             let mut next = this.clone();
             next.policy.throttle = Some(Duration::from_secs_f64(seconds));
@@ -129,9 +142,31 @@ impl UserData for RxSync {
         });
 
         methods.add_method("commit", |lua, this, _: ()| {
-            let id = get_app_data::<app_data::NetworkReplicator>(lua)?
-                .commit_policy(this.policy.clone());
-            Ok(PolicyHandle::new(id))
+            let mut policy = this.policy.clone();
+            let target = policy.target.clone();
+
+            match &target {
+                ReplicationTarget::MemoryNode(node) => {
+                    if policy.room == None {
+                        return Err(mlua::Error::runtime(format!(
+                            "Failed to commit a policy: memory node '{}' requires a target room",
+                            node
+                        )));
+                    }
+                }
+                ReplicationTarget::Entity(entity) => {
+                    if policy.room == None {
+                        let world = get_app_data::<app_data::World>(lua)?;
+                        if let Ok(room) = world.get::<&Room>(entity.clone()) {
+                            policy.room = Some(room.0.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            let id = get_app_data::<app_data::NetworkReplicator>(lua)?.commit_policy(policy);
+            Ok(PolicyHandle::new(id, target))
         });
     }
 }

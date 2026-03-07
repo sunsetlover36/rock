@@ -3,10 +3,11 @@ use shared::PlayerKey;
 
 use crate::{
     runtime::{
-        GameModeClientCommand, app_data, network_replicator::protocol::SignalScope,
+        GameModeClientCommand, app_data, get_str_hash,
+        network_replicator::protocol::{ReplicationTarget, SignalScope},
         utils::get_app_data,
     },
-    rx::RxSignal,
+    rx::{RxSignal, RxSync},
 };
 
 pub(crate) struct PlayerHandle {
@@ -35,6 +36,16 @@ impl UserData for PlayerHandle {
 
         methods.add_method("signal", |_, this, name: Option<String>| {
             Ok(RxSignal::new(SignalScope::Player(this.pk), name))
+        });
+
+        methods.add_method("sync", |lua, this, _: ()| {
+            Ok(RxSync::new(lua, ReplicationTarget::Player(this.pk)))
+        });
+
+        methods.add_method("room", |lua, this, name: Option<String>| {
+            let id = name.map(|s| get_str_hash(&s));
+            get_app_data::<app_data::NetworkReplicator>(lua)?.set_player_room(this.pk, id);
+            Ok(())
         });
     }
 }

@@ -1,8 +1,8 @@
 use color_eyre::eyre;
 
+use super::protocol::{AsyncTask, GameModePlugin, PluginName};
 use crate::runtime::{
     app_data,
-    plugins::protocol::{AsyncTask, GameModePlugin, PluginName},
     utils::{get_app_data, get_app_data_mut},
 };
 

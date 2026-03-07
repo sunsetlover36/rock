@@ -25,6 +25,9 @@ pub(crate) use blueprint::Blueprint;
 mod name;
 pub(crate) use name::Name;
 
+mod room;
+pub(crate) use room::Room;
+
 #[derive(Debug, EnumDiscriminants, Clone, Serialize)]
 #[serde(untagged)]
 #[strum_discriminants(name(ComponentKey))]
@@ -39,6 +42,7 @@ pub(crate) enum ComponentData {
     OwnedBy(OwnedBy),
     Blueprint(Blueprint),
     Name(Name),
+    Room(Room),
 }
 
 #[derive(Debug, Eq, PartialEq, Hash)]

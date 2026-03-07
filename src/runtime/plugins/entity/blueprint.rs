@@ -4,7 +4,7 @@ use mlua::{LuaSerdeExt, UserData};
 
 use super::{
     components::{
-        Blueprint, ComponentData, Control, CustomDataComponent, OwnedBy, Position, Rotation,
+        Blueprint, ComponentData, Control, CustomDataComponent, OwnedBy, Position, Room, Rotation,
         Sprite2D, SpriteChar,
     },
     event_descriptors::ENTITY_EVENT_DESCRIPTORS,
@@ -13,9 +13,9 @@ use super::{
 };
 use crate::{
     runtime::{
-        app_data,
+        app_data, get_str_hash,
         network_replicator::protocol::ReplicationTarget,
-        plugins::{OnPluginLazy, on::protocol::EventScope},
+        plugins::{OnPluginLazy, entity::components::ComponentKey, on::protocol::EventScope},
         utils::{get_app_data, get_app_data_mut},
     },
     rx::RxSync,
@@ -27,7 +27,7 @@ pub type BlueprintId = u64;
 pub(crate) struct EntityBlueprint {
     id: BlueprintId,
     pub name: Option<String>,
-    pub components: Vec<ComponentData>,
+    pub components: HashMap<ComponentKey, ComponentData>,
     pub customs: HashMap<String, serde_json::Value>,
 }
 impl EntityBlueprint {
@@ -35,7 +35,7 @@ impl EntityBlueprint {
         Self {
             id,
             name: None,
-            components: Vec::new(),
+            components: HashMap::new(),
             customs: HashMap::new(),
         }
     }
@@ -56,6 +56,32 @@ impl UserData for EntityBlueprint {
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         for_each_blueprint!(methods, add_blueprint_methods);
+
+        methods.add_method("name", |_, this, name: String| {
+            let mut next = this.clone();
+            next.name = Some(name);
+            Ok(next)
+        });
+
+        methods.add_method("room", |_, this, name: String| {
+            let mut next = this.clone();
+            next.components.insert(
+                ComponentKey::Room,
+                ComponentData::Room(Room(get_str_hash(&name))),
+            );
+            Ok(next)
+        });
+
+        methods.add_method("custom", |lua, this, table: mlua::Table| {
+            let mut next = this.clone();
+
+            for pair in table.pairs::<String, mlua::Value>() {
+                let (key, value) = pair?;
+                next.customs.insert(key, lua.from_value(value)?);
+            }
+
+            Ok(next)
+        });
 
         methods.add_method("from", |lua, this, name: String| {
             if !this.components.is_empty() || !this.customs.is_empty() {
@@ -92,23 +118,6 @@ impl UserData for EntityBlueprint {
             },
         );
 
-        methods.add_method("name", |_, this, name: String| {
-            let mut next = this.clone();
-            next.name = Some(name);
-            Ok(next)
-        });
-
-        methods.add_method("custom", |lua, this, table: mlua::Table| {
-            let mut next = this.clone();
-
-            for pair in table.pairs::<String, mlua::Value>() {
-                let (key, value) = pair?;
-                next.customs.insert(key, lua.from_value(value)?);
-            }
-
-            Ok(next)
-        });
-
         methods.add_method_mut("spawn", |lua, this, _: ()| {
             let runtime_phase = get_app_data::<app_data::RuntimePhase>(lua)?;
             if *runtime_phase == app_data::RuntimePhase::Blueprints {
@@ -119,7 +128,7 @@ impl UserData for EntityBlueprint {
 
             let mut builder = hecs::EntityBuilder::new();
             // TODO: repeated code
-            for component in &this.components {
+            for component in this.components.values() {
                 match component {
                     ComponentData::Position(c) => {
                         builder.add(c.clone());
@@ -137,10 +146,13 @@ impl UserData for EntityBlueprint {
                         builder.add(c.clone());
                     }
                     ComponentData::OwnedBy(c) => {
-                        builder.add(c.clone());
+                        builder.add(*c);
                     }
                     ComponentData::Name(c) => {
                         builder.add(c.clone());
+                    }
+                    ComponentData::Room(c) => {
+                        builder.add(*c);
                     }
                     // Blueprint component cannot be attached manually
                     ComponentData::Blueprint(_) => {}

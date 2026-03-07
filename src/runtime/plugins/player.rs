@@ -2,11 +2,8 @@ use color_eyre::eyre;
 use mlua::IntoLua;
 use shared::{PlayerId, PlayerKey};
 
-use crate::runtime::{
-    GameModeClientCommand, app_data,
-    plugins::protocol::{AsyncTask, GameModePlugin, PluginName},
-    utils::get_app_data,
-};
+use super::protocol::{AsyncTask, GameModePlugin, PluginName};
+use crate::runtime::{app_data, utils::get_app_data};
 
 mod handle;
 pub(crate) use handle::PlayerHandle;
