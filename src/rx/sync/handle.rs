@@ -78,12 +78,12 @@ impl UserData for PolicyHandle {
             Ok(())
         });
 
-        methods.add_method("room", |lua, this, name: Option<String>| {
+        methods.add_method("room", |lua, this, name: String| {
             get_app_data::<app_data::NetworkReplicator>(lua)?
                 .update_policy(
                     this.id,
                     PolicyFieldUpdate::Room {
-                        id: name.map(|s| get_str_hash(&s)),
+                        id: get_str_hash(&name),
                     },
                 )
                 .wrap_eyre_err()?;

@@ -49,7 +49,6 @@ pub(crate) struct ReplicationPolicy {
     pub target: ReplicationTarget,
     pub routing: PolicyRouting,
     pub fields_mask: u64,
-    pub room: Option<RoomId>,
     pub spatial: SpatialFilter,
     pub throttle: Option<Duration>,
 }
@@ -59,7 +58,6 @@ impl ReplicationPolicy {
             target,
             routing: PolicyRouting::DynamicFollow,
             fields_mask: u64::MAX,
-            room: None,
             spatial: SpatialFilter::Global,
             throttle: None,
         }
@@ -69,7 +67,7 @@ impl ReplicationPolicy {
 #[derive(Debug, Clone)]
 pub(crate) enum PolicyFieldUpdate {
     Spatial { filter: SpatialFilter },
-    Room { id: Option<RoomId> },
+    Room { id: RoomId },
     Throttle { throttle: Option<Duration> },
 }
 

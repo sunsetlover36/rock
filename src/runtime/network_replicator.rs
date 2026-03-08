@@ -82,13 +82,13 @@ impl NetworkReplicator {
     pub fn commit_policy(&self, policy: ReplicationPolicy) -> PolicyId {
         let mut inner = self.inner.borrow_mut();
         let target = policy.target.clone();
-        let room = policy.room;
+        let routing = policy.routing;
 
         let id = inner.policies.insert(policy);
         inner.by_target.entry(target).or_default().push(id);
 
-        if let Some(room) = room {
-            inner.rooms_policies.entry(room).or_default().push(id);
+        if let PolicyRouting::Pinned(room_id) = routing {
+            inner.rooms_policies.entry(room_id).or_default().push(id);
         }
 
         id
@@ -101,10 +101,10 @@ impl NetworkReplicator {
                 .entry(policy.target)
                 .and_modify(|policies| policies.retain(|&id| id != revoked_id));
 
-            if let Some(room) = policy.room {
+            if let PolicyRouting::Pinned(room_id) = policy.routing {
                 inner
                     .rooms_policies
-                    .entry(room)
+                    .entry(room_id)
                     .and_modify(|ids| ids.retain(|&id| id != revoked_id));
             }
         }
@@ -125,31 +125,26 @@ impl NetworkReplicator {
                 PolicyFieldUpdate::Spatial { filter } => {
                     policy.spatial = filter;
                 }
-                PolicyFieldUpdate::Room { id: new_id } => {
-                    if policy.routing == PolicyRouting::DynamicFollow {
+                PolicyFieldUpdate::Room { id: new_id } => match policy.routing {
+                    PolicyRouting::DynamicFollow => {
                         return Err(eyre::eyre!(
                             "Failed to update policy with ID '{:?}': cannot re-route the policy with dynamic follow routing to a new room. to re-route this policy, move the policy target to a new room",
                             updated_id
                         ));
                     }
+                    PolicyRouting::Pinned(old_id) => {
+                        if old_id == new_id {
+                            return Ok(());
+                        }
 
-                    let old_id = policy.room;
-                    if old_id == new_id {
-                        return Ok(());
-                    }
-
-                    if let Some(old_id) = old_id {
                         rooms_policies
                             .entry(old_id)
                             .and_modify(|ids| ids.retain(|&id| id != updated_id));
-                    }
-
-                    if let Some(new_id) = new_id {
                         rooms_policies.entry(new_id).or_default().push(updated_id);
-                    }
 
-                    policy.room = new_id;
-                }
+                        policy.routing = PolicyRouting::Pinned(new_id);
+                    }
+                },
                 PolicyFieldUpdate::Throttle { throttle } => {
                     policy.throttle = throttle;
                 }
@@ -164,10 +159,10 @@ impl NetworkReplicator {
         if let Some(ids) = inner.by_target.remove(target) {
             for removed_id in ids {
                 if let Some(policy) = inner.policies.remove(removed_id) {
-                    if let Some(room) = policy.room {
+                    if let PolicyRouting::Pinned(room_id) = policy.routing {
                         inner
                             .rooms_policies
-                            .entry(room)
+                            .entry(room_id)
                             .and_modify(|ids| ids.retain(|&id| id != removed_id));
                     }
                 }

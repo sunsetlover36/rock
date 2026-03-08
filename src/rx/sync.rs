@@ -10,7 +10,6 @@ use crate::{
             FieldRegistry,
             protocol::{PolicyRouting, ReplicationPolicy, ReplicationTarget, SpatialFilter},
         },
-        plugins::entity::components::Room,
     },
     rx::sync::handle::PolicyHandle,
 };
@@ -89,7 +88,6 @@ impl UserData for RxSync {
         methods.add_method("room", |_, this, name: String| {
             let mut next = this.clone();
             let id = get_str_hash(&name);
-            next.policy.room = Some(id);
 
             // Pin this room to the policy
             next.policy.routing = PolicyRouting::Pinned(id);
@@ -137,24 +135,16 @@ impl UserData for RxSync {
         });
 
         methods.add_method("commit", |lua, this, _: ()| {
-            let mut policy = this.policy.clone();
+            let policy = this.policy.clone();
             let target = policy.target.clone();
 
             match &target {
                 ReplicationTarget::MemoryNode(node) => {
-                    if policy.room == None {
+                    if policy.routing == PolicyRouting::DynamicFollow {
                         return Err(mlua::Error::runtime(format!(
                             "Failed to commit a policy: memory node '{}' requires a target room",
                             node
                         )));
-                    }
-                }
-                ReplicationTarget::Entity(entity) => {
-                    if policy.room == None {
-                        let world = get_app_data::<app_data::World>(lua)?;
-                        if let Ok(room) = world.get::<&Room>(*entity) {
-                            policy.room = Some(room.0.clone());
-                        }
                     }
                 }
                 _ => {}
