@@ -14,7 +14,7 @@ use super::{
 use crate::{
     runtime::{
         app_data, get_str_hash,
-        network_replicator::protocol::ReplicationTarget,
+        network_replicator::{FieldRegistry, protocol::ReplicationTarget},
         plugins::{OnPluginLazy, entity::components::ComponentKey, on::protocol::EventScope},
         utils::{get_app_data, get_app_data_mut},
     },
@@ -75,9 +75,21 @@ impl UserData for EntityBlueprint {
         methods.add_method("custom", |lua, this, table: mlua::Table| {
             let mut next = this.clone();
 
-            for pair in table.pairs::<String, mlua::Value>() {
-                let (key, value) = pair?;
-                next.customs.insert(key, lua.from_value(value)?);
+            if !table.is_empty() {
+                let field_registry = get_app_data::<FieldRegistry>(lua)?;
+                for pair in table.pairs::<String, mlua::Value>() {
+                    let (key, value) = pair?;
+                    if field_registry.is_reserved_field(&key) {
+                        return Err(mlua::Error::runtime(format!(
+                            "Cannot use reserved core component name '{}' in custom fields",
+                            key
+                        )));
+                    }
+
+                    next.customs.insert(key, lua.from_value(value)?);
+                }
+            } else {
+                next.customs = HashMap::new();
             }
 
             Ok(next)
@@ -171,7 +183,7 @@ impl UserData for EntityBlueprint {
             let layers = get_app_data::<app_data::ActiveLayers>(lua)?;
             if let Some(layer_id) = layers.last() {
                 let cleaner = lua.create_function(move |lua, _: ()| {
-                    let _ = get_app_data_mut::<app_data::World>(lua)?.despawn(entity.clone());
+                    let _ = get_app_data_mut::<app_data::World>(lua)?.despawn(entity);
                     Ok(())
                 })?;
 
@@ -187,8 +199,8 @@ impl UserData for EntityBlueprint {
             })
         });
 
-        methods.add_method("sync", |lua, this, _: ()| {
-            Ok(RxSync::new(lua, ReplicationTarget::Blueprint(this.id)))
+        methods.add_method("sync", |_, this, _: ()| {
+            Ok(RxSync::new(ReplicationTarget::Blueprint(this.id)))
         });
     }
 }

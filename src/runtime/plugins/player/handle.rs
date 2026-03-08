@@ -1,6 +1,7 @@
 use mlua::UserData;
 use shared::PlayerKey;
 
+use super::vision::PlayerVision;
 use crate::{
     runtime::{
         GameModeClientCommand, app_data, get_str_hash,
@@ -11,7 +12,7 @@ use crate::{
 };
 
 pub(crate) struct PlayerHandle {
-    pub pk: PlayerKey,
+    pk: PlayerKey,
 }
 impl PlayerHandle {
     pub fn new(pk: PlayerKey) -> Self {
@@ -38,8 +39,8 @@ impl UserData for PlayerHandle {
             Ok(RxSignal::new(SignalScope::Player(this.pk), name))
         });
 
-        methods.add_method("sync", |lua, this, _: ()| {
-            Ok(RxSync::new(lua, ReplicationTarget::Player(this.pk)))
+        methods.add_method("sync", |_, this, _: ()| {
+            Ok(RxSync::new(ReplicationTarget::Player(this.pk)))
         });
 
         methods.add_method("room", |lua, this, name: Option<String>| {
@@ -47,5 +48,7 @@ impl UserData for PlayerHandle {
             get_app_data::<app_data::NetworkReplicator>(lua)?.set_player_room(this.pk, id);
             Ok(())
         });
+
+        methods.add_method("vision", |_, this, _: ()| Ok(PlayerVision::new(this.pk)));
     }
 }

@@ -1,1 +1,4 @@
-pub(crate) type Position = shared::components::Position;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct Position(pub shared::components::Position);

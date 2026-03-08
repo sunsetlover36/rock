@@ -12,7 +12,7 @@ use super::{
 use crate::{
     runtime::{
         app_data, get_str_hash,
-        network_replicator::protocol::ReplicationTarget,
+        network_replicator::{FieldRegistry, protocol::ReplicationTarget},
         plugins::{
             OnPluginLazy,
             on::protocol::{EntityEventData, EventScope, GameModeEvent, GameModeEventData},
@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub(super) struct EntityHandle {
+pub(crate) struct EntityHandle {
     pub entity: hecs::Entity,
     pub blueprint_id: u64,
 }
@@ -38,6 +38,19 @@ impl EntityHandle {
         }
     }
     fn set_custom(&self, lua: &mlua::Lua, table: mlua::Table) -> mlua::Result<()> {
+        if !table.is_empty() {
+            let field_registry = get_app_data::<FieldRegistry>(lua)?;
+            for pair in table.pairs::<String, mlua::Value>() {
+                let (key, _) = pair?;
+                if field_registry.is_reserved_field(&key) {
+                    return Err(mlua::Error::runtime(format!(
+                        "Cannot use reserved core component name '{}' in custom fields",
+                        key
+                    )));
+                }
+            }
+        }
+
         let event_bus = get_app_data::<app_data::EventBus>(lua)?.clone();
         let mut world = get_app_data_mut::<app_data::World>(lua)?;
 
@@ -126,8 +139,8 @@ impl UserData for EntityHandle {
             Ok(get_app_data::<app_data::World>(lua)?.contains(this.entity))
         });
 
-        methods.add_method("sync", |lua, this, _: ()| {
-            Ok(RxSync::new(lua, ReplicationTarget::Entity(this.entity)))
+        methods.add_method("sync", |_, this, _: ()| {
+            Ok(RxSync::new(ReplicationTarget::Entity(this.entity)))
         });
     }
 }

@@ -2,15 +2,15 @@ use std::time::Duration;
 
 use mlua::{LuaSerdeExt, UserData};
 use shared::components::RadialArea;
-use strum::IntoEnumIterator;
 
 use crate::{
     runtime::{
-        app_data, get_app_data, get_str_hash,
-        network_replicator::protocol::{
-            PolicyRouting, ReplicationPolicy, ReplicationTarget, SpatialFilter,
+        app_data, get_app_data, get_app_data_mut, get_str_hash,
+        network_replicator::{
+            FieldRegistry,
+            protocol::{PolicyRouting, ReplicationPolicy, ReplicationTarget, SpatialFilter},
         },
-        plugins::entity::components::{ComponentKey, Room},
+        plugins::entity::components::Room,
     },
     rx::sync::handle::PolicyHandle,
 };
@@ -19,52 +19,44 @@ mod handle;
 
 #[derive(Clone)]
 pub(crate) struct RxSync {
-    component_keys: mlua::Table,
     policy: ReplicationPolicy,
 }
 impl RxSync {
-    // TODO: component keys table is being created each time
-    pub fn new(lua: &mlua::Lua, target: ReplicationTarget) -> mlua::Result<Self> {
+    pub fn new(target: ReplicationTarget) -> mlua::Result<Self> {
         Ok(Self {
-            component_keys: Self::get_component_keys(lua)?,
             policy: ReplicationPolicy::new(target),
         })
     }
 
-    fn get_component_keys(lua: &mlua::Lua) -> mlua::Result<mlua::Table> {
-        let table = lua.create_table()?;
-        for component_key in ComponentKey::iter() {
-            let component_key = component_key.as_ref();
-            table.set(component_key, component_key)?;
+    fn get_fields_mask(&self, lua: &mlua::Lua, table: mlua::Table) -> mlua::Result<u64> {
+        let mut field_registry = get_app_data_mut::<FieldRegistry>(lua)?;
+
+        let mut mask = 0u64;
+        for key in table.sequence_values::<String>() {
+            let key = key?;
+            let bit = field_registry.get_bit_index(&key).map_err(|e| {
+                mlua::Error::runtime(format!("Failed to get a bit index of key '{}': {}", key, e))
+            })?;
+
+            mask |= 1 << bit;
         }
 
-        Ok(table)
-    }
-
-    fn get_fields_from_table(&self, table: mlua::Table) -> mlua::Result<Vec<String>> {
-        table
-            .sequence_values::<String>()
-            .try_fold(Vec::new(), |mut fields, key| {
-                fields.push(key?);
-                Ok(fields)
-            })
+        Ok(mask)
     }
 }
 impl UserData for RxSync {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("only", |_, this, arg: mlua::Value| {
-            if !this.policy.hidden_fields.is_empty() {
-                return Err(mlua::Error::runtime("Cannot apply both `:hide()` and `:only()` policies at the same time"));
-            }
-
+        methods.add_method("only", |lua, this, arg: mlua::Value| {
             let mut next = this.clone();
+
             match arg {
                mlua::Value::Table(table) => {
-                   next.policy.only_fields.extend(this.get_fields_from_table(table)?);
+                   next.policy.fields_mask = this.get_fields_mask(lua, table)?;
                }
                mlua::Value::Function(func) => {
-                   let table: mlua::Table = func.call(this.component_keys.clone())?;
-                   next.policy.only_fields.extend(this.get_fields_from_table(table)?);
+                   let component_keys = get_app_data::<FieldRegistry>(lua)?.get_component_keys();
+                   let table: mlua::Table = func.call(component_keys)?;
+                   next.policy.fields_mask = this.get_fields_mask(lua, table)?;
                }
                _ => {
                    return Err(mlua::Error::runtime("Failed to call `:only()`: unknown argument type, expected a table or a function"));
@@ -74,19 +66,17 @@ impl UserData for RxSync {
             Ok(next)
         });
 
-        methods.add_method("hide", |_, this, arg: mlua::Value| {
-            if !this.policy.only_fields.is_empty() {
-                return Err(mlua::Error::runtime("Cannot apply both `:only()` and `:hide()` policies at the same time"));
-            }
-
+        methods.add_method("hide", |lua, this, arg: mlua::Value| {
             let mut next = this.clone();
+
             match arg {
                mlua::Value::Table(table) => {
-                   next.policy.hidden_fields.extend(this.get_fields_from_table(table)?);
+                   next.policy.fields_mask &= !this.get_fields_mask(lua, table)?;
                }
                mlua::Value::Function(func) => {
-                   let table: mlua::Table = func.call(this.component_keys.clone())?;
-                   next.policy.hidden_fields.extend(this.get_fields_from_table(table)?);
+                   let component_keys = get_app_data::<FieldRegistry>(lua)?.get_component_keys();
+                   let table: mlua::Table = func.call(component_keys)?;
+                   next.policy.fields_mask &= !this.get_fields_mask(lua, table)?;
                }
                _ => {
                    return Err(mlua::Error::runtime("Failed to call `:hide()`: unknown argument type, expected a table or a function"));
@@ -107,31 +97,36 @@ impl UserData for RxSync {
             Ok(next)
         });
 
-        methods.add_method("radius", |_, this, radius: u32| {
+        methods.add_method("radius", |_, this, radius: f32| {
             match this.policy.target {
                 ReplicationTarget::MemoryNode(_) => {
                     return Err(mlua::Error::runtime(
                         "Cannot apply `:radius()` to a memory node",
                     ));
                 }
+                ReplicationTarget::Player(_) => {
+                    return Err(mlua::Error::runtime(
+                        "Cannot apply `:radius()` to a player session. Create an entity owned by the player instead",
+                    ));
+                }
                 _ => {}
             }
 
             let mut next = this.clone();
-            next.policy.spatial = Some(SpatialFilter::Radius(radius));
+            next.policy.spatial = SpatialFilter::Radius(radius);
             Ok(next)
         });
 
         methods.add_method("area", |lua, this, area: mlua::Value| {
             let area: RadialArea = lua.from_value(area)?;
             let mut next = this.clone();
-            next.policy.spatial = Some(SpatialFilter::Area(area));
+            next.policy.spatial = SpatialFilter::Area(area);
             Ok(next)
         });
 
         methods.add_method("global", |_, this, _: ()| {
             let mut next = this.clone();
-            next.policy.spatial = None;
+            next.policy.spatial = SpatialFilter::Global;
             Ok(next)
         });
 
@@ -157,7 +152,7 @@ impl UserData for RxSync {
                 ReplicationTarget::Entity(entity) => {
                     if policy.room == None {
                         let world = get_app_data::<app_data::World>(lua)?;
-                        if let Ok(room) = world.get::<&Room>(entity.clone()) {
+                        if let Ok(room) = world.get::<&Room>(*entity) {
                             policy.room = Some(room.0.clone());
                         }
                     }

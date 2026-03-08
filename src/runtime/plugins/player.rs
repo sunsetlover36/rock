@@ -5,11 +5,13 @@ use shared::{PlayerId, PlayerKey};
 use super::protocol::{AsyncTask, GameModePlugin, PluginName};
 use crate::runtime::{app_data, utils::get_app_data};
 
+mod broadcast_rx;
+use broadcast_rx::BroadcastRx;
+
 mod handle;
 pub(crate) use handle::PlayerHandle;
 
-mod broadcast_rx;
-use broadcast_rx::BroadcastRx;
+mod vision;
 
 pub(crate) struct PlayerPlugin {}
 impl GameModePlugin for PlayerPlugin {

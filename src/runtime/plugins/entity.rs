@@ -9,7 +9,10 @@ pub(crate) use {blueprint::BlueprintId, blueprint::EntityBlueprint};
 pub(crate) mod components;
 
 mod event_descriptors;
+
 mod handle;
+pub(crate) use handle::EntityHandle;
+
 mod macros;
 
 mod rx;

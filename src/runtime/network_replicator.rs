@@ -1,3 +1,9 @@
+use color_eyre::eyre;
+use shared::{
+    PlayerKey, WorldSnapshot,
+    components::{RadialArea, Vector2D},
+};
+use slotmap::{SlotMap, new_key_type};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -5,18 +11,21 @@ use std::{
 };
 
 pub mod protocol;
-use color_eyre::eyre;
 use protocol::*;
-use shared::PlayerKey;
-use slotmap::{SlotMap, new_key_type};
+
+mod field_registry;
+pub(crate) use field_registry::FieldRegistry;
 
 use crate::runtime::{
-    GameModeClientApi, LuaResultExt, app_data, get_app_data, plugins::entity::components::Blueprint,
+    GameModeClientApi, LuaResultExt, app_data, get_app_data,
+    plugins::entity::components::{Blueprint, Position, Room},
 };
 
 new_key_type! {
     pub(crate) struct PolicyId;
 }
+
+type PlayerAnchors = HashMap<PlayerKey, HashSet<hecs::Entity>>;
 
 struct NetworkReplicatorInner {
     entities: HashMap<hecs::Entity, HashSet<EntityDirtyComponent>>,
@@ -24,7 +33,9 @@ struct NetworkReplicatorInner {
     policies: SlotMap<PolicyId, ReplicationPolicy>,
     by_target: HashMap<ReplicationTarget, Vec<PolicyId>>,
     rooms_policies: HashMap<RoomId, Vec<PolicyId>>,
-    player_rooms: HashMap<PlayerKey, RoomId>,
+    player_to_room: HashMap<PlayerKey, RoomId>,
+    room_to_players: HashMap<RoomId, Vec<PlayerKey>>,
+    player_anchors: PlayerAnchors,
     entities_snapshots: HashMap<PlayerKey, HashSet<hecs::Entity>>,
     signals: Vec<PendingSignal>,
     client_api: Arc<dyn GameModeClientApi>,
@@ -42,7 +53,9 @@ impl NetworkReplicator {
                 policies: SlotMap::<PolicyId, ReplicationPolicy>::with_key(),
                 by_target: HashMap::new(),
                 rooms_policies: HashMap::new(),
-                player_rooms: HashMap::new(),
+                player_to_room: HashMap::new(),
+                room_to_players: HashMap::new(),
+                player_anchors: HashMap::new(),
                 entities_snapshots: HashMap::new(),
                 signals: Vec::new(),
                 client_api,
@@ -96,8 +109,11 @@ impl NetworkReplicator {
             }
         }
     }
-
-    pub fn update_policy(&self, updated_id: PolicyId, field: PolicyFieldUpdate) {
+    pub fn update_policy(
+        &self,
+        updated_id: PolicyId,
+        field: PolicyFieldUpdate,
+    ) -> eyre::Result<()> {
         let NetworkReplicatorInner {
             policies,
             rooms_policies,
@@ -110,9 +126,16 @@ impl NetworkReplicator {
                     policy.spatial = filter;
                 }
                 PolicyFieldUpdate::Room { id: new_id } => {
+                    if policy.routing == PolicyRouting::DynamicFollow {
+                        return Err(eyre::eyre!(
+                            "Failed to update policy with ID '{:?}': cannot re-route the policy with dynamic follow routing to a new room. to re-route this policy, move the policy target to a new room",
+                            updated_id
+                        ));
+                    }
+
                     let old_id = policy.room;
                     if old_id == new_id {
-                        return;
+                        return Ok(());
                     }
 
                     if let Some(old_id) = old_id {
@@ -132,6 +155,8 @@ impl NetworkReplicator {
                 }
             }
         }
+
+        Ok(())
     }
 
     pub fn stop_replication(&self, target: &ReplicationTarget) {
@@ -150,42 +175,207 @@ impl NetworkReplicator {
         }
     }
 
+    pub fn add_player_anchor(&self, pk: PlayerKey, anchor: hecs::Entity) {
+        self.inner
+            .borrow_mut()
+            .player_anchors
+            .entry(pk)
+            .or_default()
+            .insert(anchor);
+    }
+    pub fn remove_player_anchor(&self, pk: PlayerKey, anchor: hecs::Entity) {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(anchors) = inner.player_anchors.get_mut(&pk) {
+            anchors.retain(|&e| e != anchor);
+        }
+    }
+    pub fn clear_player_anchors(&self, pk: PlayerKey) {
+        self.inner.borrow_mut().player_anchors.remove(&pk);
+    }
     pub fn set_player_room(&self, pk: PlayerKey, id: Option<RoomId>) {
         let mut inner = self.inner.borrow_mut();
 
+        if let Some(&old_room_id) = inner.player_to_room.get(&pk) {
+            inner
+                .room_to_players
+                .entry(old_room_id)
+                .and_modify(|players| players.retain(|&p| p != pk));
+        }
         match id {
             Some(id) => {
-                inner.player_rooms.insert(pk, id);
+                inner.player_to_room.insert(pk, id);
+                inner.room_to_players.entry(id).or_default().push(pk);
                 inner.entities_snapshots.entry(pk).or_default().clear();
             }
             None => {
-                inner.player_rooms.remove(&pk);
+                inner.player_to_room.remove(&pk);
                 inner.entities_snapshots.remove(&pk);
             }
         }
     }
 
-    pub fn process(&self, lua: &mlua::Lua) -> eyre::Result<()> {
+    fn merge_masks_within_area(
+        &self,
+        room_id: RoomId,
+        policy: &ReplicationPolicy,
+        world: &hecs::World,
+        room_players: &Vec<PlayerKey>,
+        area: RadialArea,
+        room_masks: &mut HashMap<PlayerKey, u64>,
+    ) -> PlayerAnchors {
         let inner = self.inner.borrow();
-        let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
 
-        for (entity, components) in inner.entities.iter() {
-            let entity = entity.clone();
-            let blueprint_id = world.get::<&Blueprint>(entity).ok().map(|b| b.0);
+        let radius_sq = area.radius * area.radius;
+        let mut lost_anchors: HashMap<PlayerKey, HashSet<hecs::Entity>> = HashMap::new();
 
-            let blueprint_policies =
-                blueprint_id.and_then(|id| inner.by_target.get(&ReplicationTarget::Blueprint(id)));
-            let entity_policies = inner
-                .by_target
-                .get(&ReplicationTarget::Entity(entity.clone()));
+        for &pk in room_players {
+            if let Some(anchors) = inner.player_anchors.get(&pk) {
+                let mut is_visible = false;
+                for &anchor in anchors {
+                    if is_visible {
+                        break;
+                    }
 
-            let policies = blueprint_policies.into_iter().concat();
+                    let mut query = world.query_one::<(&Room, &Position)>(anchor);
+                    if let Ok((room_comp, pos_comp)) = query.get() {
+                        if room_comp.0 != room_id {
+                            continue;
+                        }
+
+                        let anchor_pos = &pos_comp.0;
+                        if area.position.distance_squared(anchor_pos) <= radius_sq {
+                            is_visible = true;
+                        }
+                    } else {
+                        lost_anchors.entry(pk).or_default().insert(anchor);
+                    }
+                }
+
+                if is_visible {
+                    *room_masks.entry(pk).or_default() |= policy.fields_mask;
+                }
+            }
         }
 
-        {
-            let mut inner = self.inner.borrow_mut();
-            inner.entities.clear();
-            inner.memory.clear();
+        lost_anchors
+    }
+    fn apply_spatial_filter_for_room(
+        &self,
+        room_id: RoomId,
+        policy: &ReplicationPolicy,
+        world: &hecs::World,
+        entity_pos: Vector2D,
+        fields_masks: &mut HashMap<RoomId, HashMap<PlayerKey, u64>>,
+    ) -> Option<PlayerAnchors> {
+        let inner = self.inner.borrow();
+
+        if let Some(room_players) = inner.room_to_players.get(&room_id) {
+            let room_masks = fields_masks.entry(room_id).or_default();
+            match policy.spatial {
+                SpatialFilter::Global => {
+                    for &pk in room_players {
+                        *room_masks.entry(pk).or_default() |= policy.fields_mask;
+                    }
+
+                    None
+                }
+                SpatialFilter::Radius(radius) => Some(self.merge_masks_within_area(
+                    room_id,
+                    policy,
+                    world,
+                    room_players,
+                    RadialArea {
+                        position: entity_pos,
+                        radius,
+                    },
+                    room_masks,
+                )),
+                SpatialFilter::Area(area) => Some(self.merge_masks_within_area(
+                    room_id,
+                    policy,
+                    world,
+                    room_players,
+                    area,
+                    room_masks,
+                )),
+            }
+        } else {
+            None
+        }
+    }
+    pub fn process(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
+        let lost_anchors = {
+            let inner = self.inner.borrow();
+            let world =
+                get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
+
+            let mut snapshots: HashMap<RoomId, HashMap<PlayerKey, WorldSnapshot>> = HashMap::new();
+            let mut lost_anchors: HashMap<PlayerKey, HashSet<hecs::Entity>> = HashMap::new();
+
+            for (&entity, dirty_components) in inner.entities.iter() {
+                let mut query = world.query_one::<(&Room, &Blueprint, &Position)>(entity);
+                if let Ok((room_comp, blueprint_comp, pos_comp)) = query.get() {
+                    let room_id = room_comp.0;
+                    let blueprint_id = blueprint_comp.0;
+                    let entity_pos = pos_comp.0;
+
+                    let blueprint_policy_ids = inner
+                        .by_target
+                        .get(&ReplicationTarget::Blueprint(blueprint_id));
+                    let entity_policy_ids = inner.by_target.get(&ReplicationTarget::Entity(entity));
+
+                    let policy_ids = blueprint_policy_ids
+                        .into_iter()
+                        .flatten()
+                        .chain(entity_policy_ids.into_iter().flatten());
+
+                    let mut fields_masks: HashMap<RoomId, HashMap<PlayerKey, u64>> = HashMap::new();
+                    for &policy_id in policy_ids {
+                        if let Some(policy) = inner.policies.get(policy_id) {
+                            let recently_lost_anchors: Option<PlayerAnchors>;
+                            match policy.routing {
+                                PolicyRouting::DynamicFollow => {
+                                    recently_lost_anchors = self.apply_spatial_filter_for_room(
+                                        room_id,
+                                        policy,
+                                        &*world,
+                                        entity_pos,
+                                        &mut fields_masks,
+                                    );
+                                }
+                                PolicyRouting::Pinned(pinned_room_id) => {
+                                    recently_lost_anchors = self.apply_spatial_filter_for_room(
+                                        pinned_room_id,
+                                        policy,
+                                        &*world,
+                                        entity_pos,
+                                        &mut fields_masks,
+                                    );
+                                }
+                            }
+
+                            if let Some(anchors) = recently_lost_anchors {
+                                for (pk, lost) in anchors {
+                                    lost_anchors.entry(pk).or_default().extend(lost);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            lost_anchors
+        };
+
+        // Cleanup
+        let mut inner = self.inner.borrow_mut();
+        inner.entities.clear();
+        inner.memory.clear();
+        for (pk, lost) in lost_anchors {
+            inner
+                .player_anchors
+                .entry(pk)
+                .and_modify(|anchors| anchors.retain(|anchor| !lost.contains(anchor)));
         }
 
         Ok(())

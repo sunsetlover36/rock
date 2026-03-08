@@ -7,10 +7,10 @@ use crate::runtime::plugins::entity::{
     components::{ComponentKey, CustomDataComponent},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum SpatialFilter {
     Global,
-    Radius(u32),
+    Radius(f32),
     Area(RadialArea),
 }
 
@@ -48,22 +48,19 @@ pub(crate) enum PolicyRouting {
 pub(crate) struct ReplicationPolicy {
     pub target: ReplicationTarget,
     pub routing: PolicyRouting,
-    pub only_fields: Vec<String>,
-    pub hidden_fields: Vec<String>,
+    pub fields_mask: u64,
     pub room: Option<RoomId>,
-    pub spatial: Option<SpatialFilter>,
+    pub spatial: SpatialFilter,
     pub throttle: Option<Duration>,
 }
 impl ReplicationPolicy {
     pub fn new(target: ReplicationTarget) -> Self {
         Self {
             target,
-            // Policy automatically follows any room given to its target
             routing: PolicyRouting::DynamicFollow,
-            only_fields: Vec::new(),
-            hidden_fields: Vec::new(),
+            fields_mask: u64::MAX,
             room: None,
-            spatial: None,
+            spatial: SpatialFilter::Global,
             throttle: None,
         }
     }
@@ -71,7 +68,7 @@ impl ReplicationPolicy {
 
 #[derive(Debug, Clone)]
 pub(crate) enum PolicyFieldUpdate {
-    Spatial { filter: Option<SpatialFilter> },
+    Spatial { filter: SpatialFilter },
     Room { id: Option<RoomId> },
     Throttle { throttle: Option<Duration> },
 }

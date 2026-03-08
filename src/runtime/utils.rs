@@ -14,6 +14,17 @@ impl<T> LuaResultExt for Result<T, mlua::Error> {
     }
 }
 
+pub trait EyreResultExt {
+    type Ok;
+    fn wrap_eyre_err(self) -> mlua::Result<Self::Ok>;
+}
+impl<T> EyreResultExt for eyre::Result<T, eyre::Report> {
+    type Ok = T;
+    fn wrap_eyre_err(self) -> mlua::Result<T> {
+        self.map_err(|report| mlua::Error::runtime(report.to_string()))
+    }
+}
+
 pub fn get_app_data<'lua, T>(lua: &'lua mlua::Lua) -> mlua::Result<mlua::AppDataRef<'lua, T>>
 where
     T: 'static,

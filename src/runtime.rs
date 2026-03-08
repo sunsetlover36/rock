@@ -13,6 +13,7 @@ use smallvec::smallvec;
 use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
+    runtime::network_replicator::FieldRegistry,
     world::{WorldNatives, WorldState},
 };
 
@@ -104,6 +105,8 @@ impl Runtime {
         lua.set_app_data::<app_data::ClientApi>(client_api.clone());
         lua.set_app_data::<app_data::TimerManager>(timer_manager.clone());
         lua.set_app_data::<app_data::NetworkReplicator>(network_replicator.clone());
+        // TODO: should i get rid of app_data prefix everywhere?
+        lua.set_app_data::<FieldRegistry>(FieldRegistry::new(&lua)?);
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
