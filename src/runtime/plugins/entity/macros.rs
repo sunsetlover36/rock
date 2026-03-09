@@ -71,8 +71,8 @@ macro_rules! add_handle_methods {
                     )),
                 });
 
-                let replicator = get_app_data::<app_data::NetworkReplicator>(lua)?;
-                replicator.mark_update(ReplicationMark::Entity {
+                let replicator_tx = get_app_data::<app_data::ReplicatorMarkTx>(lua)?;
+                let _ = replicator_tx.0.send(ReplicationMark::Entity {
                     id: this.entity,
                     component: EntityDirtyComponent::Core(ComponentData::$variant(comp_data)),
                 });

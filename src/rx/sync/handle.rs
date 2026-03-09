@@ -5,10 +5,7 @@ use shared::components::RadialArea;
 
 use crate::runtime::{
     EyreResultExt, app_data, get_app_data, get_str_hash,
-    network_replicator::{
-        PolicyId,
-        protocol::{PolicyFieldUpdate, ReplicationTarget, SpatialFilter},
-    },
+    network_replicator::protocol::{PolicyFieldUpdate, PolicyId, ReplicationTarget, SpatialFilter},
 };
 
 pub(super) struct PolicyHandle {

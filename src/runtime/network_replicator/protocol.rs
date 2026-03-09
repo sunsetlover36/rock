@@ -1,11 +1,13 @@
 use std::time::Duration;
 
-use shared::{
-    PlayerKey,
-    components::{self, RadialArea},
-};
+use shared::{PlayerKey, components::RadialArea};
+use slotmap::new_key_type;
 
 use crate::runtime::plugins::entity::{BlueprintId, components::ComponentData};
+
+new_key_type! {
+    pub(crate) struct PolicyId;
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SpatialFilter {
@@ -19,7 +21,7 @@ pub(crate) type RoomId = u64;
 #[derive(Debug, Clone)]
 pub(crate) enum EntityDirtyComponent {
     Core(ComponentData),
-    Custom(mlua::Table),
+    Custom,
 }
 
 pub(crate) enum ReplicationMark {
@@ -28,7 +30,7 @@ pub(crate) enum ReplicationMark {
         component: EntityDirtyComponent,
     },
     Memory {
-        node: String,
+        key: String,
         value: serde_json::Value,
     },
 }

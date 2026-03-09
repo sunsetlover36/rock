@@ -107,6 +107,9 @@ impl Runtime {
         lua.set_app_data::<app_data::ClientApi>(client_api.clone());
         lua.set_app_data::<app_data::TimerManager>(timer_manager.clone());
         lua.set_app_data::<app_data::NetworkReplicator>(replicator.clone());
+        lua.set_app_data::<app_data::ReplicatorMarkTx>(app_data::ReplicatorMarkTx(
+            replicator.get_mark_tx(),
+        ));
         // TODO: should i get rid of app_data prefix everywhere?
         lua.set_app_data::<FieldRegistry>(FieldRegistry::new(&lua)?);
         lua.set_app_data::<app_data::EntityCustoms>(HashMap::new());

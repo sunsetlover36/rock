@@ -63,10 +63,10 @@ impl EntityHandle {
             data: GameModeEventData::Entity(EntityEventData::CustomDataUpdate(table.clone())),
         });
 
-        let replicator = get_app_data::<app_data::NetworkReplicator>(lua)?;
-        replicator.mark_update(ReplicationMark::Entity {
+        let replicator_tx = get_app_data::<app_data::ReplicatorMarkTx>(lua)?;
+        let _ = replicator_tx.0.send(ReplicationMark::Entity {
             id: self.entity,
-            component: EntityDirtyComponent::Custom(table),
+            component: EntityDirtyComponent::Custom,
         });
 
         Ok(())

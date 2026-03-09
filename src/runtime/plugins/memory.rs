@@ -8,7 +8,15 @@ use super::{
     Yielder,
     protocol::{AsyncTask, AsyncTaskResult, GameModePlugin, PluginName},
 };
-use crate::{meta_db::MetaDb, runtime::utils::LuaResultExt};
+use crate::{
+    meta_db::MetaDb,
+    runtime::{
+        app_data, get_app_data,
+        network_replicator::protocol::{ReplicationMark, ReplicationTarget},
+        utils::LuaResultExt,
+    },
+    rx::RxSync,
+};
 
 #[derive(Debug, Clone, Copy, EnumString, Display, AsRefStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
@@ -45,6 +53,11 @@ impl GameModePlugin for MemoryPlugin {
             Ok(v)
         })?;
         table.set("peek", peek_fn)?;
+
+        let node_fn = lua.create_function(|_, key: String| {
+            Ok(RxSync::new(ReplicationTarget::MemoryNode(key)))
+        })?;
+        table.set("node", node_fn)?;
 
         Ok(Some(table))
     }
@@ -83,6 +96,11 @@ impl GameModePlugin for MemoryPlugin {
         let plugin_name = self.name();
         let meta_db = self.meta_db.clone();
 
+        let replicator_tx = get_app_data::<app_data::ReplicatorMarkTx>(lua)
+            .wrap_err("App data is not initialized")?
+            .0
+            .clone();
+
         let op =
             MemoryOp::from_str(op).wrap_err_with(|| format!("Unknown memory plugin op: {}", op))?;
         match op {
@@ -91,16 +109,20 @@ impl GameModePlugin for MemoryPlugin {
                     .get(1)
                     .wrap_err(&format!("{}.recall: missing argument `key`", plugin_name))?;
                 let future = Box::pin(async move {
-                    let res = if key.ends_with("/") {
+                    let (value, changed) = if key.ends_with("/") {
                         meta_db.get_or_ensure_prefix(&key).await?
                     } else {
                         meta_db.get_or_ensure_key(&key).await?
                     };
 
-                    Ok(match res {
-                        Some(v) => AsyncTaskResult::JsonValue(v),
-                        None => AsyncTaskResult::Nil,
-                    })
+                    if changed {
+                        let _ = replicator_tx.send(ReplicationMark::Memory {
+                            key,
+                            value: value.clone(),
+                        });
+                    }
+
+                    Ok(AsyncTaskResult::JsonValue(value))
                 });
 
                 Ok(Some(future))
@@ -110,16 +132,20 @@ impl GameModePlugin for MemoryPlugin {
                     .get(1)
                     .wrap_err(&format!("{}.fetch: missing argument `key`", plugin_name))?;
                 let future = Box::pin(async move {
-                    let res = if key.ends_with("/") {
+                    let (value, changed) = if key.ends_with("/") {
                         meta_db.ensure_prefix(&key).await?
                     } else {
                         meta_db.ensure_key(&key).await?
                     };
 
-                    Ok(match res {
-                        Some(v) => AsyncTaskResult::JsonValue(v),
-                        None => AsyncTaskResult::Nil,
-                    })
+                    if changed {
+                        let _ = replicator_tx.send(ReplicationMark::Memory {
+                            key,
+                            value: value.clone(),
+                        });
+                    }
+
+                    Ok(AsyncTaskResult::JsonValue(value))
                 });
 
                 Ok(Some(future))
@@ -139,21 +165,18 @@ impl GameModePlugin for MemoryPlugin {
                     )));
                 }
 
-                let value: Option<serde_json::Value> = lua.from_value(value).wrap_err(&format!(
+                let value: serde_json::Value = lua.from_value(value).wrap_err(&format!(
                     "{}.store: failed to parse an invalid JSON",
                     plugin_name
                 ))?;
 
                 let future = Box::pin(async move {
                     if key.ends_with("/") {
-                        match value {
-                            Some(v) => {
-                                meta_db.update_prefix(&key, v).await?;
-                            }
-                            None => {}
-                        }
+                        meta_db.update_prefix(&key, value.clone()).await?;
+                        let _ = replicator_tx.send(ReplicationMark::Memory { key, value });
                     } else {
-                        meta_db.update_key(&key, value).await?;
+                        meta_db.update_key(&key, Some(value.clone())).await?;
+                        let _ = replicator_tx.send(ReplicationMark::Memory { key, value });
                     }
 
                     Ok(AsyncTaskResult::Nil)
@@ -170,8 +193,13 @@ impl GameModePlugin for MemoryPlugin {
                     if key.ends_with("/") {
                         meta_db.delete_prefix(&key).await?;
                     } else {
-                        meta_db.update_key(&key, None).await?;
+                        meta_db.delete_key(&key).await?;
                     }
+
+                    let _ = replicator_tx.send(ReplicationMark::Memory {
+                        key,
+                        value: serde_json::Value::Null,
+                    });
 
                     Ok(AsyncTaskResult::Nil)
                 });

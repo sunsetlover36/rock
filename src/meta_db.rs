@@ -14,21 +14,15 @@ use json::insert_nested;
 #[derive(Debug, Clone)]
 pub enum MetaValue {
     Missing,
-    Stale(Option<JsonValue>),
-    Fresh(Option<JsonValue>),
+    Stale(JsonValue),
+    Fresh(JsonValue),
 }
 impl IntoLua for MetaValue {
     fn into_lua(self, lua: &Lua) -> mlua::Result<mlua::Value> {
         match self {
             MetaValue::Missing => Ok(mlua::Value::Nil),
-            MetaValue::Stale(v) => Ok(match v {
-                Some(v) => json_to_lua(lua, v)?,
-                None => mlua::Value::Nil,
-            }),
-            MetaValue::Fresh(v) => Ok(match v {
-                Some(v) => json_to_lua(lua, v)?,
-                None => mlua::Value::Nil,
-            }),
+            MetaValue::Stale(v) => Ok(json_to_lua(lua, v)?),
+            MetaValue::Fresh(v) => Ok(json_to_lua(lua, v)?),
         }
     }
 }
@@ -139,13 +133,14 @@ impl MetaDb {
             if map.is_empty() {
                 Ok(MetaValue::Missing)
             } else {
-                Ok(MetaValue::Fresh(Some(JsonValue::Object(map))))
+                Ok(MetaValue::Fresh(JsonValue::Object(map)))
             }
         } else {
             let entry = match self.cache.get(key) {
                 Some(v) => v.clone(),
                 None => return Ok(MetaValue::Missing),
             };
+            let value = entry.value.unwrap_or(JsonValue::Null);
 
             let is_stale = entry
                 .updated_at
@@ -153,33 +148,41 @@ impl MetaDb {
                 .map(|expires_at| SystemTime::now() > expires_at)
                 .unwrap_or(true);
             if is_stale {
-                return Ok(MetaValue::Stale(entry.value));
+                return Ok(MetaValue::Stale(value));
             }
 
-            Ok(MetaValue::Fresh(entry.value))
+            Ok(MetaValue::Fresh(value))
         }
     }
 
-    fn update_cache(&self, key: &str, value: Option<JsonValue>) {
+    fn update_cache(&self, key: &str, new_value: Option<JsonValue>) -> bool {
         let now = SystemTime::now();
 
         match self.cache.entry(key.to_owned()) {
             dashmap::Entry::Occupied(mut e) => {
                 let entry = e.get_mut();
+                let changed = new_value == entry.value;
+
                 entry.updated_at = now;
-                entry.value = value;
+                entry.value = new_value;
+
+                changed
             }
             dashmap::Entry::Vacant(e) => {
+                let changed = new_value.is_some();
+
                 e.insert(MetaEntry {
                     ttl: self.config.default_ttl,
                     updated_at: now,
-                    value,
+                    value: new_value,
                 });
+
+                changed
             }
         }
     }
 
-    pub async fn ensure_key(&self, key: &str) -> Result<Option<JsonValue>, MetaDbError> {
+    pub async fn ensure_key(&self, key: &str) -> Result<(JsonValue, bool), MetaDbError> {
         self.validate_key(key)?;
 
         let raw_str: Option<String> =
@@ -192,20 +195,20 @@ impl MetaDb {
 
         match raw_str {
             Some(raw_str) => {
-                let json_value: Option<JsonValue> =
-                    Some(serde_json::from_str(&raw_str).map_err(MetaDbError::InvalidJson)?);
+                let json_value: JsonValue =
+                    serde_json::from_str(&raw_str).map_err(MetaDbError::InvalidJson)?;
 
-                self.update_cache(key, json_value.clone());
-                Ok(json_value.clone())
+                let changed = self.update_cache(key, Some(json_value.clone()));
+                Ok((json_value.clone(), changed))
             }
             None => {
-                self.update_cache(key, None);
-                Ok(None)
+                let changed = self.update_cache(key, None);
+                Ok((serde_json::Value::Null, changed))
             }
         }
     }
 
-    pub async fn ensure_prefix(&self, prefix: &str) -> Result<Option<JsonValue>, MetaDbError> {
+    pub async fn ensure_prefix(&self, prefix: &str) -> Result<(JsonValue, bool), MetaDbError> {
         self.validate_prefix(prefix)?;
 
         let rows =
@@ -234,32 +237,32 @@ impl MetaDb {
         }
 
         if map.is_empty() {
-            self.update_cache(prefix, None);
-            Ok(None)
+            let changed = self.update_cache(prefix, None);
+            Ok((serde_json::Value::Null, changed))
         } else {
             let json_map = JsonValue::Object(map);
-            self.update_cache(prefix, Some(json_map.clone()));
-            Ok(Some(json_map))
+            let changed = self.update_cache(prefix, Some(json_map.clone()));
+            Ok((json_map, changed))
         }
     }
 
-    pub async fn get_or_ensure_key(&self, key: &str) -> Result<Option<JsonValue>, MetaDbError> {
+    pub async fn get_or_ensure_key(&self, key: &str) -> Result<(JsonValue, bool), MetaDbError> {
         self.validate_key(key)?;
 
         match self.get(key)? {
             MetaValue::Missing | MetaValue::Stale(_) => self.ensure_key(key).await,
-            MetaValue::Fresh(v) => Ok(v),
+            MetaValue::Fresh(v) => Ok((v, false)),
         }
     }
     pub async fn get_or_ensure_prefix(
         &self,
         prefix: &str,
-    ) -> Result<Option<JsonValue>, MetaDbError> {
+    ) -> Result<(JsonValue, bool), MetaDbError> {
         self.validate_prefix(prefix)?;
 
         match self.get(&prefix)? {
             MetaValue::Missing | MetaValue::Stale(_) => self.ensure_prefix(&prefix).await,
-            MetaValue::Fresh(v) => Ok(v),
+            MetaValue::Fresh(v) => Ok((v, false)),
         }
     }
 
@@ -313,6 +316,17 @@ impl MetaDb {
         Ok(())
     }
 
+    pub async fn delete_key(&self, key: &str) -> Result<(), MetaDbError> {
+        sqlx::query("DELETE FROM meta_kv WHERE mode_id = ? AND key = ?")
+            .bind(self.config.mode_id.clone())
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .map_err(MetaDbError::Db)?;
+        self.cache.remove(key);
+
+        Ok(())
+    }
     pub async fn delete_prefix(&self, prefix: &str) -> Result<(), MetaDbError> {
         self.validate_prefix(prefix)?;
 

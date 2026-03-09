@@ -4,7 +4,7 @@ use shared::{
     EntityData, PlayerKey, WorldSnapshot,
     components::{RadialArea, Vector2D},
 };
-use slotmap::{SlotMap, new_key_type};
+use slotmap::SlotMap;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -21,10 +21,6 @@ use crate::runtime::{
     GameModeClientApi, LuaResultExt, app_data, get_app_data, get_app_data_mut,
     plugins::entity::components::{Blueprint, ComponentData, ComponentKey, Position, Room},
 };
-
-new_key_type! {
-    pub(crate) struct PolicyId;
-}
 
 type PlayerAnchors = HashMap<PlayerKey, HashSet<hecs::Entity>>;
 
@@ -47,9 +43,13 @@ struct NetworkReplicatorInner {
 
 pub(crate) struct NetworkReplicator {
     inner: RefCell<NetworkReplicatorInner>,
+    mark_tx: flume::Sender<ReplicationMark>,
+    mark_rx: flume::Receiver<ReplicationMark>,
 }
 impl NetworkReplicator {
     pub fn new(client_api: Arc<dyn GameModeClientApi>) -> Self {
+        let (mark_tx, mark_rx) = flume::unbounded::<ReplicationMark>();
+
         Self {
             inner: RefCell::new(NetworkReplicatorInner {
                 entities: HashMap::new(),
@@ -64,21 +64,27 @@ impl NetworkReplicator {
                 signals: Vec::new(),
                 client_api,
             }),
+            mark_tx,
+            mark_rx,
         }
+    }
+
+    pub fn get_mark_tx(&self) -> flume::Sender<ReplicationMark> {
+        self.mark_tx.clone()
     }
 
     pub fn schedule_signal(&self, signal: PendingSignal) {
         self.inner.borrow_mut().signals.push(signal);
     }
 
-    pub fn mark_update(&self, mark: ReplicationMark) {
+    fn mark_update(&self, mark: ReplicationMark) {
         let mut inner = self.inner.borrow_mut();
         match mark {
             ReplicationMark::Entity { id, component } => {
                 inner.entities.entry(id).or_default().push(component);
             }
-            ReplicationMark::Memory { node, value } => {
-                inner.memory.insert(node, value);
+            ReplicationMark::Memory { key, value } => {
+                inner.memory.insert(key, value);
             }
         }
     }
@@ -303,6 +309,10 @@ impl NetworkReplicator {
 
     // Replicate changes
     pub fn replicate(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
+        while let Ok(mark) = self.mark_rx.try_recv() {
+            self.mark_update(mark);
+        }
+
         let lost_anchors = {
             let inner = self.inner.borrow();
 
@@ -313,6 +323,8 @@ impl NetworkReplicator {
 
             let mut snapshots: HashMap<RoomId, HashMap<PlayerKey, WorldSnapshot>> = HashMap::new();
             let mut lost_anchors: HashMap<PlayerKey, HashSet<hecs::Entity>> = HashMap::new();
+            let entity_customs = get_app_data::<app_data::EntityCustoms>(lua)
+                .wrap_err("App data is not initialized")?;
 
             for (&entity, dirty_components) in inner.entities.iter() {
                 let mut query = world.query_one::<(&Room, &Position, &Blueprint)>(entity);
@@ -415,16 +427,18 @@ impl NetworkReplicator {
                                                 | ComponentData::Room(_) => {}
                                             }
                                         }
-                                        EntityDirtyComponent::Custom(custom) => {
+                                        EntityDirtyComponent::Custom => {
                                             let entity_id = entity.id();
 
                                             let mut map: serde_json::Map<
                                                 String,
                                                 serde_json::Value,
                                             > = serde_json::Map::new();
-                                            for pair in custom.pairs::<String, mlua::Value>() {
-                                                let (key, value) = pair.wrap_err(&format!("Failed to convert a custom table field to a needed type for an entity with ID '{}'", entity_id))?;
-                                                map.insert(key, lua.from_value(value).wrap_err(&format!("Failed to convert a custom table value to a needed type for an entity with ID '{}'", entity_id))?);
+                                            if let Some(custom) = entity_customs.get(&entity) {
+                                                for pair in custom.pairs::<String, mlua::Value>() {
+                                                    let (key, value) = pair.wrap_err(&format!("Failed to convert a custom table field to a needed type for an entity with ID '{}'", entity_id))?;
+                                                    map.insert(key, lua.from_value(value).wrap_err(&format!("Failed to convert a custom table value to a needed type for an entity with ID '{}'", entity_id))?);
+                                                }
                                             }
 
                                             entity_data.custom = Some(map);
