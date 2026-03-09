@@ -3,8 +3,7 @@ use smallvec::smallvec;
 
 use super::{
     components::{
-        ComponentData, Control, CustomDataComponent, Name, OwnedBy, Position, Room, Rotation,
-        Sprite2D, SpriteChar,
+        ComponentData, Control, Name, OwnedBy, Position, Room, Rotation, Sprite2D, SpriteChar,
     },
     event_descriptors::ENTITY_EVENT_DESCRIPTORS,
     macros::{add_handle_methods, for_each_handle},
@@ -29,10 +28,9 @@ pub(crate) struct EntityHandle {
 }
 impl EntityHandle {
     fn get_custom(&self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
-        let world = get_app_data::<app_data::World>(lua)?;
-
-        if let Ok(comp) = world.get::<&CustomDataComponent>(self.entity) {
-            return Ok(lua.registry_value(&comp.0)?);
+        let customs = get_app_data::<app_data::EntityCustoms>(lua)?;
+        if let Some(custom) = customs.get(&self.entity) {
+            return Ok(mlua::Value::Table(custom.clone()));
         } else {
             return Ok(mlua::Value::Nil);
         }
@@ -51,23 +49,9 @@ impl EntityHandle {
             }
         }
 
+        get_app_data_mut::<app_data::EntityCustoms>(lua)?.insert(self.entity, table.clone());
+
         let event_bus = get_app_data::<app_data::EventBus>(lua)?.clone();
-        let mut world = get_app_data_mut::<app_data::World>(lua)?;
-
-        let rk = lua.create_registry_value(&table)?;
-        if let Ok(mut comp) = world.get::<&mut CustomDataComponent>(self.entity) {
-            comp.0 = rk;
-        } else {
-            world
-                .insert_one(self.entity, CustomDataComponent(rk))
-                .map_err(|e| {
-                    mlua::Error::runtime(format!(
-                        "Failed to change custom data for the entity: {}",
-                        e
-                    ))
-                })?;
-        }
-
         event_bus.schedule_event(GameModeEvent {
             scopes: smallvec![
                 EventScope::Entity(self.entity.id().into()),

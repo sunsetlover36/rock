@@ -107,6 +107,7 @@ impl Runtime {
         lua.set_app_data::<app_data::NetworkReplicator>(network_replicator.clone());
         // TODO: should i get rid of app_data prefix everywhere?
         lua.set_app_data::<FieldRegistry>(FieldRegistry::new(&lua)?);
+        lua.set_app_data::<app_data::EntityCustoms>(HashMap::new());
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);

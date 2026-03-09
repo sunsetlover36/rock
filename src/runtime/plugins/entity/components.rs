@@ -44,6 +44,3 @@ pub(crate) enum ComponentData {
     Name(Name),
     Room(Room),
 }
-
-#[derive(Debug, Eq, PartialEq, Hash)]
-pub(crate) struct CustomDataComponent(pub mlua::RegistryKey);

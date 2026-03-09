@@ -108,3 +108,4 @@ pub type ActiveLayers = Vec<LayerId>;
 pub type ClientApi = Arc<dyn GameModeClientApi>;
 pub type TimerManager = Rc<timer_manager::TimerManager>;
 pub type NetworkReplicator = Rc<network_replicator::NetworkReplicator>;
+pub type EntityCustoms = HashMap<hecs::Entity, mlua::Table>;

@@ -4,8 +4,7 @@ use mlua::{LuaSerdeExt, UserData};
 
 use super::{
     components::{
-        Blueprint, ComponentData, Control, CustomDataComponent, OwnedBy, Position, Room, Rotation,
-        Sprite2D, SpriteChar,
+        Blueprint, ComponentData, Control, OwnedBy, Position, Room, Rotation, Sprite2D, SpriteChar,
     },
     event_descriptors::ENTITY_EVENT_DESCRIPTORS,
     handle::EntityHandle,
@@ -28,7 +27,7 @@ pub(crate) struct EntityBlueprint {
     id: BlueprintId,
     pub name: Option<String>,
     pub components: HashMap<ComponentKey, ComponentData>,
-    pub customs: HashMap<String, serde_json::Value>,
+    pub customs: Option<mlua::Table>,
 }
 impl EntityBlueprint {
     pub fn new(id: BlueprintId) -> Self {
@@ -36,7 +35,7 @@ impl EntityBlueprint {
             id,
             name: None,
             components: HashMap::new(),
-            customs: HashMap::new(),
+            customs: None,
         }
     }
 
@@ -78,25 +77,26 @@ impl UserData for EntityBlueprint {
             if !table.is_empty() {
                 let field_registry = get_app_data::<FieldRegistry>(lua)?;
                 for pair in table.pairs::<String, mlua::Value>() {
-                    let (key, value) = pair?;
+                    let (key, _) = pair?;
                     if field_registry.is_reserved_field(&key) {
                         return Err(mlua::Error::runtime(format!(
                             "Cannot use reserved core component name '{}' in custom fields",
                             key
                         )));
                     }
-
-                    next.customs.insert(key, lua.from_value(value)?);
                 }
+
+                next.customs = Some(table);
             } else {
-                next.customs = HashMap::new();
+                next.customs = None;
             }
 
             Ok(next)
         });
 
         methods.add_method("from", |lua, this, name: String| {
-            if !this.components.is_empty() || !this.customs.is_empty() {
+            let has_customs = this.customs.as_ref().map_or(false, |t| t.is_empty());
+            if !this.components.is_empty() || has_customs {
                 return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint already contains components or custom data", name)));
             }
 
@@ -172,12 +172,11 @@ impl UserData for EntityBlueprint {
             }
             builder.add(Blueprint(this.id));
 
-            if this.customs.len() != 0 {
-                let customs = lua.to_value(&this.customs)?;
-                builder.add(CustomDataComponent(lua.create_registry_value(customs)?));
-            }
-
             let entity = get_app_data_mut::<app_data::World>(lua)?.spawn(builder.build());
+
+            if let Some(customs) = &this.customs {
+                get_app_data_mut::<app_data::EntityCustoms>(lua)?.insert(entity, customs.clone());
+            }
 
             // Layer garbage collection
             let layers = get_app_data::<app_data::ActiveLayers>(lua)?;

@@ -1,6 +1,7 @@
 use color_eyre::eyre;
+use mlua::LuaSerdeExt;
 use shared::{
-    PlayerKey, WorldSnapshot,
+    EntityData, PlayerKey, WorldSnapshot,
     components::{RadialArea, Vector2D},
 };
 use slotmap::{SlotMap, new_key_type};
@@ -17,8 +18,11 @@ mod field_registry;
 pub(crate) use field_registry::FieldRegistry;
 
 use crate::runtime::{
-    GameModeClientApi, LuaResultExt, app_data, get_app_data,
-    plugins::entity::components::{Blueprint, Position, Room},
+    GameModeClientApi, LuaResultExt, app_data, get_app_data, get_app_data_mut,
+    plugins::entity::components::{
+        Blueprint, ComponentKey, Control, Name, OwnedBy, Position, Room, Rotation, Sprite2D,
+        SpriteChar,
+    },
 };
 
 new_key_type! {
@@ -32,7 +36,10 @@ struct NetworkReplicatorInner {
     memory: HashSet<String>,
     policies: SlotMap<PolicyId, ReplicationPolicy>,
     by_target: HashMap<ReplicationTarget, Vec<PolicyId>>,
+
+    // Pinned policies only
     rooms_policies: HashMap<RoomId, Vec<PolicyId>>,
+
     player_to_room: HashMap<PlayerKey, RoomId>,
     room_to_players: HashMap<RoomId, Vec<PlayerKey>>,
     player_anchors: PlayerAnchors,
@@ -301,30 +308,63 @@ impl NetworkReplicator {
     pub fn process(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
         let lost_anchors = {
             let inner = self.inner.borrow();
+
             let world =
                 get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
+            let mut field_registry =
+                get_app_data_mut::<FieldRegistry>(lua).wrap_err("App data is not initialized")?;
 
             let mut snapshots: HashMap<RoomId, HashMap<PlayerKey, WorldSnapshot>> = HashMap::new();
             let mut lost_anchors: HashMap<PlayerKey, HashSet<hecs::Entity>> = HashMap::new();
 
             for (&entity, dirty_components) in inner.entities.iter() {
-                let mut query = world.query_one::<(&Room, &Blueprint, &Position)>(entity);
-                if let Ok((room_comp, blueprint_comp, pos_comp)) = query.get() {
+                let mut query = world.query_one::<(
+                    &Room,
+                    Option<&Blueprint>,
+                    &Position,
+                    Option<&Rotation>,
+                    Option<&Control>,
+                    Option<&Name>,
+                    Option<&OwnedBy>,
+                    Option<&Sprite2D>,
+                    Option<&SpriteChar>,
+                )>(entity);
+                if let Ok(components) = query.get() {
+                    let (
+                        room_comp,
+                        blueprint_comp,
+                        pos_comp,
+                        rotation_comp,
+                        control,
+                        name_comp,
+                        owned_by_comp,
+                        sprite_2d,
+                        sprite_char,
+                    ) = components;
+
                     let room_id = room_comp.0;
-                    let blueprint_id = blueprint_comp.0;
-                    let entity_pos = pos_comp.0;
-
-                    let blueprint_policy_ids = inner
-                        .by_target
-                        .get(&ReplicationTarget::Blueprint(blueprint_id));
-                    let entity_policy_ids = inner.by_target.get(&ReplicationTarget::Entity(entity));
-
-                    let policy_ids = blueprint_policy_ids
-                        .into_iter()
-                        .flatten()
-                        .chain(entity_policy_ids.into_iter().flatten());
+                    let blueprint_id = blueprint_comp.map(|bp| bp.0);
+                    let position = pos_comp.0;
+                    let rotation = rotation_comp.map(|c| c.0);
+                    let owned_by = owned_by_comp.map(|c| c.0);
+                    let custom = get_app_data::<app_data::EntityCustoms>(lua)
+                        .wrap_err("App data is not initialized")?
+                        .get(&entity)
+                        .map(|e| e.clone());
 
                     let mut fields_masks: HashMap<RoomId, HashMap<PlayerKey, u64>> = HashMap::new();
+
+                    let blueprint_policy_ids = blueprint_id
+                        .and_then(|id| inner.by_target.get(&ReplicationTarget::Blueprint(id)))
+                        .into_iter()
+                        .flatten();
+                    let entity_policy_ids = inner
+                        .by_target
+                        .get(&ReplicationTarget::Entity(entity))
+                        .into_iter()
+                        .flatten();
+
+                    let policy_ids = blueprint_policy_ids.chain(entity_policy_ids);
                     for &policy_id in policy_ids {
                         if let Some(policy) = inner.policies.get(policy_id) {
                             let recently_lost_anchors: Option<PlayerAnchors>;
@@ -334,7 +374,7 @@ impl NetworkReplicator {
                                         room_id,
                                         policy,
                                         &*world,
-                                        entity_pos,
+                                        position,
                                         &mut fields_masks,
                                     );
                                 }
@@ -343,7 +383,7 @@ impl NetworkReplicator {
                                         pinned_room_id,
                                         policy,
                                         &*world,
-                                        entity_pos,
+                                        position,
                                         &mut fields_masks,
                                     );
                                 }
@@ -354,6 +394,57 @@ impl NetworkReplicator {
                                     lost_anchors.entry(pk).or_default().extend(lost);
                                 }
                             }
+                        }
+                    }
+
+                    for (&room_id, masks) in fields_masks.iter() {
+                        let room_snapshots = snapshots.entry(room_id).or_default();
+                        for (&pk, mask) in masks.iter() {
+                            let snapshot =
+                                room_snapshots.entry(pk).or_insert(WorldSnapshot::new(tick));
+                            let mut data = EntityData::default();
+                            for comp in dirty_components {
+                                match comp {
+                                    EntityDirtyComponent::Core(key) => {
+                                        let bit = field_registry.get_bit_index(key.as_ref())?;
+                                        if (mask & (1 << bit)) == 0 {
+                                            continue;
+                                        }
+
+                                        match key {
+                                            ComponentKey::Name => {
+                                                data.name = name_comp.map(|c| c.0.clone());
+                                            }
+                                            ComponentKey::Position => {
+                                                data.position = Some(position);
+                                            }
+                                            ComponentKey::Rotation => {
+                                                data.rotation = rotation;
+                                            }
+                                            ComponentKey::Control => {
+                                                data.speed = control.map(|c| c.speed);
+                                            }
+                                            ComponentKey::Sprite2D => {
+                                                data.sprite = sprite_2d.map(|c| c.0.clone());
+                                            }
+                                            ComponentKey::SpriteChar => {
+                                                data.char = sprite_char.map(|c| c.0.clone());
+                                            }
+                                            ComponentKey::OwnedBy => {
+                                                data.owned_by = owned_by;
+                                            }
+                                            ComponentKey::Blueprint | ComponentKey::Room => {}
+                                        }
+                                    }
+                                    EntityDirtyComponent::Custom => {
+                                        if let Some(custom) = custom.clone() {
+                                            data.custom = lua.from_value(mlua::Value::Table(custom)).wrap_err(&format!("Failed to convert a Lua table to JSON object when replicating data for entity with ID {}", entity.id()))?;
+                                        }
+                                    }
+                                }
+                            }
+
+                            snapshot.entities.insert(entity.id(), data);
                         }
                     }
                 }
