@@ -62,6 +62,7 @@ pub struct RuntimeParams {
 }
 
 pub struct Runtime {
+    tick: u64,
     lua: Lua,
     callback_rx: flume::Receiver<RuntimeCallback>,
     world_state: Rc<WorldState>,
@@ -71,6 +72,7 @@ pub struct Runtime {
     scene_manager: SceneManager,
     event_bus: Rc<EventBus>,
     timer_manager: Rc<TimerManager>,
+    replicator: Rc<NetworkReplicator>,
 }
 impl Runtime {
     pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
@@ -88,7 +90,7 @@ impl Runtime {
             tokio_handle: params.tokio_handle.clone(),
             event_bus: event_bus.clone(),
         }));
-        let network_replicator = Rc::new(NetworkReplicator::new(client_api.clone()));
+        let replicator = Rc::new(NetworkReplicator::new(client_api.clone()));
 
         // App data
         lua.set_app_data::<app_data::EventListeners>(HashMap::new());
@@ -104,7 +106,7 @@ impl Runtime {
         lua.set_app_data::<app_data::ActiveLayers>(Vec::new());
         lua.set_app_data::<app_data::ClientApi>(client_api.clone());
         lua.set_app_data::<app_data::TimerManager>(timer_manager.clone());
-        lua.set_app_data::<app_data::NetworkReplicator>(network_replicator.clone());
+        lua.set_app_data::<app_data::NetworkReplicator>(replicator.clone());
         // TODO: should i get rid of app_data prefix everywhere?
         lua.set_app_data::<FieldRegistry>(FieldRegistry::new(&lua)?);
         lua.set_app_data::<app_data::EntityCustoms>(HashMap::new());
@@ -152,6 +154,7 @@ impl Runtime {
             .wrap_err("Script execution error")?;
 
         Ok(Self {
+            tick: 0,
             lua,
             callback_rx: params.callback_rx,
             world_state,
@@ -161,6 +164,7 @@ impl Runtime {
             scene_manager,
             event_bus,
             timer_manager,
+            replicator,
         })
     }
 
@@ -173,6 +177,8 @@ impl Runtime {
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();
         loop {
+            self.tick += 1;
+
             self.scene_manager.tick(&self.lua);
 
             while let Ok(cb) = self.callback_rx.try_recv() {
@@ -192,6 +198,7 @@ impl Runtime {
 
             self.timer_manager.tick();
             self.event_bus.flush(&self.lua)?;
+            self.replicator.replicate(&self.lua, self.tick)?;
 
             let now = Instant::now();
             next_tick += tick_interval;
