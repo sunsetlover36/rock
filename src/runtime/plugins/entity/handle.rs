@@ -11,7 +11,10 @@ use super::{
 use crate::{
     runtime::{
         app_data, get_str_hash,
-        network_replicator::{FieldRegistry, protocol::ReplicationTarget},
+        network_replicator::{
+            FieldRegistry,
+            protocol::{EntityDirtyComponent, ReplicationMark, ReplicationTarget},
+        },
         plugins::{
             OnPluginLazy,
             on::protocol::{EntityEventData, EventScope, GameModeEvent, GameModeEventData},
@@ -51,13 +54,19 @@ impl EntityHandle {
 
         get_app_data_mut::<app_data::EntityCustoms>(lua)?.insert(self.entity, table.clone());
 
-        let event_bus = get_app_data::<app_data::EventBus>(lua)?.clone();
+        let event_bus = get_app_data::<app_data::EventBus>(lua)?;
         event_bus.schedule_event(GameModeEvent {
             scopes: smallvec![
                 EventScope::Entity(self.entity.id().into()),
                 EventScope::Blueprint(self.blueprint_id),
             ],
-            data: GameModeEventData::Entity(EntityEventData::CustomDataUpdate(table)),
+            data: GameModeEventData::Entity(EntityEventData::CustomDataUpdate(table.clone())),
+        });
+
+        let replicator = get_app_data::<app_data::NetworkReplicator>(lua)?;
+        replicator.mark_update(ReplicationMark::Entity {
+            id: self.entity,
+            component: EntityDirtyComponent::Custom(table),
         });
 
         Ok(())

@@ -1,8 +1,11 @@
 use std::time::Duration;
 
-use shared::{PlayerKey, components::RadialArea};
+use shared::{
+    PlayerKey,
+    components::{self, RadialArea},
+};
 
-use crate::runtime::plugins::entity::{BlueprintId, components::ComponentKey};
+use crate::runtime::plugins::entity::{BlueprintId, components::ComponentData};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SpatialFilter {
@@ -13,10 +16,10 @@ pub(crate) enum SpatialFilter {
 
 pub(crate) type RoomId = u64;
 
-#[derive(Debug, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub(crate) enum EntityDirtyComponent {
-    Core(ComponentKey),
-    Custom,
+    Core(ComponentData),
+    Custom(mlua::Table),
 }
 
 pub(crate) enum ReplicationMark {
@@ -24,7 +27,10 @@ pub(crate) enum ReplicationMark {
         id: hecs::Entity,
         component: EntityDirtyComponent,
     },
-    Memory(String),
+    Memory {
+        node: String,
+        value: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]

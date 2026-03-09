@@ -19,10 +19,7 @@ pub(crate) use field_registry::FieldRegistry;
 
 use crate::runtime::{
     GameModeClientApi, LuaResultExt, app_data, get_app_data, get_app_data_mut,
-    plugins::entity::components::{
-        Blueprint, ComponentKey, Control, Name, OwnedBy, Position, Room, Rotation, Sprite2D,
-        SpriteChar,
-    },
+    plugins::entity::components::{Blueprint, ComponentData, ComponentKey, Position, Room},
 };
 
 new_key_type! {
@@ -32,8 +29,8 @@ new_key_type! {
 type PlayerAnchors = HashMap<PlayerKey, HashSet<hecs::Entity>>;
 
 struct NetworkReplicatorInner {
-    entities: HashMap<hecs::Entity, HashSet<EntityDirtyComponent>>,
-    memory: HashSet<String>,
+    entities: HashMap<hecs::Entity, Vec<EntityDirtyComponent>>,
+    memory: HashMap<String, serde_json::Value>,
     policies: SlotMap<PolicyId, ReplicationPolicy>,
     by_target: HashMap<ReplicationTarget, Vec<PolicyId>>,
 
@@ -56,7 +53,7 @@ impl NetworkReplicator {
         Self {
             inner: RefCell::new(NetworkReplicatorInner {
                 entities: HashMap::new(),
-                memory: HashSet::new(),
+                memory: HashMap::new(),
                 policies: SlotMap::<PolicyId, ReplicationPolicy>::with_key(),
                 by_target: HashMap::new(),
                 rooms_policies: HashMap::new(),
@@ -74,14 +71,14 @@ impl NetworkReplicator {
         self.inner.borrow_mut().signals.push(signal);
     }
 
-    pub fn mark(&self, mark: ReplicationMark) {
+    pub fn mark_update(&self, mark: ReplicationMark) {
         let mut inner = self.inner.borrow_mut();
         match mark {
             ReplicationMark::Entity { id, component } => {
-                inner.entities.entry(id).or_default().insert(component);
+                inner.entities.entry(id).or_default().push(component);
             }
-            ReplicationMark::Memory(key) => {
-                inner.memory.insert(key);
+            ReplicationMark::Memory { node, value } => {
+                inner.memory.insert(node, value);
             }
         }
     }
@@ -216,12 +213,13 @@ impl NetworkReplicator {
         }
     }
 
-    fn merge_masks_within_area(
+    // Returns lost (non-existing) player anchors to clean them up
+    fn merge_mask_within_area(
         &self,
         room_id: RoomId,
-        policy: &ReplicationPolicy,
+        players: &Vec<PlayerKey>,
+        mask: u64,
         world: &hecs::World,
-        room_players: &Vec<PlayerKey>,
         area: RadialArea,
         room_masks: &mut HashMap<PlayerKey, u64>,
     ) -> PlayerAnchors {
@@ -230,7 +228,7 @@ impl NetworkReplicator {
         let radius_sq = area.radius * area.radius;
         let mut lost_anchors: HashMap<PlayerKey, HashSet<hecs::Entity>> = HashMap::new();
 
-        for &pk in room_players {
+        for &pk in players {
             if let Some(anchors) = inner.player_anchors.get(&pk) {
                 let mut is_visible = false;
                 for &anchor in anchors {
@@ -254,58 +252,57 @@ impl NetworkReplicator {
                 }
 
                 if is_visible {
-                    *room_masks.entry(pk).or_default() |= policy.fields_mask;
+                    *room_masks.entry(pk).or_default() |= mask;
                 }
             }
         }
 
         lost_anchors
     }
+
+    // Applies a spatial filter for the selected room using a policy fields mask
     fn apply_spatial_filter_for_room(
         &self,
         room_id: RoomId,
+        players: &Vec<PlayerKey>,
         policy: &ReplicationPolicy,
         world: &hecs::World,
         entity_pos: Vector2D,
         fields_masks: &mut HashMap<RoomId, HashMap<PlayerKey, u64>>,
     ) -> Option<PlayerAnchors> {
-        let inner = self.inner.borrow();
-
-        if let Some(room_players) = inner.room_to_players.get(&room_id) {
-            let room_masks = fields_masks.entry(room_id).or_default();
-            match policy.spatial {
-                SpatialFilter::Global => {
-                    for &pk in room_players {
-                        *room_masks.entry(pk).or_default() |= policy.fields_mask;
-                    }
-
-                    None
+        let room_masks = fields_masks.entry(room_id).or_default();
+        match policy.spatial {
+            SpatialFilter::Global => {
+                for &pk in players {
+                    *room_masks.entry(pk).or_default() |= policy.fields_mask;
                 }
-                SpatialFilter::Radius(radius) => Some(self.merge_masks_within_area(
-                    room_id,
-                    policy,
-                    world,
-                    room_players,
-                    RadialArea {
-                        position: entity_pos,
-                        radius,
-                    },
-                    room_masks,
-                )),
-                SpatialFilter::Area(area) => Some(self.merge_masks_within_area(
-                    room_id,
-                    policy,
-                    world,
-                    room_players,
-                    area,
-                    room_masks,
-                )),
+
+                None
             }
-        } else {
-            None
+            SpatialFilter::Radius(radius) => Some(self.merge_mask_within_area(
+                room_id,
+                players,
+                policy.fields_mask,
+                world,
+                RadialArea {
+                    position: entity_pos,
+                    radius,
+                },
+                room_masks,
+            )),
+            SpatialFilter::Area(area) => Some(self.merge_mask_within_area(
+                room_id,
+                players,
+                policy.fields_mask,
+                world,
+                area,
+                room_masks,
+            )),
         }
     }
-    pub fn process(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
+
+    // Replicate changes
+    pub fn replicate(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
         let lost_anchors = {
             let inner = self.inner.borrow();
 
@@ -318,133 +315,125 @@ impl NetworkReplicator {
             let mut lost_anchors: HashMap<PlayerKey, HashSet<hecs::Entity>> = HashMap::new();
 
             for (&entity, dirty_components) in inner.entities.iter() {
-                let mut query = world.query_one::<(
-                    &Room,
-                    Option<&Blueprint>,
-                    &Position,
-                    Option<&Rotation>,
-                    Option<&Control>,
-                    Option<&Name>,
-                    Option<&OwnedBy>,
-                    Option<&Sprite2D>,
-                    Option<&SpriteChar>,
-                )>(entity);
+                let mut query = world.query_one::<(&Room, &Position, &Blueprint)>(entity);
                 if let Ok(components) = query.get() {
-                    let (
-                        room_comp,
-                        blueprint_comp,
-                        pos_comp,
-                        rotation_comp,
-                        control,
-                        name_comp,
-                        owned_by_comp,
-                        sprite_2d,
-                        sprite_char,
-                    ) = components;
+                    let (room_comp, pos_comp, blueprint_comp) = components;
 
                     let room_id = room_comp.0;
-                    let blueprint_id = blueprint_comp.map(|bp| bp.0);
+                    let blueprint_id = blueprint_comp.0;
                     let position = pos_comp.0;
-                    let rotation = rotation_comp.map(|c| c.0);
-                    let owned_by = owned_by_comp.map(|c| c.0);
-                    let custom = get_app_data::<app_data::EntityCustoms>(lua)
-                        .wrap_err("App data is not initialized")?
-                        .get(&entity)
-                        .map(|e| e.clone());
 
-                    let mut fields_masks: HashMap<RoomId, HashMap<PlayerKey, u64>> = HashMap::new();
+                    // If there are players in this room who need to receive updates
+                    if let Some(room_players) = inner.room_to_players.get(&room_id) {
+                        let mut fields_masks: HashMap<RoomId, HashMap<PlayerKey, u64>> =
+                            HashMap::new();
 
-                    let blueprint_policy_ids = blueprint_id
-                        .and_then(|id| inner.by_target.get(&ReplicationTarget::Blueprint(id)))
-                        .into_iter()
-                        .flatten();
-                    let entity_policy_ids = inner
-                        .by_target
-                        .get(&ReplicationTarget::Entity(entity))
-                        .into_iter()
-                        .flatten();
+                        let blueprint_policy_ids = inner
+                            .by_target
+                            .get(&ReplicationTarget::Blueprint(blueprint_id))
+                            .into_iter()
+                            .flatten();
+                        let entity_policy_ids = inner
+                            .by_target
+                            .get(&ReplicationTarget::Entity(entity))
+                            .into_iter()
+                            .flatten();
 
-                    let policy_ids = blueprint_policy_ids.chain(entity_policy_ids);
-                    for &policy_id in policy_ids {
-                        if let Some(policy) = inner.policies.get(policy_id) {
-                            let recently_lost_anchors: Option<PlayerAnchors>;
-                            match policy.routing {
-                                PolicyRouting::DynamicFollow => {
-                                    recently_lost_anchors = self.apply_spatial_filter_for_room(
-                                        room_id,
-                                        policy,
-                                        &*world,
-                                        position,
-                                        &mut fields_masks,
-                                    );
+                        let policy_ids = blueprint_policy_ids.chain(entity_policy_ids);
+                        for &policy_id in policy_ids {
+                            if let Some(policy) = inner.policies.get(policy_id) {
+                                let recently_lost_anchors: Option<PlayerAnchors>;
+                                match policy.routing {
+                                    PolicyRouting::DynamicFollow => {
+                                        recently_lost_anchors = self.apply_spatial_filter_for_room(
+                                            room_id,
+                                            room_players,
+                                            policy,
+                                            &*world,
+                                            position,
+                                            &mut fields_masks,
+                                        );
+                                    }
+                                    PolicyRouting::Pinned(pinned_room_id) => {
+                                        recently_lost_anchors = self.apply_spatial_filter_for_room(
+                                            pinned_room_id,
+                                            room_players,
+                                            policy,
+                                            &*world,
+                                            position,
+                                            &mut fields_masks,
+                                        );
+                                    }
                                 }
-                                PolicyRouting::Pinned(pinned_room_id) => {
-                                    recently_lost_anchors = self.apply_spatial_filter_for_room(
-                                        pinned_room_id,
-                                        policy,
-                                        &*world,
-                                        position,
-                                        &mut fields_masks,
-                                    );
-                                }
-                            }
 
-                            if let Some(anchors) = recently_lost_anchors {
-                                for (pk, lost) in anchors {
-                                    lost_anchors.entry(pk).or_default().extend(lost);
+                                if let Some(anchors) = recently_lost_anchors {
+                                    for (pk, lost) in anchors {
+                                        lost_anchors.entry(pk).or_default().extend(lost);
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    for (&room_id, masks) in fields_masks.iter() {
-                        let room_snapshots = snapshots.entry(room_id).or_default();
-                        for (&pk, mask) in masks.iter() {
-                            let snapshot =
-                                room_snapshots.entry(pk).or_insert(WorldSnapshot::new(tick));
-                            let mut data = EntityData::default();
-                            for comp in dirty_components {
-                                match comp {
-                                    EntityDirtyComponent::Core(key) => {
-                                        let bit = field_registry.get_bit_index(key.as_ref())?;
-                                        if (mask & (1 << bit)) == 0 {
-                                            continue;
-                                        }
+                        for (&room_id, masks) in fields_masks.iter() {
+                            let room_snapshots = snapshots.entry(room_id).or_default();
+                            for (&pk, mask) in masks.iter() {
+                                let snapshot =
+                                    room_snapshots.entry(pk).or_insert(WorldSnapshot::new(tick));
+                                let mut entity_data = EntityData::default();
+                                for comp in dirty_components {
+                                    match comp {
+                                        EntityDirtyComponent::Core(comp) => {
+                                            let key = ComponentKey::from(comp);
+                                            let bit = field_registry.get_bit_index(key.as_ref())?;
+                                            if (mask & (1 << bit)) == 0 {
+                                                continue;
+                                            }
 
-                                        match key {
-                                            ComponentKey::Name => {
-                                                data.name = name_comp.map(|c| c.0.clone());
+                                            match comp {
+                                                ComponentData::Name(name) => {
+                                                    entity_data.name = Some(name.0.clone());
+                                                }
+                                                ComponentData::Position(_) => {
+                                                    entity_data.position = Some(position);
+                                                }
+                                                ComponentData::Rotation(rotation) => {
+                                                    entity_data.rotation = Some(rotation.0);
+                                                }
+                                                ComponentData::Control(control) => {
+                                                    entity_data.speed = Some(control.speed);
+                                                }
+                                                ComponentData::Sprite2D(sprite_2d) => {
+                                                    entity_data.sprite = Some(sprite_2d.0.clone());
+                                                }
+                                                ComponentData::SpriteChar(sprite_char) => {
+                                                    entity_data.char = Some(sprite_char.0.clone());
+                                                }
+                                                ComponentData::OwnedBy(owned_by) => {
+                                                    entity_data.owned_by = Some(owned_by.0);
+                                                }
+                                                ComponentData::Blueprint(_)
+                                                | ComponentData::Room(_) => {}
                                             }
-                                            ComponentKey::Position => {
-                                                data.position = Some(position);
-                                            }
-                                            ComponentKey::Rotation => {
-                                                data.rotation = rotation;
-                                            }
-                                            ComponentKey::Control => {
-                                                data.speed = control.map(|c| c.speed);
-                                            }
-                                            ComponentKey::Sprite2D => {
-                                                data.sprite = sprite_2d.map(|c| c.0.clone());
-                                            }
-                                            ComponentKey::SpriteChar => {
-                                                data.char = sprite_char.map(|c| c.0.clone());
-                                            }
-                                            ComponentKey::OwnedBy => {
-                                                data.owned_by = owned_by;
-                                            }
-                                            ComponentKey::Blueprint | ComponentKey::Room => {}
                                         }
-                                    }
-                                    EntityDirtyComponent::Custom => {
-                                        if let Some(custom) = custom.clone() {
-                                            data.custom = lua.from_value(mlua::Value::Table(custom)).wrap_err(&format!("Failed to convert a Lua table to JSON object when replicating data for entity with ID {}", entity.id()))?;
+                                        EntityDirtyComponent::Custom(custom) => {
+                                            let entity_id = entity.id();
+
+                                            let mut map: serde_json::Map<
+                                                String,
+                                                serde_json::Value,
+                                            > = serde_json::Map::new();
+                                            for pair in custom.pairs::<String, mlua::Value>() {
+                                                let (key, value) = pair.wrap_err(&format!("Failed to convert a custom table field to a needed type for an entity with ID '{}'", entity_id))?;
+                                                map.insert(key, lua.from_value(value).wrap_err(&format!("Failed to convert a custom table value to a needed type for an entity with ID '{}'", entity_id))?);
+                                            }
+
+                                            entity_data.custom = Some(map);
                                         }
                                     }
                                 }
-                            }
 
-                            snapshot.entities.insert(entity.id(), data);
+                                snapshot.entities.insert(entity.id(), entity_data);
+                            }
                         }
                     }
                 }

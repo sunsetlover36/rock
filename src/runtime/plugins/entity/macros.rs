@@ -41,7 +41,6 @@ pub(crate) use add_blueprint_methods;
 macro_rules! add_handle_methods {
     ($methods:ident, $lua_name:literal, $variant:ident, $comp_type:ty) => {
         $methods.add_method($lua_name, |lua, this, data: Option<mlua::Value>| {
-            let event_bus = get_app_data::<app_data::EventBus>(lua)?.clone();
             let mut world = get_app_data_mut::<app_data::World>(lua)?;
 
             if let Some(v) = data {
@@ -61,15 +60,23 @@ macro_rules! add_handle_methods {
                         })?;
                 }
 
+                let event_bus = get_app_data::<app_data::EventBus>(lua)?;
                 event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![
                         EventScope::Entity(this.entity.id().into()),
                         EventScope::Blueprint(this.blueprint_id),
                     ],
                     data: GameModeEventData::Entity(EntityEventData::ComponentUpdate(
-                        ComponentData::$variant(comp_data),
+                        ComponentData::$variant(comp_data.clone()),
                     )),
                 });
+
+                let replicator = get_app_data::<app_data::NetworkReplicator>(lua)?;
+                replicator.mark_update(ReplicationMark::Entity {
+                    id: this.entity,
+                    component: EntityDirtyComponent::Core(ComponentData::$variant(comp_data)),
+                });
+
                 return Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?));
             } else {
                 // get
