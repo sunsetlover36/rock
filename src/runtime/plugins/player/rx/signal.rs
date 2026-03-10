@@ -7,13 +7,13 @@ use crate::runtime::{
 };
 
 #[derive(Clone)]
-pub(crate) struct RxSignal {
+pub(crate) struct SignalRx {
     scope: SignalScope,
     name: Option<String>,
     data: Option<serde_json::Map<String, serde_json::Value>>,
     area: Option<RadialArea>,
 }
-impl RxSignal {
+impl SignalRx {
     pub fn new(scope: SignalScope, name: Option<String>) -> Self {
         Self {
             scope,
@@ -23,7 +23,7 @@ impl RxSignal {
         }
     }
 }
-impl UserData for RxSignal {
+impl UserData for SignalRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("data", |lua, this, data: mlua::Table| {
             let mut next = this.clone();

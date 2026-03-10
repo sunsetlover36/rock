@@ -7,21 +7,19 @@ use super::{
     },
     event_descriptors::ENTITY_EVENT_DESCRIPTORS,
     macros::{add_handle_methods, for_each_handle},
+    rx::SyncRx,
 };
-use crate::{
-    runtime::{
-        app_data, get_str_hash,
-        network_replicator::{
-            FieldRegistry,
-            protocol::{EntityDirtyComponent, ReplicationMark, ReplicationTarget},
-        },
-        plugins::{
-            OnPluginLazy,
-            on::protocol::{EntityEventData, EventScope, GameModeEvent, GameModeEventData},
-        },
-        utils::{get_app_data, get_app_data_mut},
+use crate::runtime::{
+    app_data, get_str_hash,
+    network_replicator::{
+        FieldRegistry,
+        protocol::{EntityDirtyComponent, ReplicationMark, ReplicationTarget},
     },
-    rx::RxSync,
+    plugins::{
+        OnPluginLazy,
+        on::protocol::{EntityEventData, EventScope, GameModeEvent, GameModeEventData},
+    },
+    utils::{get_app_data, get_app_data_mut},
 };
 
 #[derive(Clone)]
@@ -133,7 +131,7 @@ impl UserData for EntityHandle {
         });
 
         methods.add_method("sync", |_, this, _: ()| {
-            Ok(RxSync::new(ReplicationTarget::Entity(this.entity)))
+            Ok(SyncRx::new(ReplicationTarget::Entity(this.entity)))
         });
     }
 }

@@ -11,7 +11,10 @@ use crate::{
         event_bus::SequenceId,
         utils::{get_app_data, get_app_data_mut},
     },
-    rx::{HasRxPipeline, RxOperator, RxPipeline, add_rx_methods},
+    rx::{
+        CoreRxPipeline, HasCoreRxPipeline, add_core_rx_methods,
+        operator::{HasOpRxPipeline, OpRxPipeline, RxOp, add_op_rx_methods},
+    },
 };
 
 struct NewListenerParams {
@@ -26,7 +29,8 @@ pub(super) struct OnRx {
     scope: EventScope,
     name: Option<String>,
     priority: u32,
-    pipeline: RxPipeline,
+    core_pipeline: CoreRxPipeline,
+    op_pipeline: OpRxPipeline,
 }
 impl OnRx {
     pub fn new(event_key: GameModeEventKey, scope: EventScope) -> Self {
@@ -35,7 +39,8 @@ impl OnRx {
             scope,
             name: None,
             priority: 0,
-            pipeline: RxPipeline::default(),
+            core_pipeline: CoreRxPipeline::default(),
+            op_pipeline: OpRxPipeline::default(),
         }
     }
 
@@ -48,7 +53,8 @@ impl OnRx {
             context: params.context,
             handle: params.handle,
             priority: self.priority,
-            pipeline: self.pipeline.clone(),
+            core_pipeline: self.core_pipeline.clone(),
+            op_pipeline: self.op_pipeline.clone(),
         })
     }
 
@@ -103,14 +109,22 @@ impl OnRx {
         Ok(current_seq)
     }
 }
-impl HasRxPipeline for OnRx {
-    fn pipeline_mut(&mut self) -> &mut RxPipeline {
-        &mut self.pipeline
+
+impl HasCoreRxPipeline for OnRx {
+    fn core_pipeline_mut(&mut self) -> &mut CoreRxPipeline {
+        &mut self.core_pipeline
     }
 }
+impl HasOpRxPipeline for OnRx {
+    fn op_pipeline_mut(&mut self) -> &mut OpRxPipeline {
+        &mut self.op_pipeline
+    }
+}
+
 impl UserData for OnRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        add_rx_methods(methods);
+        add_core_rx_methods(methods);
+        add_op_rx_methods(methods);
 
         methods.add_method("name", |_, this, name: String| {
             let mut next = this.clone();
@@ -133,16 +147,16 @@ impl UserData for OnRx {
             }
 
             let mut next = this.clone();
-            let predicate = RxOperator::Filter(lua.create_function(
+            let predicate = RxOp::Filter(lua.create_function(
                 move |_, args: (SequenceId, mlua::Table)| {
                     let action_table: mlua::Table = args.1;
                     let action_name: String = action_table.get("name")?;
                     Ok(action_name == event_name)
                 },
             )?);
-            next.pipeline.operators.push(predicate);
+            next.op_pipeline_mut().operators.push(predicate);
 
-            let map = RxOperator::Map(lua.create_function(
+            let map = RxOp::Map(lua.create_function(
                 move |_, args: (SequenceId, mlua::Table)| {
                     let pid = args.0;
                     let action_table = args.1;
@@ -150,7 +164,7 @@ impl UserData for OnRx {
                     Ok((pid, data))
                 },
             )?);
-            next.pipeline.operators.push(map);
+            next.op_pipeline_mut().operators.push(map);
 
             Ok(next)
         });

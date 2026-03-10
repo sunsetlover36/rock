@@ -5,8 +5,8 @@ use shared::{PlayerId, PlayerKey};
 use super::protocol::{AsyncTask, GameModePlugin, PluginName};
 use crate::runtime::{app_data, utils::get_app_data};
 
-mod broadcast_rx;
-use broadcast_rx::BroadcastRx;
+mod rx;
+use rx::BroadcastRx;
 
 mod handle;
 pub(crate) use handle::PlayerHandle;

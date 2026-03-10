@@ -16,7 +16,7 @@ pub(crate) use handle::EntityHandle;
 mod macros;
 
 mod rx;
-use rx::EntityRx;
+use rx::QueryRx;
 
 pub struct EntityPlugin {}
 impl GameModePlugin for EntityPlugin {
@@ -25,18 +25,18 @@ impl GameModePlugin for EntityPlugin {
     }
 
     fn create_global_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
-        let entity_table = lua.create_table()?;
+        let table = lua.create_table()?;
 
         let blueprint_fn = lua.create_function(|lua, _: ()| {
             let id = get_app_data_mut::<app_data::BlueprintRegistry>(lua)?.increment_id();
             Ok(EntityBlueprint::new(id))
         })?;
-        entity_table.set("blueprint", blueprint_fn)?;
+        table.set("blueprint", blueprint_fn)?;
 
-        let query_fn = lua.create_function(|_, _: ()| Ok(EntityRx::new()))?;
-        entity_table.set("query", query_fn)?;
+        let query_fn = lua.create_function(|_, _: ()| Ok(QueryRx::default()))?;
+        table.set("query", query_fn)?;
 
-        Ok(Some(entity_table))
+        Ok(Some(table))
     }
     fn create_scene_api(&self, _: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         Ok(None)

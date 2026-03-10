@@ -1,157 +1,73 @@
 use std::time::Duration;
 
-use mlua::{LuaSerdeExt, UserData};
-use shared::components::RadialArea;
+use mlua::{UserData, UserDataMethods};
 
-use crate::{
-    runtime::{
-        app_data, get_app_data, get_app_data_mut, get_str_hash,
-        network_replicator::{
-            FieldRegistry,
-            protocol::{PolicyRouting, ReplicationPolicy, ReplicationTarget, SpatialFilter},
-        },
+use crate::runtime::{
+    EyreResultExt, app_data, get_app_data,
+    network_replicator::protocol::{
+        PolicyFieldUpdate, PolicyId, PolicyRouting, ReplicationPolicy, ReplicationTarget,
     },
-    rx::sync::handle::PolicyHandle,
 };
 
-mod handle;
+pub(crate) mod entity;
+pub(crate) mod routing;
+pub(crate) mod spatial;
 
-#[derive(Clone)]
-pub(crate) struct RxSync {
-    policy: ReplicationPolicy,
+pub(crate) trait PolicyHandle {
+    fn policy_id(&self) -> PolicyId;
 }
-impl RxSync {
-    pub fn new(target: ReplicationTarget) -> mlua::Result<Self> {
-        Ok(Self {
-            policy: ReplicationPolicy::new(target),
-        })
-    }
+pub(crate) trait ToPolicyHandle {
+    type Handle: mlua::UserData + PolicyHandle + Send + 'static;
+    fn to_policy_handle(&self, id: PolicyId) -> Self::Handle;
+}
+pub(crate) trait HasPolicy {
+    fn policy(&self) -> &ReplicationPolicy;
+    fn policy_mut(&mut self) -> &mut ReplicationPolicy;
+}
 
-    fn get_fields_mask(&self, lua: &mlua::Lua, table: mlua::Table) -> mlua::Result<u64> {
-        let mut field_registry = get_app_data_mut::<FieldRegistry>(lua)?;
-
-        let mut mask = 0u64;
-        for key in table.sequence_values::<String>() {
-            let key = key?;
-            let bit = field_registry.get_bit_index(&key).map_err(|e| {
-                mlua::Error::runtime(format!("Failed to get a bit index of key '{}': {}", key, e))
-            })?;
-
-            mask |= 1 << bit;
+pub(crate) fn add_sync_consumer_methods<T, M>(methods: &mut M)
+where
+    T: UserData + HasPolicy + ToPolicyHandle,
+    M: UserDataMethods<T>,
+{
+    methods.add_method("commit", |lua, this, _: ()| {
+        let policy = this.policy().clone();
+        match &policy.target {
+            ReplicationTarget::MemoryNode(node) => {
+                if policy.routing == PolicyRouting::DynamicFollow {
+                    return Err(mlua::Error::runtime(format!(
+                        "Failed to commit a policy: memory node '{}' requires a target room",
+                        node
+                    )));
+                }
+            }
+            _ => {}
         }
 
-        Ok(mask)
-    }
+        let id = get_app_data::<app_data::NetworkReplicator>(lua)?.commit_policy(policy);
+        Ok(this.to_policy_handle(id))
+    });
 }
-impl UserData for RxSync {
-    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("only", |lua, this, arg: mlua::Value| {
-            let mut next = this.clone();
 
-            match arg {
-               mlua::Value::Table(table) => {
-                   next.policy.fields_mask = this.get_fields_mask(lua, table)?;
-               }
-               mlua::Value::Function(func) => {
-                   let component_keys = get_app_data::<FieldRegistry>(lua)?.get_component_keys();
-                   let table: mlua::Table = func.call(component_keys)?;
-                   next.policy.fields_mask = this.get_fields_mask(lua, table)?;
-               }
-               _ => {
-                   return Err(mlua::Error::runtime("Failed to call `:only()`: unknown argument type, expected a table or a function"));
-               }
-            }
+pub(crate) fn add_base_handle_methods<T, M>(methods: &mut M)
+where
+    T: UserData + PolicyHandle,
+    M: UserDataMethods<T>,
+{
+    methods.add_method("revoke", |lua, this, _: ()| {
+        get_app_data::<app_data::NetworkReplicator>(lua)?.revoke_policy(this.policy_id());
+        Ok(())
+    });
 
-            Ok(next)
-        });
-
-        methods.add_method("hide", |lua, this, arg: mlua::Value| {
-            let mut next = this.clone();
-
-            match arg {
-               mlua::Value::Table(table) => {
-                   next.policy.fields_mask &= !this.get_fields_mask(lua, table)?;
-               }
-               mlua::Value::Function(func) => {
-                   let component_keys = get_app_data::<FieldRegistry>(lua)?.get_component_keys();
-                   let table: mlua::Table = func.call(component_keys)?;
-                   next.policy.fields_mask &= !this.get_fields_mask(lua, table)?;
-               }
-               _ => {
-                   return Err(mlua::Error::runtime("Failed to call `:hide()`: unknown argument type, expected a table or a function"));
-               }
-            }
-
-            Ok(next)
-        });
-
-        methods.add_method("room", |_, this, name: String| {
-            let mut next = this.clone();
-            let id = get_str_hash(&name);
-
-            // Pin this room to the policy
-            next.policy.routing = PolicyRouting::Pinned(id);
-
-            Ok(next)
-        });
-
-        methods.add_method("radius", |_, this, radius: f32| {
-            match this.policy.target {
-                ReplicationTarget::MemoryNode(_) => {
-                    return Err(mlua::Error::runtime(
-                        "Cannot apply `:radius()` to a memory node",
-                    ));
-                }
-                ReplicationTarget::Player(_) => {
-                    return Err(mlua::Error::runtime(
-                        "Cannot apply `:radius()` to a player session. Create an entity owned by the player instead",
-                    ));
-                }
-                _ => {}
-            }
-
-            let mut next = this.clone();
-            next.policy.spatial = SpatialFilter::Radius(radius);
-            Ok(next)
-        });
-
-        methods.add_method("area", |lua, this, area: mlua::Value| {
-            let area: RadialArea = lua.from_value(area)?;
-            let mut next = this.clone();
-            next.policy.spatial = SpatialFilter::Area(area);
-            Ok(next)
-        });
-
-        methods.add_method("global", |_, this, _: ()| {
-            let mut next = this.clone();
-            next.policy.spatial = SpatialFilter::Global;
-            Ok(next)
-        });
-
-        methods.add_method("throttle", |_, this, seconds: f64| {
-            let mut next = this.clone();
-            next.policy.throttle = Some(Duration::from_secs_f64(seconds));
-            Ok(next)
-        });
-
-        methods.add_method("commit", |lua, this, _: ()| {
-            let policy = this.policy.clone();
-            let target = policy.target.clone();
-
-            match &target {
-                ReplicationTarget::MemoryNode(node) => {
-                    if policy.routing == PolicyRouting::DynamicFollow {
-                        return Err(mlua::Error::runtime(format!(
-                            "Failed to commit a policy: memory node '{}' requires a target room",
-                            node
-                        )));
-                    }
-                }
-                _ => {}
-            }
-
-            let id = get_app_data::<app_data::NetworkReplicator>(lua)?.commit_policy(policy);
-            Ok(PolicyHandle::new(id, target))
-        });
-    }
+    methods.add_method("throttle", |lua, this, secs: Option<f64>| {
+        get_app_data::<app_data::NetworkReplicator>(lua)?
+            .update_policy(
+                this.policy_id(),
+                PolicyFieldUpdate::Throttle {
+                    throttle: secs.map(Duration::from_secs_f64),
+                },
+            )
+            .wrap_eyre_err()?;
+        Ok(())
+    });
 }

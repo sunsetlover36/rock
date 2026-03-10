@@ -1,14 +1,13 @@
 use mlua::UserData;
 use shared::PlayerKey;
 
-use super::vision::PlayerVision;
-use crate::{
-    runtime::{
-        GameModeClientCommand, app_data, get_str_hash,
-        network_replicator::protocol::{ReplicationTarget, SignalScope},
-        utils::get_app_data,
-    },
-    rx::{RxSignal, RxSync},
+use super::{
+    rx::{SignalRx, SyncRx},
+    vision::PlayerVision,
+};
+use crate::runtime::{
+    GameModeClientCommand, app_data, get_str_hash, network_replicator::protocol::SignalScope,
+    utils::get_app_data,
 };
 
 pub(crate) struct PlayerHandle {
@@ -36,12 +35,10 @@ impl UserData for PlayerHandle {
         });
 
         methods.add_method("signal", |_, this, name: Option<String>| {
-            Ok(RxSignal::new(SignalScope::Player(this.pk), name))
+            Ok(SignalRx::new(SignalScope::Player(this.pk), name))
         });
 
-        methods.add_method("sync", |_, this, _: ()| {
-            Ok(RxSync::new(ReplicationTarget::Player(this.pk)))
-        });
+        methods.add_method("sync", |_, this, _: ()| Ok(SyncRx::new(this.pk)));
 
         methods.add_method("room", |lua, this, name: Option<String>| {
             let id = name.map(|s| get_str_hash(&s));

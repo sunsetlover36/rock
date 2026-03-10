@@ -9,15 +9,13 @@ use super::{
     event_descriptors::ENTITY_EVENT_DESCRIPTORS,
     handle::EntityHandle,
     macros::{add_blueprint_methods, for_each_blueprint},
+    rx::SyncRx,
 };
-use crate::{
-    runtime::{
-        app_data, get_str_hash,
-        network_replicator::{FieldRegistry, protocol::ReplicationTarget},
-        plugins::{OnPluginLazy, entity::components::ComponentKey, on::protocol::EventScope},
-        utils::{get_app_data, get_app_data_mut},
-    },
-    rx::RxSync,
+use crate::runtime::{
+    app_data, get_str_hash,
+    network_replicator::{FieldRegistry, protocol::ReplicationTarget},
+    plugins::{OnPluginLazy, entity::components::ComponentKey, on::protocol::EventScope},
+    utils::{get_app_data, get_app_data_mut},
 };
 
 pub type BlueprintId = u64;
@@ -199,7 +197,7 @@ impl UserData for EntityBlueprint {
         });
 
         methods.add_method("sync", |_, this, _: ()| {
-            Ok(RxSync::new(ReplicationTarget::Blueprint(this.id)))
+            Ok(SyncRx::new(ReplicationTarget::Blueprint(this.id)))
         });
     }
 }

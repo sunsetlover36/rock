@@ -11,12 +11,12 @@ use super::{
 use crate::{
     meta_db::MetaDb,
     runtime::{
-        app_data, get_app_data,
-        network_replicator::protocol::{ReplicationMark, ReplicationTarget},
-        utils::LuaResultExt,
+        app_data, get_app_data, network_replicator::protocol::ReplicationMark, utils::LuaResultExt,
     },
-    rx::RxSync,
 };
+
+mod rx;
+use rx::SyncRx;
 
 #[derive(Debug, Clone, Copy, EnumString, Display, AsRefStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
@@ -54,9 +54,7 @@ impl GameModePlugin for MemoryPlugin {
         })?;
         table.set("peek", peek_fn)?;
 
-        let node_fn = lua.create_function(|_, key: String| {
-            Ok(RxSync::new(ReplicationTarget::MemoryNode(key)))
-        })?;
+        let node_fn = lua.create_function(|_, key: String| Ok(SyncRx::new(key)))?;
         table.set("node", node_fn)?;
 
         Ok(Some(table))
