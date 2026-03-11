@@ -11,6 +11,7 @@ use rx::BroadcastRx;
 mod handle;
 pub(crate) use handle::PlayerHandle;
 
+mod room;
 mod vision;
 
 pub(crate) struct PlayerPlugin {}

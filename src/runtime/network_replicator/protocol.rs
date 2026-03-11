@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use shared::{PlayerKey, components::RadialArea};
+use shared::components::RadialArea;
 use slotmap::new_key_type;
 
 use crate::runtime::plugins::entity::{BlueprintId, components::ComponentData};
@@ -40,7 +40,6 @@ pub(crate) enum ReplicationTarget {
     Blueprint(BlueprintId),
     Entity(hecs::Entity),
     MemoryNode(String),
-    Player(PlayerKey),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -74,18 +73,4 @@ pub(crate) enum PolicyFieldUpdate {
     Spatial { filter: SpatialFilter },
     Room { id: RoomId },
     Throttle { throttle: Option<Duration> },
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PendingSignal {
-    pub name: Option<String>,
-    pub data: serde_json::Map<String, serde_json::Value>,
-    pub area: Option<RadialArea>,
-    pub scope: SignalScope,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum SignalScope {
-    Global,
-    Player(PlayerKey),
 }

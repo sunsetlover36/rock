@@ -1,12 +1,8 @@
-use shared::{ChatPacket, OutgoingPacket, PlayerKey};
+use shared::PlayerKey;
 
 use crate::{
-    envelope::{EnvelopeRecipient, ServerEnvelope},
-    runtime::{GameModeClientApi, protocol::GameModeClientCommand},
-    socket::{
-        protocol::{ServerMessage, SocketCommand},
-        session_registry::SessionSender,
-    },
+    runtime::GameModeClientApi,
+    socket::{protocol::ServerMessage, session_registry::SessionSender},
 };
 
 #[derive(Clone)]
@@ -22,30 +18,7 @@ impl GameModeClientApi for GameModeDefaultClientApi {
         self.ws_session_sender.player_keys()
     }
 
-    fn send(&self, event: GameModeClientCommand) {
-        match event {
-            GameModeClientCommand::SendMessage { pk, text } => {
-                let _ = self.ws_session_sender.send_message(ServerMessage {
-                    recipient: EnvelopeRecipient::Single(pk),
-                    payload: OutgoingPacket::Chat(ChatPacket::GlobalMessage {
-                        message: text,
-                        color: String::from("#FFFFFF"),
-                    }),
-                });
-            }
-            GameModeClientCommand::KickPlayer { pk } => {
-                let _ = self.ws_session_sender.send_control(ServerEnvelope {
-                    recipient: EnvelopeRecipient::Single(pk),
-                    payload: SocketCommand::Kick,
-                });
-            }
-            GameModeClientCommand::Broadcast { text } => {}
-            GameModeClientCommand::Log { text } => {}
-            GameModeClientCommand::Snapshot(snapshot) => {
-                // let _ = self.ws_session_sender.send_message(ServerMessage {
-                //     recipient: EnvelopeRe
-                // })
-            }
-        }
+    fn send(&self, message: ServerMessage) {
+        let _ = self.ws_session_sender.send_message(message);
     }
 }

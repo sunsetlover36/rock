@@ -25,20 +25,22 @@ use crate::runtime::{
 type PlayerAnchors = HashMap<PlayerKey, HashSet<hecs::Entity>>;
 
 struct NetworkReplicatorInner {
+    client_api: Arc<dyn GameModeClientApi>,
+
     entities: HashMap<hecs::Entity, Vec<EntityDirtyComponent>>,
     memory: HashMap<String, serde_json::Value>,
+
     policies: SlotMap<PolicyId, ReplicationPolicy>,
-    by_target: HashMap<ReplicationTarget, Vec<PolicyId>>,
-
+    by_target: HashMap<ReplicationTarget, HashSet<PolicyId>>,
     // Pinned policies only
-    rooms_policies: HashMap<RoomId, Vec<PolicyId>>,
+    room_to_policies: HashMap<RoomId, HashSet<PolicyId>>,
 
-    player_to_room: HashMap<PlayerKey, RoomId>,
-    room_to_players: HashMap<RoomId, Vec<PlayerKey>>,
     player_anchors: PlayerAnchors,
-    entities_snapshots: HashMap<PlayerKey, HashSet<hecs::Entity>>,
-    signals: Vec<PendingSignal>,
-    client_api: Arc<dyn GameModeClientApi>,
+    player_to_rooms: HashMap<PlayerKey, HashSet<RoomId>>,
+    room_to_players: HashMap<RoomId, HashSet<PlayerKey>>,
+
+    entities_snapshots: HashMap<PlayerKey, HashMap<RoomId, HashSet<hecs::Entity>>>,
+    // memory_snapshots?
 }
 
 pub(crate) struct NetworkReplicator {
@@ -56,12 +58,11 @@ impl NetworkReplicator {
                 memory: HashMap::new(),
                 policies: SlotMap::<PolicyId, ReplicationPolicy>::with_key(),
                 by_target: HashMap::new(),
-                rooms_policies: HashMap::new(),
-                player_to_room: HashMap::new(),
+                room_to_policies: HashMap::new(),
+                player_to_rooms: HashMap::new(),
                 room_to_players: HashMap::new(),
                 player_anchors: HashMap::new(),
                 entities_snapshots: HashMap::new(),
-                signals: Vec::new(),
                 client_api,
             }),
             mark_tx,
@@ -73,8 +74,33 @@ impl NetworkReplicator {
         self.mark_tx.clone()
     }
 
-    pub fn schedule_signal(&self, signal: PendingSignal) {
-        self.inner.borrow_mut().signals.push(signal);
+    pub fn get_players_in_room(&self, room_id: RoomId) -> Vec<PlayerKey> {
+        self.inner
+            .borrow()
+            .room_to_players
+            .get(&room_id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
+    }
+    pub fn get_players_in_area(
+        &self,
+        world: &hecs::World,
+        room_id: RoomId,
+        area: RadialArea,
+    ) -> Vec<PlayerKey> {
+        let inner = self.inner.borrow();
+        self.get_players_in_room(room_id)
+            .into_iter()
+            .filter(|pk| {
+                if let Some(anchors) = inner.player_anchors.get(pk) {
+                    self.visible_to_anchors(room_id, area, anchors, world)
+                } else {
+                    false
+                }
+            })
+            .collect()
     }
 
     fn mark_update(&self, mark: ReplicationMark) {
@@ -95,10 +121,14 @@ impl NetworkReplicator {
         let routing = policy.routing;
 
         let id = inner.policies.insert(policy);
-        inner.by_target.entry(target).or_default().push(id);
+        inner.by_target.entry(target).or_default().insert(id);
 
         if let PolicyRouting::Pinned(room_id) = routing {
-            inner.rooms_policies.entry(room_id).or_default().push(id);
+            inner
+                .room_to_policies
+                .entry(room_id)
+                .or_default()
+                .insert(id);
         }
 
         id
@@ -113,7 +143,7 @@ impl NetworkReplicator {
 
             if let PolicyRouting::Pinned(room_id) = policy.routing {
                 inner
-                    .rooms_policies
+                    .room_to_policies
                     .entry(room_id)
                     .and_modify(|ids| ids.retain(|&id| id != revoked_id));
             }
@@ -126,7 +156,7 @@ impl NetworkReplicator {
     ) -> eyre::Result<()> {
         let NetworkReplicatorInner {
             policies,
-            rooms_policies,
+            room_to_policies,
             ..
         } = &mut *self.inner.borrow_mut();
 
@@ -147,10 +177,13 @@ impl NetworkReplicator {
                             return Ok(());
                         }
 
-                        rooms_policies
+                        room_to_policies
                             .entry(old_id)
                             .and_modify(|ids| ids.retain(|&id| id != updated_id));
-                        rooms_policies.entry(new_id).or_default().push(updated_id);
+                        room_to_policies
+                            .entry(new_id)
+                            .or_default()
+                            .insert(updated_id);
 
                         policy.routing = PolicyRouting::Pinned(new_id);
                     }
@@ -171,7 +204,7 @@ impl NetworkReplicator {
                 if let Some(policy) = inner.policies.remove(removed_id) {
                     if let PolicyRouting::Pinned(room_id) = policy.routing {
                         inner
-                            .rooms_policies
+                            .room_to_policies
                             .entry(room_id)
                             .and_modify(|ids| ids.retain(|&id| id != removed_id));
                     }
@@ -197,95 +230,105 @@ impl NetworkReplicator {
     pub fn clear_player_anchors(&self, pk: PlayerKey) {
         self.inner.borrow_mut().player_anchors.remove(&pk);
     }
-    pub fn set_player_room(&self, pk: PlayerKey, id: Option<RoomId>) {
+    fn visible_to_anchors(
+        &self,
+        room_id: RoomId,
+        area: RadialArea,
+        anchors: &HashSet<hecs::Entity>,
+        world: &hecs::World,
+    ) -> bool {
+        let radius_sq = area.radius * area.radius;
+        anchors.iter().any(|&anchor| {
+            let mut query = world.query_one::<(&Room, &Position)>(anchor);
+            if let Ok((room_comp, pos_comp)) = query.get() {
+                return room_comp.0 == room_id
+                    && area.position.distance_squared(&pos_comp.0) <= radius_sq;
+            }
+
+            false
+        })
+    }
+
+    pub fn add_player_to_room(&self, pk: PlayerKey, id: RoomId) {
         let mut inner = self.inner.borrow_mut();
 
-        if let Some(&old_room_id) = inner.player_to_room.get(&pk) {
-            inner
-                .room_to_players
-                .entry(old_room_id)
-                .and_modify(|players| players.retain(|&p| p != pk));
-        }
-        match id {
-            Some(id) => {
-                inner.player_to_room.insert(pk, id);
-                inner.room_to_players.entry(id).or_default().push(pk);
-                inner.entities_snapshots.entry(pk).or_default().clear();
+        inner.player_to_rooms.entry(pk).or_default().insert(id);
+        inner.room_to_players.entry(id).or_default().insert(pk);
+        inner
+            .entities_snapshots
+            .entry(pk)
+            .or_default()
+            .insert(id, HashSet::new());
+    }
+    pub fn remove_player_from_room(&self, pk: PlayerKey, id: RoomId) {
+        let mut inner = self.inner.borrow_mut();
+
+        inner
+            .player_to_rooms
+            .entry(pk)
+            .and_modify(|rooms| rooms.retain(|&r_id| r_id != id));
+        inner
+            .room_to_players
+            .entry(id)
+            .and_modify(|pks| pks.retain(|&r_pk| r_pk != pk));
+        inner.entities_snapshots.entry(pk).and_modify(|rooms| {
+            rooms.remove(&id);
+        });
+    }
+    pub fn clear_player_rooms(&self, pk: PlayerKey) {
+        let mut inner = self.inner.borrow_mut();
+
+        if let Some(rooms) = inner.player_to_rooms.remove(&pk) {
+            for room_id in rooms {
+                inner
+                    .room_to_players
+                    .entry(room_id)
+                    .and_modify(|pks| pks.retain(|&r_pk| r_pk != pk));
             }
-            None => {
-                inner.player_to_room.remove(&pk);
-                inner.entities_snapshots.remove(&pk);
-            }
         }
+
+        inner.entities_snapshots.remove(&pk);
     }
 
     // Returns lost (non-existing) player anchors to clean them up
     fn merge_mask_within_area(
         &self,
         room_id: RoomId,
-        players: &Vec<PlayerKey>,
+        players: &HashSet<PlayerKey>,
         mask: u64,
         world: &hecs::World,
         area: RadialArea,
         room_masks: &mut HashMap<PlayerKey, u64>,
-    ) -> PlayerAnchors {
+    ) {
         let inner = self.inner.borrow();
-
-        let radius_sq = area.radius * area.radius;
-        let mut lost_anchors: HashMap<PlayerKey, HashSet<hecs::Entity>> = HashMap::new();
 
         for &pk in players {
             if let Some(anchors) = inner.player_anchors.get(&pk) {
-                let mut is_visible = false;
-                for &anchor in anchors {
-                    if is_visible {
-                        break;
-                    }
-
-                    let mut query = world.query_one::<(&Room, &Position)>(anchor);
-                    if let Ok((room_comp, pos_comp)) = query.get() {
-                        if room_comp.0 != room_id {
-                            continue;
-                        }
-
-                        let anchor_pos = &pos_comp.0;
-                        if area.position.distance_squared(anchor_pos) <= radius_sq {
-                            is_visible = true;
-                        }
-                    } else {
-                        lost_anchors.entry(pk).or_default().insert(anchor);
-                    }
-                }
-
-                if is_visible {
+                if self.visible_to_anchors(room_id, area, anchors, world) {
                     *room_masks.entry(pk).or_default() |= mask;
                 }
             }
         }
-
-        lost_anchors
     }
 
     // Applies a spatial filter for the selected room using a policy fields mask
     fn apply_spatial_filter_for_room(
         &self,
         room_id: RoomId,
-        players: &Vec<PlayerKey>,
+        players: &HashSet<PlayerKey>,
         policy: &ReplicationPolicy,
         world: &hecs::World,
         entity_pos: Vector2D,
         fields_masks: &mut HashMap<RoomId, HashMap<PlayerKey, u64>>,
-    ) -> Option<PlayerAnchors> {
+    ) {
         let room_masks = fields_masks.entry(room_id).or_default();
         match policy.spatial {
             SpatialFilter::Global => {
                 for &pk in players {
                     *room_masks.entry(pk).or_default() |= policy.fields_mask;
                 }
-
-                None
             }
-            SpatialFilter::Radius(radius) => Some(self.merge_mask_within_area(
+            SpatialFilter::Radius(radius) => self.merge_mask_within_area(
                 room_id,
                 players,
                 policy.fields_mask,
@@ -295,15 +338,15 @@ impl NetworkReplicator {
                     radius,
                 },
                 room_masks,
-            )),
-            SpatialFilter::Area(area) => Some(self.merge_mask_within_area(
+            ),
+            SpatialFilter::Area(area) => self.merge_mask_within_area(
                 room_id,
                 players,
                 policy.fields_mask,
                 world,
                 area,
                 room_masks,
-            )),
+            ),
         }
     }
 
@@ -313,16 +356,21 @@ impl NetworkReplicator {
             self.mark_update(mark);
         }
 
-        let lost_anchors = {
+        let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
+        {
+            let mut inner = self.inner.borrow_mut();
+            for anchors in inner.player_anchors.values_mut() {
+                anchors.retain(|&anchor| world.contains(anchor));
+            }
+        }
+
+        {
             let inner = self.inner.borrow();
 
-            let world =
-                get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
             let mut field_registry =
                 get_app_data_mut::<FieldRegistry>(lua).wrap_err("App data is not initialized")?;
 
-            let mut snapshots: HashMap<RoomId, HashMap<PlayerKey, WorldSnapshot>> = HashMap::new();
-            let mut lost_anchors: HashMap<PlayerKey, HashSet<hecs::Entity>> = HashMap::new();
+            let mut snapshots: HashMap<PlayerKey, WorldSnapshot> = HashMap::new();
             let entity_customs = get_app_data::<app_data::EntityCustoms>(lua)
                 .wrap_err("App data is not initialized")?;
 
@@ -354,10 +402,9 @@ impl NetworkReplicator {
                         let policy_ids = blueprint_policy_ids.chain(entity_policy_ids);
                         for &policy_id in policy_ids {
                             if let Some(policy) = inner.policies.get(policy_id) {
-                                let recently_lost_anchors: Option<PlayerAnchors>;
                                 match policy.routing {
                                     PolicyRouting::DynamicFollow => {
-                                        recently_lost_anchors = self.apply_spatial_filter_for_room(
+                                        self.apply_spatial_filter_for_room(
                                             room_id,
                                             room_players,
                                             policy,
@@ -367,7 +414,7 @@ impl NetworkReplicator {
                                         );
                                     }
                                     PolicyRouting::Pinned(pinned_room_id) => {
-                                        recently_lost_anchors = self.apply_spatial_filter_for_room(
+                                        self.apply_spatial_filter_for_room(
                                             pinned_room_id,
                                             room_players,
                                             policy,
@@ -377,20 +424,18 @@ impl NetworkReplicator {
                                         );
                                     }
                                 }
-
-                                if let Some(anchors) = recently_lost_anchors {
-                                    for (pk, lost) in anchors {
-                                        lost_anchors.entry(pk).or_default().extend(lost);
-                                    }
-                                }
                             }
                         }
 
                         for (&room_id, masks) in fields_masks.iter() {
-                            let room_snapshots = snapshots.entry(room_id).or_default();
                             for (&pk, mask) in masks.iter() {
-                                let snapshot =
-                                    room_snapshots.entry(pk).or_insert(WorldSnapshot::new(tick));
+                                let room_snapshot = snapshots
+                                    .entry(pk)
+                                    .or_insert(WorldSnapshot::new(tick))
+                                    .rooms
+                                    .entry(room_id)
+                                    .or_default();
+
                                 let mut entity_data = EntityData::default();
                                 for comp in dirty_components {
                                     match comp {
@@ -446,26 +491,18 @@ impl NetworkReplicator {
                                     }
                                 }
 
-                                snapshot.entities.insert(entity.id(), entity_data);
+                                room_snapshot.entities.insert(entity.id(), entity_data);
                             }
                         }
                     }
                 }
             }
-
-            lost_anchors
-        };
+        }
 
         // Cleanup
         let mut inner = self.inner.borrow_mut();
         inner.entities.clear();
         inner.memory.clear();
-        for (pk, lost) in lost_anchors {
-            inner
-                .player_anchors
-                .entry(pk)
-                .and_modify(|anchors| anchors.retain(|anchor| !lost.contains(anchor)));
-        }
 
         Ok(())
     }
