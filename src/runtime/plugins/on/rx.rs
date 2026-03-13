@@ -12,8 +12,9 @@ use crate::{
         utils::{get_app_data, get_app_data_mut},
     },
     rx::{
-        core::{CorePipeline, HasCorePipeline, add_core_pipeline_methods},
-        operator::{HasOpPipeline, OpPipeline, RxOp, add_op_pipeline_methods},
+        HasPipeline, RxPipeline, RxSentry,
+        core::add_core_pipeline_methods,
+        operator::{RxOp, add_op_pipeline_methods},
     },
 };
 
@@ -29,8 +30,7 @@ pub(super) struct OnRx {
     scope: EventScope,
     name: Option<String>,
     priority: u32,
-    core_pipeline: CorePipeline,
-    op_pipeline: OpPipeline,
+    pipeline: RxPipeline,
 }
 impl OnRx {
     pub fn new(event_key: GameModeEventKey, scope: EventScope) -> Self {
@@ -39,8 +39,7 @@ impl OnRx {
             scope,
             name: None,
             priority: 0,
-            core_pipeline: CorePipeline::default(),
-            op_pipeline: OpPipeline::default(),
+            pipeline: RxPipeline::default(),
         }
     }
 
@@ -53,8 +52,7 @@ impl OnRx {
             context: params.context,
             handle: params.handle,
             priority: self.priority,
-            core_pipeline: self.core_pipeline.clone(),
-            op_pipeline: self.op_pipeline.clone(),
+            rx_sentry: RxSentry::new(builder.pipeline),
         })
     }
 
@@ -78,17 +76,13 @@ impl OnRx {
                     "Event listener with name `{}` already exists!",
                     name
                 )));
-            } else {
-                entry.push(self.construct_listener(NewListenerParams {
-                    handle,
-                    seq: current_seq,
-                    context,
-                }));
-
-                // Sort by priority
-                listeners.sort_by(|a, b| b.priority.cmp(&a.priority));
             }
 
+            entry.push(self.construct_listener(NewListenerParams {
+                handle,
+                seq: current_seq,
+                context,
+            }));
             entry.sort_by(|a, b| b.priority.cmp(&a.priority));
         }
 
@@ -113,14 +107,12 @@ impl OnRx {
     }
 }
 
-impl HasCorePipeline for OnRx {
-    fn core_pipeline_mut(&mut self) -> &mut CorePipeline {
-        &mut self.core_pipeline
+impl HasPipeline for OnRx {
+    fn pipeline(&self) -> &RxPipeline {
+        &self.pipeline
     }
-}
-impl HasOpPipeline for OnRx {
-    fn op_pipeline_mut(&mut self) -> &mut OpPipeline {
-        &mut self.op_pipeline
+    fn pipeline_mut(&mut self) -> &mut RxPipeline {
+        &mut self.pipeline
     }
 }
 
@@ -157,7 +149,7 @@ impl UserData for OnRx {
                     Ok(action_name == event_name)
                 },
             )?);
-            next.op_pipeline_mut().operators.push(predicate);
+            next.pipeline_mut().add_operator(predicate);
 
             let map = RxOp::Map(lua.create_function(
                 move |_, args: (SequenceId, mlua::Table)| {
@@ -167,7 +159,7 @@ impl UserData for OnRx {
                     Ok((pid, data))
                 },
             )?);
-            next.op_pipeline_mut().operators.push(map);
+            next.pipeline_mut().add_operator(map);
 
             Ok(next)
         });

@@ -5,7 +5,7 @@ use mlua::{IntoLuaMulti, Lua};
 
 use crate::runtime::{
     app_data::{self, ExecutionContext},
-    plugins::on::protocol::{GameModeEvent, ListenerCallError},
+    plugins::on::protocol::GameModeEvent,
     utils::LuaResultExt,
 };
 
@@ -84,24 +84,14 @@ impl EventBus {
                 .iter_mut()
                 .filter(|l| scopes.contains(&l.scope))
             {
-                match listener.call(q_event.created_at_seq, args.clone()) {
-                    Ok(args) => {
-                        if let Some(args) = args {
-                            pending_handles.push(PendingHandle {
-                                context: listener.context,
-                                args,
-                                func: listener.handle.clone(),
-                            });
-                        } else {
-                            continue;
-                        }
-                    }
-                    Err(err) => match err {
-                        ListenerCallError::LimitReached(_) => {}
-                        ListenerCallError::OpError(err) => {
-                            return Err(err);
-                        }
-                    },
+                if let Some(args) = listener.call(q_event.created_at_seq, args.clone())? {
+                    pending_handles.push(PendingHandle {
+                        context: listener.context,
+                        args,
+                        func: listener.handle.clone(),
+                    });
+                } else {
+                    continue;
                 }
             }
             listeners_for_key.retain(|l| !l.is_exhausted());

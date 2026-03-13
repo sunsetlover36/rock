@@ -188,9 +188,6 @@ impl NetworkReplicator {
                         policy.routing = PolicyRouting::Pinned(new_id);
                     }
                 },
-                PolicyFieldUpdate::Throttle { throttle } => {
-                    policy.throttle = throttle;
-                }
             }
         }
 

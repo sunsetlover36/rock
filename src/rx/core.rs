@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 use mlua::{UserData, UserDataMethods};
 use thiserror::Error;
 
+use crate::rx::HasPipeline;
+
 #[derive(Debug, Clone, Error)]
 pub(crate) enum CoreSentryError {
     #[error("limit of {0} reached")]
@@ -15,6 +17,7 @@ pub(crate) enum CoreSentryError {
     Throttled,
 }
 
+#[derive(Debug, Clone, Copy)]
 enum OrderRule {
     Take(u32),
     Skip(u32),
@@ -26,46 +29,54 @@ pub(crate) struct CorePipeline {
     pub throttle: Option<Duration>,
 }
 
-pub(crate) trait HasCorePipeline: Clone + 'static {
-    fn core_pipeline_mut(&mut self) -> &mut CorePipeline;
-}
-
 pub(crate) fn add_core_pipeline_methods<T, M>(methods: &mut M)
 where
-    T: UserData + HasCorePipeline,
+    T: UserData + HasPipeline,
     M: UserDataMethods<T>,
 {
     methods.add_method("take", |_, this, n: u32| {
         let mut next = this.clone();
-        next.core_pipeline_mut().order.push(OrderRule::Take(n));
+        next.pipeline_mut().core.order.push(OrderRule::Take(n));
         Ok(next)
     });
 
     methods.add_method("skip", |_, this, n: u32| {
         let mut next = this.clone();
-        next.core_pipeline_mut().order.push(OrderRule::Skip(n));
+        next.pipeline_mut().core.order.push(OrderRule::Skip(n));
         Ok(next)
     });
 
     methods.add_method("throttle", |_, this, secs: Option<f64>| {
         let mut next = this.clone();
-        next.core_pipeline_mut().throttle = secs.map(Duration::from_secs_f64);
+        next.pipeline_mut().core.throttle = secs.map(Duration::from_secs_f64);
         Ok(next)
     });
 }
 
+#[derive(Debug, Clone)]
 enum CycleBehavior {
     FiniteTake(u32),
     InfiniteSkip,
     Repeat,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 struct OrderState {
     current_rule_idx: usize,
     call_diff: i32,
     cycle_behavior: CycleBehavior,
 }
+impl Default for OrderState {
+    fn default() -> Self {
+        Self {
+            current_rule_idx: 0,
+            call_diff: 0,
+            cycle_behavior: CycleBehavior::Repeat,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub(crate) struct CoreSentry {
     pipeline: CorePipeline,
     order_state: OrderState,
@@ -75,15 +86,11 @@ impl CoreSentry {
     pub fn new(pipeline: CorePipeline) -> Self {
         // By default, order pipeline is repeated
         // For example, :take(2):skip(1) -> take 2, then skip 1 and repeat
-        let mut order_state = OrderState {
-            current_rule_idx: 0,
-            call_diff: 0,
-            cycle_behavior: CycleBehavior::Repeat,
-        };
+        let mut order_state = OrderState::default();
 
         let mut takes = 0;
         let mut skips = 0;
-        for rule in pipeline.order {
+        for rule in &pipeline.order {
             match rule {
                 OrderRule::Take(n) => {
                     takes += n;
@@ -158,13 +165,13 @@ impl CoreSentry {
                 match rule {
                     OrderRule::Take(n) => {
                         // Next rule commands to take N times
-                        self.order_state.call_diff += n - 1;
+                        self.order_state.call_diff += (*n as i32) - 1;
                         self.last_call_at = Some(now);
                         return Ok(());
                     }
                     OrderRule::Skip(n) => {
                         // Next rule commands to skip N times
-                        self.order_state.call_diff -= n - 1;
+                        self.order_state.call_diff -= (*n as i32) - 1;
                         return Err(CoreSentryError::Skipping);
                     }
                 }

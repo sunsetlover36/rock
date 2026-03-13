@@ -11,8 +11,9 @@ use crate::{
         utils::get_app_data,
     },
     rx::{
-        CoreRxPipeline, HasCoreRxPipeline, add_core_rx_methods,
-        operator::{HasOpRxPipeline, OpRxPipeline, add_op_rx_methods},
+        HasPipeline, RxPipeline, RxSentry, RxSentryError,
+        core::{CoreSentryError, add_core_pipeline_methods},
+        operator::add_op_pipeline_methods,
     },
 };
 
@@ -20,24 +21,22 @@ use crate::{
 pub(in crate::runtime::plugins::entity) struct QueryRx {
     owned_by: Option<PlayerId>,
     named: Option<String>,
-    core_pipeline: CoreRxPipeline,
-    op_pipeline: OpRxPipeline,
+    pipeline: RxPipeline,
 }
-impl HasCoreRxPipeline for QueryRx {
-    fn core_pipeline_mut(&mut self) -> &mut CoreRxPipeline {
-        &mut self.core_pipeline
+
+impl HasPipeline for QueryRx {
+    fn pipeline(&self) -> &RxPipeline {
+        &self.pipeline
     }
-}
-impl HasOpRxPipeline for QueryRx {
-    fn op_pipeline_mut(&mut self) -> &mut OpRxPipeline {
-        &mut self.op_pipeline
+    fn pipeline_mut(&mut self) -> &mut RxPipeline {
+        &mut self.pipeline
     }
 }
 
 impl UserData for QueryRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        add_core_rx_methods(methods);
-        add_op_rx_methods(methods);
+        add_core_pipeline_methods(methods);
+        add_op_pipeline_methods(methods);
 
         methods.add_method("owned_by", |_, this, pid: PlayerId| {
             let mut next = this.clone();
@@ -78,17 +77,31 @@ impl UserData for QueryRx {
                 }
             };
 
+            let mut rx_sentry = RxSentry::new(this.pipeline.clone());
             for entity in entities {
-                // TODO: keep that in mind, might be optimized
-                let args = this.op_pipeline.process(
-                    EntityHandle {
-                        entity: entity.0,
-                        blueprint_id: entity.1,
+                let args = EntityHandle {
+                    entity: entity.0,
+                    blueprint_id: entity.1,
+                }
+                .into_lua_multi(lua)?;
+
+                match rx_sentry.process(args) {
+                    Ok(Some(args)) => {
+                        handle.call::<()>(args)?;
                     }
-                    .into_lua_multi(lua)?,
-                )?;
-                if let Some(args) = args {
-                    handle.call::<()>(args)?;
+
+                    Ok(None)
+                    | Err(RxSentryError::Core(CoreSentryError::Skipping))
+                    | Err(RxSentryError::Core(CoreSentryError::Throttled)) => {
+                        continue;
+                    }
+
+                    Err(RxSentryError::Core(CoreSentryError::LimitReached(_))) => {
+                        break;
+                    }
+                    Err(RxSentryError::Op(err)) => {
+                        return Err(err);
+                    }
                 }
             }
 

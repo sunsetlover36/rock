@@ -3,8 +3,9 @@ use mlua::UserData;
 use crate::{
     runtime::network_replicator::protocol::{PolicyId, ReplicationPolicy, ReplicationTarget},
     rx::{
-        CoreRxPipeline, HasCoreRxPipeline, add_core_rx_methods,
-        operator::{HasOpRxPipeline, OpRxPipeline, add_op_rx_methods},
+        HasPipeline, RxPipeline,
+        core::add_core_pipeline_methods,
+        operator::add_op_pipeline_methods,
         sync::{
             HasPolicy, ToPolicyHandle, add_sync_consumer_methods,
             routing::add_routing_rx_sync_methods, spatial::add_area_rx_sync_methods,
@@ -18,15 +19,13 @@ use handle::SyncRxHandle;
 #[derive(Clone)]
 pub(in crate::runtime::plugins::memory) struct SyncRx {
     policy: ReplicationPolicy,
-    core_pipeline: CoreRxPipeline,
-    op_pipeline: OpRxPipeline,
+    pipeline: RxPipeline,
 }
 impl SyncRx {
     pub fn new(key: String) -> Self {
         Self {
             policy: ReplicationPolicy::new(ReplicationTarget::MemoryNode(key)),
-            core_pipeline: CoreRxPipeline::default(),
-            op_pipeline: OpRxPipeline::default(),
+            pipeline: RxPipeline::default(),
         }
     }
 }
@@ -45,21 +44,19 @@ impl ToPolicyHandle for SyncRx {
         SyncRxHandle::new(id)
     }
 }
-impl HasCoreRxPipeline for SyncRx {
-    fn core_pipeline_mut(&mut self) -> &mut CoreRxPipeline {
-        &mut self.core_pipeline
+impl HasPipeline for SyncRx {
+    fn pipeline(&self) -> &RxPipeline {
+        &self.pipeline
     }
-}
-impl HasOpRxPipeline for SyncRx {
-    fn op_pipeline_mut(&mut self) -> &mut OpRxPipeline {
-        &mut self.op_pipeline
+    fn pipeline_mut(&mut self) -> &mut RxPipeline {
+        &mut self.pipeline
     }
 }
 
 impl UserData for SyncRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        add_core_rx_methods(methods);
-        add_op_rx_methods(methods);
+        add_core_pipeline_methods(methods);
+        add_op_pipeline_methods(methods);
 
         add_routing_rx_sync_methods(methods);
 

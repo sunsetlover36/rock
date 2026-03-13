@@ -3,7 +3,10 @@ use std::time::Duration;
 use shared::components::RadialArea;
 use slotmap::new_key_type;
 
-use crate::runtime::plugins::entity::{BlueprintId, components::ComponentData};
+use crate::{
+    runtime::plugins::entity::{BlueprintId, components::ComponentData},
+    rx::RxSentry,
+};
 
 new_key_type! {
     pub(crate) struct PolicyId;
@@ -54,7 +57,7 @@ pub(crate) struct ReplicationPolicy {
     pub routing: PolicyRouting,
     pub fields_mask: u64,
     pub spatial: SpatialFilter,
-    pub throttle: Option<Duration>,
+    pub rx_sentry: Option<RxSentry>,
 }
 impl ReplicationPolicy {
     pub fn new(target: ReplicationTarget) -> Self {
@@ -63,7 +66,7 @@ impl ReplicationPolicy {
             routing: PolicyRouting::DynamicFollow,
             fields_mask: u64::MAX,
             spatial: SpatialFilter::Global,
-            throttle: None,
+            rx_sentry: None,
         }
     }
 }
@@ -72,5 +75,4 @@ impl ReplicationPolicy {
 pub(crate) enum PolicyFieldUpdate {
     Spatial { filter: SpatialFilter },
     Room { id: RoomId },
-    Throttle { throttle: Option<Duration> },
 }

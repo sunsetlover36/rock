@@ -3,7 +3,8 @@ use mlua::UserData;
 use crate::{
     runtime::network_replicator::protocol::{PolicyId, ReplicationPolicy, ReplicationTarget},
     rx::{
-        CoreRxPipeline, HasCoreRxPipeline, add_core_rx_methods,
+        HasPipeline, RxPipeline,
+        core::add_core_pipeline_methods,
         sync::{
             HasPolicy, ToPolicyHandle, add_sync_consumer_methods,
             entity::add_entity_rx_sync_methods,
@@ -19,13 +20,13 @@ use handle::SyncRxHandle;
 #[derive(Clone)]
 pub(in crate::runtime::plugins::entity) struct SyncRx {
     policy: ReplicationPolicy,
-    core_pipeline: CoreRxPipeline,
+    pipeline: RxPipeline,
 }
 impl SyncRx {
     pub fn new(target: ReplicationTarget) -> Self {
         Self {
             policy: ReplicationPolicy::new(target),
-            core_pipeline: CoreRxPipeline::default(),
+            pipeline: RxPipeline::default(),
         }
     }
 }
@@ -45,15 +46,18 @@ impl ToPolicyHandle for SyncRx {
     }
 }
 
-impl HasCoreRxPipeline for SyncRx {
-    fn core_pipeline_mut(&mut self) -> &mut CoreRxPipeline {
-        &mut self.core_pipeline
+impl HasPipeline for SyncRx {
+    fn pipeline(&self) -> &RxPipeline {
+        &self.pipeline
+    }
+    fn pipeline_mut(&mut self) -> &mut RxPipeline {
+        &mut self.pipeline
     }
 }
 
 impl UserData for SyncRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        add_core_rx_methods(methods);
+        add_core_pipeline_methods(methods);
 
         add_entity_rx_sync_methods(methods);
 

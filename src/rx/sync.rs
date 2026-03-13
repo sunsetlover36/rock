@@ -1,12 +1,13 @@
-use std::time::Duration;
-
 use mlua::{UserData, UserDataMethods};
 
-use crate::runtime::{
-    EyreResultExt, app_data, get_app_data,
-    network_replicator::protocol::{
-        PolicyFieldUpdate, PolicyId, PolicyRouting, ReplicationPolicy, ReplicationTarget,
+use crate::{
+    runtime::{
+        app_data, get_app_data,
+        network_replicator::protocol::{
+            PolicyId, PolicyRouting, ReplicationPolicy, ReplicationTarget,
+        },
     },
+    rx::{HasPipeline, RxSentry},
 };
 
 pub(crate) mod entity;
@@ -27,11 +28,11 @@ pub(crate) trait HasPolicy {
 
 pub(crate) fn add_sync_consumer_methods<T, M>(methods: &mut M)
 where
-    T: UserData + HasPolicy + ToPolicyHandle,
+    T: UserData + HasPipeline + HasPolicy + ToPolicyHandle,
     M: UserDataMethods<T>,
 {
     methods.add_method("commit", |lua, this, _: ()| {
-        let policy = this.policy().clone();
+        let mut policy = this.policy().clone();
         match &policy.target {
             ReplicationTarget::MemoryNode(node) => {
                 if policy.routing == PolicyRouting::DynamicFollow {
@@ -43,6 +44,8 @@ where
             }
             _ => {}
         }
+
+        policy.rx_sentry = Some(RxSentry::new(this.pipeline().clone()));
 
         let id = get_app_data::<app_data::NetworkReplicator>(lua)?.commit_policy(policy);
         Ok(this.to_policy_handle(id))
@@ -56,18 +59,6 @@ where
 {
     methods.add_method("revoke", |lua, this, _: ()| {
         get_app_data::<app_data::NetworkReplicator>(lua)?.revoke_policy(this.policy_id());
-        Ok(())
-    });
-
-    methods.add_method("throttle", |lua, this, secs: Option<f64>| {
-        get_app_data::<app_data::NetworkReplicator>(lua)?
-            .update_policy(
-                this.policy_id(),
-                PolicyFieldUpdate::Throttle {
-                    throttle: secs.map(Duration::from_secs_f64),
-                },
-            )
-            .wrap_eyre_err()?;
         Ok(())
     });
 }
