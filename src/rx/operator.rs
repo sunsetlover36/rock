@@ -7,10 +7,10 @@ pub(crate) enum RxOp {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct OpRxPipeline {
+pub(crate) struct OpPipeline {
     pub operators: Vec<RxOp>,
 }
-impl OpRxPipeline {
+impl OpPipeline {
     pub fn process(&self, mut args: mlua::MultiValue) -> mlua::Result<Option<mlua::MultiValue>> {
         for op in &self.operators {
             match op {
@@ -32,13 +32,13 @@ impl OpRxPipeline {
     }
 }
 
-pub(crate) trait HasOpRxPipeline: Clone + 'static {
-    fn op_pipeline_mut(&mut self) -> &mut OpRxPipeline;
+pub(crate) trait HasOpPipeline: Clone + 'static {
+    fn op_pipeline_mut(&mut self) -> &mut OpPipeline;
 }
 
-pub(crate) fn add_op_rx_methods<T, M>(methods: &mut M)
+pub(crate) fn add_op_pipeline_methods<T, M>(methods: &mut M)
 where
-    T: UserData + HasOpRxPipeline,
+    T: UserData + HasOpPipeline,
     M: UserDataMethods<T>,
 {
     methods.add_method("where", |_, this, predicate: mlua::Function| {
@@ -54,4 +54,8 @@ where
         next.op_pipeline_mut().operators.push(RxOp::Map(selector));
         Ok(next)
     });
+}
+
+pub(crate) struct OpSentry {
+    pipeline: OpPipeline,
 }

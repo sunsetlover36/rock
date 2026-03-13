@@ -5,7 +5,7 @@ use mlua::{IntoLuaMulti, Lua};
 
 use crate::runtime::{
     app_data::{self, ExecutionContext},
-    plugins::on::protocol::GameModeEvent,
+    plugins::on::protocol::{GameModeEvent, ListenerCallError},
     utils::LuaResultExt,
 };
 
@@ -65,11 +65,12 @@ impl EventBus {
                 Some(d) => d,
                 None => return Err(eyre::eyre!("App data is not initialized")),
             };
-            let listeners = match listeners.get_mut(&key) {
+
+            let listeners_for_key = match listeners.get_mut(&key) {
                 Some(fns) => fns,
                 None => return Ok(()),
             };
-            if listeners.is_empty() {
+            if listeners_for_key.is_empty() {
                 return Ok(());
             }
 
@@ -78,24 +79,32 @@ impl EventBus {
                 .wrap_err("Failed to materialize args")?;
 
             let mut pending_handles: Vec<PendingHandle> = Vec::new();
-            for listener in listeners.iter_mut().filter(|l| scopes.contains(&l.scope)) {
-                if !listener.can_process(q_event.created_at_seq) {
-                    continue;
-                }
 
-                let handle_args = listener.process_pipeline(args.clone())?;
-                if let Some(args) = handle_args {
-                    listener.increment_call_count();
-                    pending_handles.push(PendingHandle {
-                        context: listener.context,
-                        args,
-                        func: listener.handle.clone(),
-                    });
-                } else {
-                    continue;
+            for listener in listeners_for_key
+                .iter_mut()
+                .filter(|l| scopes.contains(&l.scope))
+            {
+                match listener.call(q_event.created_at_seq, args.clone()) {
+                    Ok(args) => {
+                        if let Some(args) = args {
+                            pending_handles.push(PendingHandle {
+                                context: listener.context,
+                                args,
+                                func: listener.handle.clone(),
+                            });
+                        } else {
+                            continue;
+                        }
+                    }
+                    Err(err) => match err {
+                        ListenerCallError::LimitReached(_) => {}
+                        ListenerCallError::OpError(err) => {
+                            return Err(err);
+                        }
+                    },
                 }
             }
-            listeners.retain(|l| !l.limit_reached());
+            listeners_for_key.retain(|l| !l.is_exhausted());
 
             pending_handles
         };

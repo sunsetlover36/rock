@@ -12,8 +12,8 @@ use crate::{
         utils::{get_app_data, get_app_data_mut},
     },
     rx::{
-        CoreRxPipeline, HasCoreRxPipeline, add_core_rx_methods,
-        operator::{HasOpRxPipeline, OpRxPipeline, RxOp, add_op_rx_methods},
+        core::{CorePipeline, HasCorePipeline, add_core_pipeline_methods},
+        operator::{HasOpPipeline, OpPipeline, RxOp, add_op_pipeline_methods},
     },
 };
 
@@ -29,8 +29,8 @@ pub(super) struct OnRx {
     scope: EventScope,
     name: Option<String>,
     priority: u32,
-    core_pipeline: CoreRxPipeline,
-    op_pipeline: OpRxPipeline,
+    core_pipeline: CorePipeline,
+    op_pipeline: OpPipeline,
 }
 impl OnRx {
     pub fn new(event_key: GameModeEventKey, scope: EventScope) -> Self {
@@ -39,8 +39,8 @@ impl OnRx {
             scope,
             name: None,
             priority: 0,
-            core_pipeline: CoreRxPipeline::default(),
-            op_pipeline: OpRxPipeline::default(),
+            core_pipeline: CorePipeline::default(),
+            op_pipeline: OpPipeline::default(),
         }
     }
 
@@ -84,6 +84,9 @@ impl OnRx {
                     seq: current_seq,
                     context,
                 }));
+
+                // Sort by priority
+                listeners.sort_by(|a, b| b.priority.cmp(&a.priority));
             }
 
             entry.sort_by(|a, b| b.priority.cmp(&a.priority));
@@ -110,21 +113,21 @@ impl OnRx {
     }
 }
 
-impl HasCoreRxPipeline for OnRx {
-    fn core_pipeline_mut(&mut self) -> &mut CoreRxPipeline {
+impl HasCorePipeline for OnRx {
+    fn core_pipeline_mut(&mut self) -> &mut CorePipeline {
         &mut self.core_pipeline
     }
 }
-impl HasOpRxPipeline for OnRx {
-    fn op_pipeline_mut(&mut self) -> &mut OpRxPipeline {
+impl HasOpPipeline for OnRx {
+    fn op_pipeline_mut(&mut self) -> &mut OpPipeline {
         &mut self.op_pipeline
     }
 }
 
 impl UserData for OnRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        add_core_rx_methods(methods);
-        add_op_rx_methods(methods);
+        add_core_pipeline_methods(methods);
+        add_op_pipeline_methods(methods);
 
         methods.add_method("name", |_, this, name: String| {
             let mut next = this.clone();
