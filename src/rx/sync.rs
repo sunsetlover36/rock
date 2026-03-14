@@ -7,7 +7,7 @@ use crate::{
             PolicyId, PolicyRouting, ReplicationPolicy, ReplicationTarget,
         },
     },
-    rx::{HasPipeline, RxSentry},
+    rx::HasPipeline,
 };
 
 pub(crate) mod entity;
@@ -45,7 +45,7 @@ where
             _ => {}
         }
 
-        policy.rx_sentry = Some(RxSentry::new(this.pipeline().clone()));
+        policy.pipeline = this.pipeline().clone();
 
         let id = get_app_data::<app_data::NetworkReplicator>(lua)?.commit_policy(policy);
         Ok(this.to_policy_handle(id))
@@ -58,7 +58,7 @@ where
     M: UserDataMethods<T>,
 {
     methods.add_method("revoke", |lua, this, _: ()| {
-        get_app_data::<app_data::NetworkReplicator>(lua)?.revoke_policy(this.policy_id());
+        get_app_data::<app_data::NetworkReplicator>(lua)?.revoke_policy_by_id(this.policy_id());
         Ok(())
     });
 }

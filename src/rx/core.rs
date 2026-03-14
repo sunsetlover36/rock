@@ -18,7 +18,7 @@ pub(crate) enum CoreSentryError {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum OrderRule {
+pub(crate) enum OrderRule {
     Take(u32),
     Skip(u32),
 }

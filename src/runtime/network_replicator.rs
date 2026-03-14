@@ -1,5 +1,5 @@
 use color_eyre::eyre;
-use mlua::LuaSerdeExt;
+use mlua::{IntoLuaMulti, LuaSerdeExt};
 use shared::{
     EntityData, PlayerKey, WorldSnapshot,
     components::{RadialArea, Vector2D},
@@ -17,9 +17,12 @@ use protocol::*;
 mod field_registry;
 pub(crate) use field_registry::FieldRegistry;
 
-use crate::runtime::{
-    GameModeClientApi, LuaResultExt, app_data, get_app_data, get_app_data_mut,
-    plugins::entity::components::{Blueprint, ComponentData, ComponentKey, Position, Room},
+use crate::{
+    runtime::{
+        GameModeClientApi, LuaResultExt, app_data, get_app_data, get_app_data_mut,
+        plugins::entity::components::{Blueprint, ComponentData, ComponentKey, Position, Room},
+    },
+    rx::{RxSentry, RxSentryError, core::CoreSentryError},
 };
 
 type PlayerAnchors = HashMap<PlayerKey, HashSet<hecs::Entity>>;
@@ -32,6 +35,9 @@ struct NetworkReplicatorInner {
 
     policies: SlotMap<PolicyId, ReplicationPolicy>,
     by_target: HashMap<ReplicationTarget, HashSet<PolicyId>>,
+
+    sentries: HashMap<ReplicationTarget, HashMap<PolicyId, RxSentry>>,
+
     // Pinned policies only
     room_to_policies: HashMap<RoomId, HashSet<PolicyId>>,
 
@@ -58,6 +64,7 @@ impl NetworkReplicator {
                 memory: HashMap::new(),
                 policies: SlotMap::<PolicyId, ReplicationPolicy>::with_key(),
                 by_target: HashMap::new(),
+                sentries: HashMap::new(),
                 room_to_policies: HashMap::new(),
                 player_to_rooms: HashMap::new(),
                 room_to_players: HashMap::new(),
@@ -72,6 +79,17 @@ impl NetworkReplicator {
 
     pub fn get_mark_tx(&self) -> flume::Sender<ReplicationMark> {
         self.mark_tx.clone()
+    }
+    fn mark_update(&self, mark: ReplicationMark) {
+        let mut inner = self.inner.borrow_mut();
+        match mark {
+            ReplicationMark::Entity { id, component } => {
+                inner.entities.entry(id).or_default().push(component);
+            }
+            ReplicationMark::Memory { key, value } => {
+                inner.memory.insert(key, value);
+            }
+        }
     }
 
     pub fn get_players_in_room(&self, room_id: RoomId) -> Vec<PlayerKey> {
@@ -90,9 +108,10 @@ impl NetworkReplicator {
         room_id: RoomId,
         area: RadialArea,
     ) -> Vec<PlayerKey> {
+        let players_in_room = self.get_players_in_room(room_id).into_iter();
+
         let inner = self.inner.borrow();
-        self.get_players_in_room(room_id)
-            .into_iter()
+        players_in_room
             .filter(|pk| {
                 if let Some(anchors) = inner.player_anchors.get(pk) {
                     self.visible_to_anchors(room_id, area, anchors, world)
@@ -103,16 +122,50 @@ impl NetworkReplicator {
             .collect()
     }
 
-    fn mark_update(&self, mark: ReplicationMark) {
+    pub fn revoke_policy_by_id(&self, revoked_id: PolicyId) {
         let mut inner = self.inner.borrow_mut();
-        match mark {
-            ReplicationMark::Entity { id, component } => {
-                inner.entities.entry(id).or_default().push(component);
-            }
-            ReplicationMark::Memory { key, value } => {
-                inner.memory.insert(key, value);
+        if let Some(policy) = inner.policies.remove(revoked_id) {
+            let target = policy.target;
+            inner
+                .by_target
+                .entry(target.clone())
+                .and_modify(|policies| policies.retain(|&id| id != revoked_id));
+            inner.sentries.entry(target.clone()).and_modify(|policies| {
+                policies.remove(&revoked_id);
+            });
+
+            if let PolicyRouting::Pinned(room_id) = policy.routing {
+                inner
+                    .room_to_policies
+                    .entry(room_id)
+                    .and_modify(|ids| ids.retain(|&id| id != revoked_id));
             }
         }
+    }
+    pub fn revoke_policies_by_target(&self, target: ReplicationTarget) {
+        let mut inner_guard = self.inner.borrow_mut();
+        let NetworkReplicatorInner {
+            policies,
+            by_target,
+            sentries,
+            room_to_policies,
+            ..
+        } = &mut *inner_guard;
+
+        if let Some(policy_ids) = by_target.get_mut(&target) {
+            for &policy_id in policy_ids.iter() {
+                if let Some(policy) = policies.remove(policy_id) {
+                    if let PolicyRouting::Pinned(room_id) = policy.routing {
+                        room_to_policies
+                            .entry(room_id)
+                            .and_modify(|ids| ids.retain(|&id| id != policy_id));
+                    }
+                }
+            }
+        }
+
+        by_target.remove(&target);
+        sentries.remove(&target);
     }
 
     pub fn commit_policy(&self, policy: ReplicationPolicy) -> PolicyId {
@@ -132,22 +185,6 @@ impl NetworkReplicator {
         }
 
         id
-    }
-    pub fn revoke_policy(&self, revoked_id: PolicyId) {
-        let mut inner = self.inner.borrow_mut();
-        if let Some(policy) = inner.policies.remove(revoked_id) {
-            inner
-                .by_target
-                .entry(policy.target)
-                .and_modify(|policies| policies.retain(|&id| id != revoked_id));
-
-            if let PolicyRouting::Pinned(room_id) = policy.routing {
-                inner
-                    .room_to_policies
-                    .entry(room_id)
-                    .and_modify(|ids| ids.retain(|&id| id != revoked_id));
-            }
-        }
     }
     pub fn update_policy(
         &self,
@@ -287,7 +324,6 @@ impl NetworkReplicator {
         inner.entities_snapshots.remove(&pk);
     }
 
-    // Returns lost (non-existing) player anchors to clean them up
     fn merge_mask_within_area(
         &self,
         room_id: RoomId,
@@ -347,30 +383,114 @@ impl NetworkReplicator {
         }
     }
 
-    // Replicate changes
-    pub fn replicate(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
-        while let Ok(mark) = self.mark_rx.try_recv() {
-            self.mark_update(mark);
+    // -- Process entity sentries
+    // Cleans up despawned player anchors (entities)
+    // Returns:
+    // 1. Allowed policies per updated entity for this tick
+    // 2. Fully processed sentries that must be removed (:take limit reached)
+    // --
+    fn process_entity_sentries(
+        &self,
+        lua: &mlua::Lua,
+    ) -> eyre::Result<(HashMap<hecs::Entity, Vec<PolicyId>>, Vec<PolicyId>)> {
+        let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
+
+        let mut inner_guard = self.inner.borrow_mut();
+        let NetworkReplicatorInner {
+            entities,
+            policies,
+            by_target,
+            sentries,
+            player_anchors,
+            ..
+        } = &mut *inner_guard;
+
+        // Remove despawned anchors
+        for anchors in player_anchors.values_mut() {
+            anchors.retain(|&anchor| world.contains(anchor));
         }
 
-        let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
-        {
-            let mut inner = self.inner.borrow_mut();
-            for anchors in inner.player_anchors.values_mut() {
-                anchors.retain(|&anchor| world.contains(anchor));
+        let mut allowed_policies_per_entity: HashMap<hecs::Entity, Vec<PolicyId>> = HashMap::new();
+        let mut policies_to_remove: Vec<PolicyId> = Vec::new();
+
+        for (&entity, _) in entities.iter() {
+            if let Ok(blueprint_comp) = world.get::<&Blueprint>(entity.clone()) {
+                let blueprint_id = blueprint_comp.0;
+                let blueprint_policy_ids = by_target
+                    .get(&ReplicationTarget::Blueprint(blueprint_id))
+                    .into_iter()
+                    .flatten();
+                let entity_policy_ids = by_target
+                    .get(&ReplicationTarget::Entity(entity))
+                    .into_iter()
+                    .flatten();
+
+                for &policy_id in blueprint_policy_ids.chain(entity_policy_ids) {
+                    if let Some(policy) = policies.get_mut(policy_id) {
+                        let sentry = sentries
+                            .entry(ReplicationTarget::Entity(entity))
+                            .or_default()
+                            .entry(policy_id)
+                            .or_insert_with(|| RxSentry::new(policy.pipeline.clone()));
+
+                        match sentry.process(
+                            ().into_lua_multi(lua)
+                                .wrap_err("Failed to convert an empty value `()` to Lua")?,
+                        ) {
+                            Ok(_) => {
+                                allowed_policies_per_entity
+                                    .entry(entity)
+                                    .or_default()
+                                    .push(policy_id);
+                            }
+                            Err(err) => match err {
+                                RxSentryError::Core(CoreSentryError::LimitReached(_)) => {
+                                    // No need to remove a blueprint policy
+                                    // Remove policy for entity or memory node only
+                                    if !matches!(policy.target, ReplicationTarget::Blueprint(_)) {
+                                        policies_to_remove.push(policy_id);
+                                    }
+                                }
+                                RxSentryError::Core(CoreSentryError::Skipping)
+                                | RxSentryError::Core(CoreSentryError::Throttled) => {}
+                                RxSentryError::Op(err) => {
+                                    return Err(eyre::eyre!(
+                                        "Failed to process Rx sentry for entity with ID '{}': operator error ({})",
+                                        entity.id(),
+                                        err.to_string()
+                                    ));
+                                }
+                            },
+                        }
+                    }
+                }
             }
         }
 
-        {
-            let inner = self.inner.borrow();
+        Ok((allowed_policies_per_entity, policies_to_remove))
+    }
 
+    // -- Process changes for entities
+    // Mutates a snapshot for each player based on entity replication mark
+    // --
+    fn process_entities(
+        &self,
+        lua: &mlua::Lua,
+        tick: u64,
+        snapshots: &mut HashMap<PlayerKey, WorldSnapshot>,
+    ) -> eyre::Result<()> {
+        let (allowed_policies_per_entity, entity_policies_to_remove) =
+            self.process_entity_sentries(lua)?;
+
+        {
+            let world =
+                get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
             let mut field_registry =
                 get_app_data_mut::<FieldRegistry>(lua).wrap_err("App data is not initialized")?;
-
-            let mut snapshots: HashMap<PlayerKey, WorldSnapshot> = HashMap::new();
             let entity_customs = get_app_data::<app_data::EntityCustoms>(lua)
                 .wrap_err("App data is not initialized")?;
 
+            let inner = self.inner.borrow();
             for (&entity, dirty_components) in inner.entities.iter() {
                 let mut query = world.query_one::<(&Room, &Position, &Blueprint)>(entity);
                 if let Ok(components) = query.get() {
@@ -397,28 +517,33 @@ impl NetworkReplicator {
                             .flatten();
 
                         let policy_ids = blueprint_policy_ids.chain(entity_policy_ids);
+                        let allowed_for_this_entity = allowed_policies_per_entity.get(&entity);
                         for &policy_id in policy_ids {
-                            if let Some(policy) = inner.policies.get(policy_id) {
-                                match policy.routing {
-                                    PolicyRouting::DynamicFollow => {
-                                        self.apply_spatial_filter_for_room(
-                                            room_id,
-                                            room_players,
-                                            policy,
-                                            &*world,
-                                            position,
-                                            &mut fields_masks,
-                                        );
-                                    }
-                                    PolicyRouting::Pinned(pinned_room_id) => {
-                                        self.apply_spatial_filter_for_room(
-                                            pinned_room_id,
-                                            room_players,
-                                            policy,
-                                            &*world,
-                                            position,
-                                            &mut fields_masks,
-                                        );
+                            let is_allowed = allowed_for_this_entity
+                                .map_or(false, |allowed| allowed.contains(&policy_id));
+                            if is_allowed {
+                                if let Some(policy) = inner.policies.get(policy_id) {
+                                    match policy.routing {
+                                        PolicyRouting::DynamicFollow => {
+                                            self.apply_spatial_filter_for_room(
+                                                room_id,
+                                                room_players,
+                                                policy,
+                                                &*world,
+                                                position,
+                                                &mut fields_masks,
+                                            );
+                                        }
+                                        PolicyRouting::Pinned(pinned_room_id) => {
+                                            self.apply_spatial_filter_for_room(
+                                                pinned_room_id,
+                                                room_players,
+                                                policy,
+                                                &*world,
+                                                position,
+                                                &mut fields_masks,
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -496,10 +621,29 @@ impl NetworkReplicator {
             }
         }
 
+        // Remove taken policies
+        for policy_id in entity_policies_to_remove {
+            self.revoke_policy_by_id(policy_id);
+        }
+
+        Ok(())
+    }
+
+    // Replicate changes
+    pub fn replicate(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
+        while let Ok(mark) = self.mark_rx.try_recv() {
+            self.mark_update(mark);
+        }
+
+        let mut snapshots: HashMap<PlayerKey, WorldSnapshot> = HashMap::new();
+        self.process_entities(lua, tick, &mut snapshots)?;
+
         // Cleanup
-        let mut inner = self.inner.borrow_mut();
-        inner.entities.clear();
-        inner.memory.clear();
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.entities.clear();
+            inner.memory.clear();
+        }
 
         Ok(())
     }

@@ -11,7 +11,7 @@ use operator::{OpSentry, RxOp};
 pub(crate) mod sync;
 
 // -- Pipeline -> stateless blueprint
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct RxPipeline {
     core: CorePipeline,
     op: OpPipeline,

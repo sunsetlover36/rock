@@ -180,7 +180,10 @@ impl UserData for EntityBlueprint {
             let layers = get_app_data::<app_data::ActiveLayers>(lua)?;
             if let Some(layer_id) = layers.last() {
                 let cleaner = lua.create_function(move |lua, _: ()| {
-                    let _ = get_app_data_mut::<app_data::World>(lua)?.despawn(entity);
+                    let _ = get_app_data_mut::<app_data::World>(lua)?.despawn(entity.clone());
+                    get_app_data::<app_data::NetworkReplicator>(lua)?
+                        .revoke_policies_by_target(ReplicationTarget::Entity(entity));
+
                     Ok(())
                 })?;
 
