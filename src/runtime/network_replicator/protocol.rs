@@ -25,10 +25,14 @@ pub(crate) enum EntityDirtyComponent {
     Custom,
 }
 
+pub(crate) enum EntityReplicationAction {
+    Update(EntityDirtyComponent),
+    Despawn(RoomId),
+}
 pub(crate) enum ReplicationMark {
     Entity {
-        id: hecs::Entity,
-        component: EntityDirtyComponent,
+        entity: hecs::Entity,
+        action: EntityReplicationAction,
     },
     Memory {
         key: String,

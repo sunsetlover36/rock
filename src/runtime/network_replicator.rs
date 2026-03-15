@@ -20,10 +20,13 @@ pub(crate) use field_registry::FieldRegistry;
 use crate::{
     runtime::{
         GameModeClientApi, LuaResultExt, app_data, get_app_data, get_app_data_mut,
-        plugins::entity::components::{Blueprint, ComponentData, ComponentKey, Position, Room},
+        plugins::entity::components::{
+            Blueprint, ComponentData, ComponentKey, Control, Name, OwnedBy, Position, Room,
+            Rotation, Sprite2D, SpriteChar,
+        },
     },
     rx::{RxSentry, RxSentryError, core::CoreSentryError},
-    utils::multivalue_to_json,
+    utils::{custom_table_to_json, multivalue_to_json},
 };
 
 type PlayerAnchors = HashMap<PlayerKey, HashSet<hecs::Entity>>;
@@ -31,8 +34,8 @@ type PlayerAnchors = HashMap<PlayerKey, HashSet<hecs::Entity>>;
 struct NetworkReplicatorInner {
     client_api: Arc<dyn GameModeClientApi>,
 
-    entities: HashMap<hecs::Entity, Vec<EntityDirtyComponent>>,
-    memory: HashMap<String, serde_json::Value>,
+    updated_entities: HashMap<hecs::Entity, Vec<EntityDirtyComponent>>,
+    updated_memory: HashMap<String, serde_json::Value>,
 
     policies: SlotMap<PolicyId, ReplicationPolicy>,
     by_target: HashMap<ReplicationTarget, HashSet<PolicyId>>,
@@ -46,8 +49,8 @@ struct NetworkReplicatorInner {
     player_to_rooms: HashMap<PlayerKey, HashSet<RoomId>>,
     room_to_players: HashMap<RoomId, HashSet<PlayerKey>>,
 
-    entities_snapshots: HashMap<PlayerKey, HashMap<RoomId, HashSet<hecs::Entity>>>,
-    // memory_snapshots?
+    known_entities: HashMap<PlayerKey, HashSet<hecs::Entity>>,
+    despawn_candidates: HashMap<hecs::Entity, RoomId>,
 }
 
 pub(crate) struct NetworkReplicator {
@@ -61,17 +64,18 @@ impl NetworkReplicator {
 
         Self {
             inner: RefCell::new(NetworkReplicatorInner {
-                entities: HashMap::new(),
-                memory: HashMap::new(),
+                client_api,
+                updated_entities: HashMap::new(),
+                updated_memory: HashMap::new(),
                 policies: SlotMap::<PolicyId, ReplicationPolicy>::with_key(),
                 by_target: HashMap::new(),
                 sentries: HashMap::new(),
                 room_to_policies: HashMap::new(),
+                player_anchors: HashMap::new(),
                 player_to_rooms: HashMap::new(),
                 room_to_players: HashMap::new(),
-                player_anchors: HashMap::new(),
-                entities_snapshots: HashMap::new(),
-                client_api,
+                known_entities: HashMap::new(),
+                despawn_candidates: HashMap::new(),
             }),
             mark_tx,
             mark_rx,
@@ -84,11 +88,16 @@ impl NetworkReplicator {
     fn mark_update(&self, mark: ReplicationMark) {
         let mut inner = self.inner.borrow_mut();
         match mark {
-            ReplicationMark::Entity { id, component } => {
-                inner.entities.entry(id).or_default().push(component);
-            }
+            ReplicationMark::Entity { entity, action } => match action {
+                EntityReplicationAction::Update(comp) => {
+                    inner.updated_entities.entry(entity).or_default().push(comp);
+                }
+                EntityReplicationAction::Despawn(room_id) => {
+                    inner.despawn_candidates.insert(entity, room_id);
+                }
+            },
             ReplicationMark::Memory { key, value } => {
-                inner.memory.insert(key, value);
+                inner.updated_memory.insert(key, value);
             }
         }
     }
@@ -169,8 +178,38 @@ impl NetworkReplicator {
         sentries.remove(&target);
     }
 
-    pub fn commit_policy(&self, policy: ReplicationPolicy) -> PolicyId {
+    pub fn commit_policy(&self, policy: ReplicationPolicy) -> eyre::Result<PolicyId> {
         let mut inner = self.inner.borrow_mut();
+
+        match &policy.target {
+            ReplicationTarget::MemoryNode(node) => match policy.routing {
+                PolicyRouting::DynamicFollow => {
+                    return Err(eyre::eyre!(
+                        "Failed to commit a policy: memory node '{}' requires a target room",
+                        node
+                    ));
+                }
+                PolicyRouting::Pinned(room_id) => {
+                    if let Some(policy_ids) = inner.by_target.get(&policy.target) {
+                        for &policy_id in policy_ids {
+                            let Some(existing_policy) = inner.policies.get(policy_id) else {
+                                continue;
+                            };
+
+                            if existing_policy.routing == policy.routing {
+                                return Err(eyre::eyre!(
+                                    "Failed to commit a policy: collision occurred, memory node '{}' is already being replicated to room '{:?}'",
+                                    node,
+                                    room_id
+                                ));
+                            }
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+
         let target = policy.target.clone();
         let routing = policy.routing;
 
@@ -185,7 +224,7 @@ impl NetworkReplicator {
                 .insert(id);
         }
 
-        id
+        Ok(id)
     }
     pub fn update_policy(
         &self,
@@ -289,11 +328,6 @@ impl NetworkReplicator {
 
         inner.player_to_rooms.entry(pk).or_default().insert(id);
         inner.room_to_players.entry(id).or_default().insert(pk);
-        inner
-            .entities_snapshots
-            .entry(pk)
-            .or_default()
-            .insert(id, HashSet::new());
     }
     pub fn remove_player_from_room(&self, pk: PlayerKey, id: RoomId) {
         let mut inner = self.inner.borrow_mut();
@@ -306,9 +340,6 @@ impl NetworkReplicator {
             .room_to_players
             .entry(id)
             .and_modify(|pks| pks.retain(|&r_pk| r_pk != pk));
-        inner.entities_snapshots.entry(pk).and_modify(|rooms| {
-            rooms.remove(&id);
-        });
     }
     pub fn clear_player_rooms(&self, pk: PlayerKey) {
         let mut inner = self.inner.borrow_mut();
@@ -322,7 +353,7 @@ impl NetworkReplicator {
             }
         }
 
-        inner.entities_snapshots.remove(&pk);
+        inner.known_entities.remove(&pk);
     }
 
     fn merge_mask_within_area(
@@ -384,6 +415,110 @@ impl NetworkReplicator {
         }
     }
 
+    fn compose_entity_data(
+        &self,
+        lua: &mlua::Lua,
+        world: &hecs::World,
+        entity: hecs::Entity,
+    ) -> eyre::Result<EntityData> {
+        let entity_customs =
+            get_app_data::<app_data::EntityCustoms>(lua).wrap_err("App data is not initialized")?;
+
+        let mut query = world.query_one::<(
+            Option<&Name>,
+            Option<&Control>,
+            Option<&OwnedBy>,
+            Option<&Sprite2D>,
+            Option<&SpriteChar>,
+            Option<&Position>,
+            Option<&Rotation>,
+        )>(entity);
+
+        let (
+            name_comp,
+            control_comp,
+            owned_by_comp,
+            sprite_2d_comp,
+            sprite_char_comp,
+            position_comp,
+            rotation_comp,
+        ) = query.get()?;
+        let custom = custom_table_to_json(lua, entity_customs.get(&entity)).wrap_err(&format!(
+            "Failed to convert a custom component table to JSON for an entity with ID '{}'",
+            entity.id()
+        ))?;
+
+        let entity_data = EntityData {
+            name: name_comp.map(|c| c.0.clone()),
+            speed: control_comp.map(|c| c.speed),
+            owned_by: owned_by_comp.map(|c| c.0),
+            sprite: sprite_2d_comp.map(|c| c.0.clone()),
+            char: sprite_char_comp.map(|c| c.0.clone()),
+            position: position_comp.map(|c| c.0),
+            rotation: rotation_comp.map(|c| c.0),
+            custom,
+        };
+        Ok(entity_data)
+    }
+    fn compose_dirty_entity_data(
+        &self,
+        lua: &mlua::Lua,
+        mask: &u64,
+        entity: &hecs::Entity,
+        dirty_components: &[EntityDirtyComponent],
+    ) -> eyre::Result<EntityData> {
+        let mut field_registry =
+            get_app_data_mut::<FieldRegistry>(lua).wrap_err("App data is not initialized")?;
+        let entity_customs =
+            get_app_data::<app_data::EntityCustoms>(lua).wrap_err("App data is not initialized")?;
+
+        let mut entity_data = EntityData::default();
+        for comp in dirty_components {
+            match comp {
+                EntityDirtyComponent::Core(comp) => {
+                    let key = ComponentKey::from(comp);
+                    let bit = field_registry.get_bit_index(key.as_ref())?;
+                    if (mask & (1 << bit)) == 0 {
+                        continue;
+                    }
+
+                    match comp {
+                        ComponentData::Name(name) => {
+                            entity_data.name = Some(name.0.clone());
+                        }
+                        ComponentData::Position(position) => {
+                            entity_data.position = Some(position.0);
+                        }
+                        ComponentData::Rotation(rotation) => {
+                            entity_data.rotation = Some(rotation.0);
+                        }
+                        ComponentData::Control(control) => {
+                            entity_data.speed = Some(control.speed);
+                        }
+                        ComponentData::Sprite2D(sprite_2d) => {
+                            entity_data.sprite = Some(sprite_2d.0.clone());
+                        }
+                        ComponentData::SpriteChar(sprite_char) => {
+                            entity_data.char = Some(sprite_char.0.clone());
+                        }
+                        ComponentData::OwnedBy(owned_by) => {
+                            entity_data.owned_by = Some(owned_by.0);
+                        }
+                        ComponentData::Blueprint(_) | ComponentData::Room(_) => {}
+                    }
+                }
+                EntityDirtyComponent::Custom => {
+                    entity_data.custom = custom_table_to_json(lua, entity_customs.get(&entity)).wrap_err(&format!(
+                        "Failed to convert a custom component table to JSON for an entity with ID '{}'",
+                        entity.id()
+                    ))?;
+                }
+            }
+        }
+
+        Ok(entity_data)
+    }
+
     // -- Process entity sentries
     // Cleans up despawned player anchors (entities)
     // Returns:
@@ -398,7 +533,7 @@ impl NetworkReplicator {
 
         let mut inner_guard = self.inner.borrow_mut();
         let NetworkReplicatorInner {
-            entities,
+            updated_entities,
             policies,
             by_target,
             sentries,
@@ -414,8 +549,8 @@ impl NetworkReplicator {
         let mut allowed_policies_per_entity: HashMap<hecs::Entity, Vec<PolicyId>> = HashMap::new();
         let mut policies_to_remove: Vec<PolicyId> = Vec::new();
 
-        for (&entity, _) in entities.iter() {
-            if let Ok(blueprint_comp) = world.get::<&Blueprint>(entity.clone()) {
+        for (&entity, _) in updated_entities.iter() {
+            if let Ok(blueprint_comp) = world.get::<&Blueprint>(entity) {
                 let blueprint_id = blueprint_comp.0;
                 let blueprint_policy_ids = by_target
                     .get(&ReplicationTarget::Blueprint(blueprint_id))
@@ -483,144 +618,115 @@ impl NetworkReplicator {
         let (allowed_policies_per_entity, entity_policies_to_remove) =
             self.process_entity_sentries(lua)?;
 
-        {
-            let world =
-                get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
-            let mut field_registry =
-                get_app_data_mut::<FieldRegistry>(lua).wrap_err("App data is not initialized")?;
-            let entity_customs = get_app_data::<app_data::EntityCustoms>(lua)
-                .wrap_err("App data is not initialized")?;
+        let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
 
-            let inner = self.inner.borrow();
-            for (&entity, dirty_components) in inner.entities.iter() {
-                let mut query = world.query_one::<(&Room, &Position, &Blueprint)>(entity);
-                if let Ok(components) = query.get() {
-                    let (room_comp, pos_comp, blueprint_comp) = components;
+        let inner = self.inner.borrow();
+        let mut newly_discovered_entities: HashMap<PlayerKey, HashSet<hecs::Entity>> =
+            HashMap::new();
 
-                    let room_id = room_comp.0;
-                    let blueprint_id = blueprint_comp.0;
-                    let position = pos_comp.0;
+        for (&entity, dirty_components) in inner.updated_entities.iter() {
+            let mut query = world.query_one::<(&Room, &Position, &Blueprint)>(entity);
+            if let Ok(components) = query.get() {
+                let (room_comp, pos_comp, blueprint_comp) = components;
 
-                    // If there are players in this room who need to receive updates
-                    if let Some(room_players) = inner.room_to_players.get(&room_id) {
-                        let mut fields_masks: HashMap<RoomId, HashMap<PlayerKey, u64>> =
-                            HashMap::new();
+                let room_id = room_comp.0;
+                let blueprint_id = blueprint_comp.0;
+                let position = pos_comp.0;
 
-                        let blueprint_policy_ids = inner
-                            .by_target
-                            .get(&ReplicationTarget::Blueprint(blueprint_id))
-                            .into_iter()
-                            .flatten();
-                        let entity_policy_ids = inner
-                            .by_target
-                            .get(&ReplicationTarget::Entity(entity))
-                            .into_iter()
-                            .flatten();
+                // If there are players in this room who need to receive updates
+                if let Some(room_players) = inner.room_to_players.get(&room_id) {
+                    let mut fields_masks: HashMap<RoomId, HashMap<PlayerKey, u64>> = HashMap::new();
 
-                        let policy_ids = blueprint_policy_ids.chain(entity_policy_ids);
-                        let allowed_for_this_entity = allowed_policies_per_entity.get(&entity);
-                        for &policy_id in policy_ids {
-                            let is_allowed = allowed_for_this_entity
-                                .map_or(false, |allowed| allowed.contains(&policy_id));
-                            if is_allowed {
-                                if let Some(policy) = inner.policies.get(policy_id) {
-                                    match policy.routing {
-                                        PolicyRouting::DynamicFollow => {
-                                            self.apply_spatial_filter_for_room(
-                                                room_id,
-                                                room_players,
-                                                policy,
-                                                &*world,
-                                                position,
-                                                &mut fields_masks,
-                                            );
-                                        }
-                                        PolicyRouting::Pinned(pinned_room_id) => {
-                                            self.apply_spatial_filter_for_room(
-                                                pinned_room_id,
-                                                room_players,
-                                                policy,
-                                                &*world,
-                                                position,
-                                                &mut fields_masks,
-                                            );
-                                        }
+                    let blueprint_policy_ids = inner
+                        .by_target
+                        .get(&ReplicationTarget::Blueprint(blueprint_id))
+                        .into_iter()
+                        .flatten();
+                    let entity_policy_ids = inner
+                        .by_target
+                        .get(&ReplicationTarget::Entity(entity))
+                        .into_iter()
+                        .flatten();
+
+                    let policy_ids = blueprint_policy_ids.chain(entity_policy_ids);
+                    let allowed_for_this_entity = allowed_policies_per_entity.get(&entity);
+                    for &policy_id in policy_ids {
+                        let is_allowed = allowed_for_this_entity
+                            .map_or(false, |allowed| allowed.contains(&policy_id));
+                        if is_allowed {
+                            if let Some(policy) = inner.policies.get(policy_id) {
+                                match policy.routing {
+                                    PolicyRouting::DynamicFollow => {
+                                        self.apply_spatial_filter_for_room(
+                                            room_id,
+                                            room_players,
+                                            policy,
+                                            &*world,
+                                            position,
+                                            &mut fields_masks,
+                                        );
+                                    }
+                                    PolicyRouting::Pinned(pinned_room_id) => {
+                                        self.apply_spatial_filter_for_room(
+                                            pinned_room_id,
+                                            room_players,
+                                            policy,
+                                            &*world,
+                                            position,
+                                            &mut fields_masks,
+                                        );
                                     }
                                 }
                             }
                         }
+                    }
 
-                        for (&room_id, masks) in fields_masks.iter() {
-                            for (&pk, mask) in masks.iter() {
-                                let room_snapshot = snapshots
+                    for (&room_id, masks) in fields_masks.iter() {
+                        for (&pk, mask) in masks.iter() {
+                            let room_snapshot = snapshots
+                                .entry(pk)
+                                .or_insert_with(|| WorldSnapshot::new(tick))
+                                .rooms
+                                .entry(room_id)
+                                .or_default();
+                            let known_to_player = inner
+                                .known_entities
+                                .get(&pk)
+                                .map_or(false, |set| set.contains(&entity));
+
+                            let entity_id = entity.id();
+                            if known_to_player {
+                                room_snapshot.update.insert(
+                                    entity_id,
+                                    self.compose_dirty_entity_data(
+                                        lua,
+                                        mask,
+                                        &entity,
+                                        dirty_components,
+                                    )?,
+                                );
+                            } else {
+                                room_snapshot.spawn.insert(
+                                    entity_id,
+                                    self.compose_entity_data(lua, &*world, entity)?,
+                                );
+                                newly_discovered_entities
                                     .entry(pk)
-                                    .or_insert_with(|| WorldSnapshot::new(tick))
-                                    .rooms
-                                    .entry(room_id)
-                                    .or_default();
-
-                                let mut entity_data = EntityData::default();
-                                for comp in dirty_components {
-                                    match comp {
-                                        EntityDirtyComponent::Core(comp) => {
-                                            let key = ComponentKey::from(comp);
-                                            let bit = field_registry.get_bit_index(key.as_ref())?;
-                                            if (mask & (1 << bit)) == 0 {
-                                                continue;
-                                            }
-
-                                            match comp {
-                                                ComponentData::Name(name) => {
-                                                    entity_data.name = Some(name.0.clone());
-                                                }
-                                                ComponentData::Position(_) => {
-                                                    entity_data.position = Some(position);
-                                                }
-                                                ComponentData::Rotation(rotation) => {
-                                                    entity_data.rotation = Some(rotation.0);
-                                                }
-                                                ComponentData::Control(control) => {
-                                                    entity_data.speed = Some(control.speed);
-                                                }
-                                                ComponentData::Sprite2D(sprite_2d) => {
-                                                    entity_data.sprite = Some(sprite_2d.0.clone());
-                                                }
-                                                ComponentData::SpriteChar(sprite_char) => {
-                                                    entity_data.char = Some(sprite_char.0.clone());
-                                                }
-                                                ComponentData::OwnedBy(owned_by) => {
-                                                    entity_data.owned_by = Some(owned_by.0);
-                                                }
-                                                ComponentData::Blueprint(_)
-                                                | ComponentData::Room(_) => {}
-                                            }
-                                        }
-                                        EntityDirtyComponent::Custom => {
-                                            let entity_id = entity.id();
-
-                                            let mut map: serde_json::Map<
-                                                String,
-                                                serde_json::Value,
-                                            > = serde_json::Map::new();
-                                            if let Some(custom) = entity_customs.get(&entity) {
-                                                for pair in custom.pairs::<String, mlua::Value>() {
-                                                    let (key, value) = pair.wrap_err(&format!("Failed to convert a custom table field to a needed type for an entity with ID '{}'", entity_id))?;
-                                                    map.insert(key, lua.from_value(value).wrap_err(&format!("Failed to convert a custom table value to a needed type for an entity with ID '{}'", entity_id))?);
-                                                }
-                                            }
-
-                                            entity_data.custom = Some(map);
-                                        }
-                                    }
-                                }
-
-                                room_snapshot.entities.insert(entity.id(), entity_data);
+                                    .or_default()
+                                    .insert(entity);
                             }
                         }
                     }
                 }
             }
         }
+        drop(inner);
+
+        let mut inner = self.inner.borrow_mut();
+        for (&pk, entities) in newly_discovered_entities.iter() {
+            inner.known_entities.entry(pk).or_default().extend(entities);
+        }
+        drop(inner);
 
         // Remove taken policies
         for policy_id in entity_policies_to_remove {
@@ -637,111 +743,106 @@ impl NetworkReplicator {
         tick: u64,
         snapshots: &mut HashMap<PlayerKey, WorldSnapshot>,
     ) -> eyre::Result<()> {
-        let policies_to_remove = {
-            let mut inner_guard = self.inner.borrow_mut();
-            let NetworkReplicatorInner {
-                memory,
-                policies,
-                by_target,
-                sentries,
-                ..
-            } = &mut *inner_guard;
+        let mut inner_guard = self.inner.borrow_mut();
+        let NetworkReplicatorInner {
+            updated_memory,
+            policies,
+            by_target,
+            sentries,
+            ..
+        } = &mut *inner_guard;
 
-            let mut policies_to_remove: Vec<PolicyId> = Vec::new();
-            for (key, value) in memory.iter() {
-                let key_str: Arc<str> = Arc::from(key.as_str());
+        let mut policies_to_remove: Vec<PolicyId> = Vec::new();
+        for (key, value) in updated_memory.iter() {
+            let key_str: Arc<str> = Arc::from(key.as_str());
 
-                let target = ReplicationTarget::MemoryNode(key.clone());
-                let Some(policy_ids) = by_target.get(&target) else {
+            let target = ReplicationTarget::MemoryNode(key.clone());
+            let Some(policy_ids) = by_target.get(&target) else {
+                continue;
+            };
+            let node_sentries = sentries.entry(target).or_default();
+
+            let lua_value = lua.to_value(&value).wrap_err(&format!(
+                "Failed to convert JSON value for memory node '{}' to Lua value",
+                key
+            ))?;
+
+            for &policy_id in policy_ids {
+                let Some(policy) = policies.get(policy_id) else {
                     continue;
                 };
-                let node_sentries = sentries.entry(target).or_default();
 
-                let lua_value = lua.to_value(&value).wrap_err(&format!(
-                    "Failed to convert JSON value for memory node '{}' to Lua value",
-                    key
-                ))?;
+                match policy.routing {
+                    PolicyRouting::DynamicFollow => {
+                        return Err(eyre::eyre!(
+                            "Failed to process a memory node policy: encountered a memory node policy with dynamic follow routing, key {}",
+                            key
+                        ));
+                    }
+                    PolicyRouting::Pinned(room_id) => {
+                        let sentry = node_sentries
+                            .entry(policy_id)
+                            .or_insert_with(|| RxSentry::new(policy.pipeline.clone()));
 
-                for &policy_id in policy_ids {
-                    let Some(policy) = policies.get(policy_id) else {
-                        continue;
-                    };
-
-                    match policy.routing {
-                        PolicyRouting::DynamicFollow => {
-                            return Err(eyre::eyre!(
-                                "Failed to process a memory node policy: encountered a memory node policy with dynamic follow routing, key {}",
-                                key
-                            ));
-                        }
-                        PolicyRouting::Pinned(room_id) => {
-                            let sentry = node_sentries
-                                .entry(policy_id)
-                                .or_insert_with(|| RxSentry::new(policy.pipeline.clone()));
-
-                            let args = mlua::MultiValue::from_vec(vec![lua_value.clone()]);
-                            match sentry.process(args) {
-                                Ok(Some(args)) => {
-                                    let json_str: Arc<str> =
+                        let args = mlua::MultiValue::from_vec(vec![lua_value.clone()]);
+                        match sentry.process(args) {
+                            Ok(Some(args)) => {
+                                let json_str: Arc<str> =
                                                 Arc::from(multivalue_to_json(lua, args).wrap_err(&format!("Failed to convert processed sentry args to JSON for memory node, key '{}'", key))?);
 
-                                    let mut write_snapshot = |pk| {
-                                        let room_snapshot = snapshots
-                                            .entry(pk)
-                                            .or_insert_with(|| WorldSnapshot::new(tick))
-                                            .rooms
-                                            .entry(room_id)
-                                            .or_default();
-                                        room_snapshot
-                                            .state
-                                            .insert(key_str.clone(), json_str.clone());
-                                    };
-                                    match policy.spatial {
-                                        SpatialFilter::Global => {
-                                            for pk in self.get_players_in_room(room_id) {
-                                                write_snapshot(pk);
-                                            }
+                                let mut write_snapshot = |pk| {
+                                    let room_snapshot = snapshots
+                                        .entry(pk)
+                                        .or_insert_with(|| WorldSnapshot::new(tick))
+                                        .rooms
+                                        .entry(room_id)
+                                        .or_default();
+                                    room_snapshot
+                                        .state
+                                        .insert(key_str.clone(), json_str.clone());
+                                };
+                                match policy.spatial {
+                                    SpatialFilter::Global => {
+                                        for pk in self.get_players_in_room(room_id) {
+                                            write_snapshot(pk);
                                         }
-                                        SpatialFilter::Radius(_) => {
-                                            return Err(eyre::eyre!(
-                                                "Failed to process a memory node policy: encountered a memory node policy with radius-based spatial filter, key {}",
-                                                key
-                                            ));
-                                        }
-                                        SpatialFilter::Area(area) => {
-                                            let world = get_app_data::<app_data::World>(lua)
-                                                .wrap_err("App data is not initialized")?;
-                                            for pk in
-                                                self.get_players_in_area(&*world, room_id, area)
-                                            {
-                                                write_snapshot(pk);
-                                            }
+                                    }
+                                    SpatialFilter::Radius(_) => {
+                                        return Err(eyre::eyre!(
+                                            "Failed to process a memory node policy: encountered a memory node policy with radius-based spatial filter, key {}",
+                                            key
+                                        ));
+                                    }
+                                    SpatialFilter::Area(area) => {
+                                        let world = get_app_data::<app_data::World>(lua)
+                                            .wrap_err("App data is not initialized")?;
+                                        for pk in self.get_players_in_area(&*world, room_id, area) {
+                                            write_snapshot(pk);
                                         }
                                     }
                                 }
-                                Ok(None) => {}
-                                Err(err) => match err {
-                                    RxSentryError::Core(CoreSentryError::LimitReached(_)) => {
-                                        policies_to_remove.push(policy_id);
-                                    }
-                                    RxSentryError::Core(CoreSentryError::Skipping)
-                                    | RxSentryError::Core(CoreSentryError::Throttled) => {}
-                                    RxSentryError::Op(err) => {
-                                        return Err(eyre::eyre!(
-                                            "Failed to process Rx sentry for memory node '{}': operator error ({})",
-                                            key,
-                                            err.to_string()
-                                        ));
-                                    }
-                                },
                             }
+                            Ok(None) => {}
+                            Err(err) => match err {
+                                RxSentryError::Core(CoreSentryError::LimitReached(_)) => {
+                                    policies_to_remove.push(policy_id);
+                                }
+                                RxSentryError::Core(CoreSentryError::Skipping)
+                                | RxSentryError::Core(CoreSentryError::Throttled) => {}
+                                RxSentryError::Op(err) => {
+                                    return Err(eyre::eyre!(
+                                        "Failed to process Rx sentry for memory node '{}': operator error ({})",
+                                        key,
+                                        err.to_string()
+                                    ));
+                                }
+                            },
                         }
                     }
                 }
             }
-
-            policies_to_remove
-        };
+        }
+        drop(inner_guard);
 
         for policy_id in policies_to_remove {
             self.revoke_policy_by_id(policy_id);
@@ -749,6 +850,49 @@ impl NetworkReplicator {
 
         Ok(())
     }
+    fn process_despawned_entities(
+        &self,
+        tick: u64,
+        snapshots: &mut HashMap<PlayerKey, WorldSnapshot>,
+    ) {
+        let mut inner_guard = self.inner.borrow_mut();
+        let NetworkReplicatorInner {
+            updated_entities,
+            known_entities,
+            despawn_candidates,
+            ..
+        } = &mut *inner_guard;
+
+        let despawn_candidates: HashMap<hecs::Entity, RoomId> =
+            despawn_candidates.drain().collect();
+
+        for (&entity, _) in despawn_candidates.iter() {
+            updated_entities.remove(&entity);
+        }
+
+        for (&pk, entities) in known_entities {
+            entities.retain(|e| {
+                despawn_candidates.get(e).map_or(true, |&room_id| {
+                    snapshots
+                        .entry(pk)
+                        .or_insert_with(|| WorldSnapshot::new(tick))
+                        .rooms
+                        .entry(room_id)
+                        .or_default()
+                        .despawn
+                        .push(e.id());
+
+                    false
+                })
+            });
+        }
+        drop(inner_guard);
+
+        for (&entity, _) in despawn_candidates.iter() {
+            self.revoke_policies_by_target(ReplicationTarget::Entity(entity));
+        }
+    }
+    fn despawn_by_spatial(&self, tick: u64, snapshots: &mut HashMap<PlayerKey, WorldSnapshot>) {}
 
     // Replicate changes
     pub fn replicate(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
@@ -758,15 +902,15 @@ impl NetworkReplicator {
 
         // Construct snapshots
         let mut snapshots: HashMap<PlayerKey, WorldSnapshot> = HashMap::new();
+        self.process_despawned_entities(tick, &mut snapshots);
         self.process_entities(lua, tick, &mut snapshots)?;
         self.process_memory_nodes(lua, tick, &mut snapshots)?;
+        self.despawn_by_spatial(tick, &mut snapshots);
 
         // Cleanup
-        {
-            let mut inner = self.inner.borrow_mut();
-            inner.entities.clear();
-            inner.memory.clear();
-        }
+        let mut inner = self.inner.borrow_mut();
+        inner.updated_entities.clear();
+        inner.updated_memory.clear();
 
         // Send snapshots
 

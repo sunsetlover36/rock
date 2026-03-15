@@ -3,9 +3,7 @@ use mlua::{UserData, UserDataMethods};
 use crate::{
     runtime::{
         app_data, get_app_data,
-        network_replicator::protocol::{
-            PolicyId, PolicyRouting, ReplicationPolicy, ReplicationTarget,
-        },
+        network_replicator::protocol::{PolicyId, ReplicationPolicy},
     },
     rx::HasPipeline,
 };
@@ -33,21 +31,11 @@ where
 {
     methods.add_method("commit", |lua, this, _: ()| {
         let mut policy = this.policy().clone();
-        match &policy.target {
-            ReplicationTarget::MemoryNode(node) => {
-                if policy.routing == PolicyRouting::DynamicFollow {
-                    return Err(mlua::Error::runtime(format!(
-                        "Failed to commit a policy: memory node '{}' requires a target room",
-                        node
-                    )));
-                }
-            }
-            _ => {}
-        }
-
         policy.pipeline = this.pipeline().clone();
 
-        let id = get_app_data::<app_data::NetworkReplicator>(lua)?.commit_policy(policy);
+        let id = get_app_data::<app_data::NetworkReplicator>(lua)?
+            .commit_policy(policy)
+            .map_err(mlua::Error::runtime)?;
         Ok(this.to_policy_handle(id))
     });
 }

@@ -54,3 +54,18 @@ pub fn multivalue_to_json(lua: &Lua, mv: mlua::MultiValue) -> mlua::Result<Strin
         }
     }
 }
+
+pub fn custom_table_to_json(
+    lua: &mlua::Lua,
+    custom: Option<&mlua::Table>,
+) -> mlua::Result<serde_json::Map<String, serde_json::Value>> {
+    let mut map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    if let Some(custom) = custom {
+        for pair in custom.pairs::<String, mlua::Value>() {
+            let (key, value) = pair?;
+            map.insert(key, lua.from_value(value)?);
+        }
+    }
+
+    Ok(map)
+}

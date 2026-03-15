@@ -10,10 +10,12 @@ use super::{
     rx::SyncRx,
 };
 use crate::runtime::{
-    app_data, get_str_hash,
+    app_data, despawn_entity, get_str_hash,
     network_replicator::{
         FieldRegistry,
-        protocol::{EntityDirtyComponent, ReplicationMark, ReplicationTarget},
+        protocol::{
+            EntityDirtyComponent, EntityReplicationAction, ReplicationMark, ReplicationTarget,
+        },
     },
     plugins::{
         OnPluginLazy,
@@ -63,8 +65,8 @@ impl EntityHandle {
 
         let replicator_tx = get_app_data::<app_data::ReplicatorMarkTx>(lua)?;
         let _ = replicator_tx.0.send(ReplicationMark::Entity {
-            id: self.entity,
-            component: EntityDirtyComponent::Custom,
+            entity: self.entity,
+            action: EntityReplicationAction::Update(EntityDirtyComponent::Custom),
         });
 
         Ok(())
@@ -120,10 +122,7 @@ impl UserData for EntityHandle {
         });
 
         methods.add_method("despawn", |lua, this, _: ()| {
-            match get_app_data_mut::<app_data::World>(lua)?.despawn(this.entity) {
-                Ok(()) => Ok(true),
-                Err(hecs::NoSuchEntity) => Ok(false),
-            }
+            despawn_entity(lua, this.entity)
         });
 
         methods.add_method("exists", |lua, this, _: ()| {

@@ -12,7 +12,7 @@ use super::{
     rx::SyncRx,
 };
 use crate::runtime::{
-    app_data, get_str_hash,
+    app_data, despawn_entity, get_str_hash,
     network_replicator::{FieldRegistry, protocol::ReplicationTarget},
     plugins::{OnPluginLazy, entity::components::ComponentKey, on::protocol::EventScope},
     utils::{get_app_data, get_app_data_mut},
@@ -179,13 +179,7 @@ impl UserData for EntityBlueprint {
             // Layer garbage collection
             let layers = get_app_data::<app_data::ActiveLayers>(lua)?;
             if let Some(layer_id) = layers.last() {
-                let cleaner = lua.create_function(move |lua, _: ()| {
-                    let _ = get_app_data_mut::<app_data::World>(lua)?.despawn(entity.clone());
-                    get_app_data::<app_data::NetworkReplicator>(lua)?
-                        .revoke_policies_by_target(ReplicationTarget::Entity(entity));
-
-                    Ok(())
-                })?;
+                let cleaner = lua.create_function(move |lua, _: ()| despawn_entity(lua, entity))?;
 
                 get_app_data_mut::<app_data::LayerRegistry>(lua)?
                     .layers
