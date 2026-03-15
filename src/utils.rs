@@ -1,4 +1,4 @@
-use mlua::{Lua, Value as LuaValue};
+use mlua::{Lua, LuaSerdeExt, Value as LuaValue};
 use serde_json::Value as JsonValue;
 
 pub fn json_to_lua(lua: &Lua, value: JsonValue) -> mlua::Result<LuaValue> {
@@ -35,4 +35,22 @@ pub fn json_to_lua(lua: &Lua, value: JsonValue) -> mlua::Result<LuaValue> {
             LuaValue::Table(table)
         }
     })
+}
+
+pub fn multivalue_to_json(lua: &Lua, mv: mlua::MultiValue) -> mlua::Result<String> {
+    match mv.len() {
+        0 => Ok("null".to_owned()),
+        1 => {
+            let v: serde_json::Value =
+                lua.from_value::<serde_json::Value>(mv.into_iter().next().unwrap())?;
+            Ok(serde_json::to_string(&v).map_err(mlua::Error::runtime)?)
+        }
+        _ => {
+            let arr: Vec<serde_json::Value> = mv
+                .into_iter()
+                .map(|v| lua.from_value(v))
+                .collect::<mlua::Result<_>>()?;
+            Ok(serde_json::to_string(&arr).map_err(mlua::Error::runtime)?)
+        }
+    }
 }

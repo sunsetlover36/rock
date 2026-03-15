@@ -23,6 +23,7 @@ use crate::{
         plugins::entity::components::{Blueprint, ComponentData, ComponentKey, Position, Room},
     },
     rx::{RxSentry, RxSentryError, core::CoreSentryError},
+    utils::multivalue_to_json,
 };
 
 type PlayerAnchors = HashMap<PlayerKey, HashSet<hecs::Entity>>;
@@ -553,7 +554,7 @@ impl NetworkReplicator {
                             for (&pk, mask) in masks.iter() {
                                 let room_snapshot = snapshots
                                     .entry(pk)
-                                    .or_insert(WorldSnapshot::new(tick))
+                                    .or_insert_with(|| WorldSnapshot::new(tick))
                                     .rooms
                                     .entry(room_id)
                                     .or_default();
@@ -629,14 +630,136 @@ impl NetworkReplicator {
         Ok(())
     }
 
+    // Process memory nodes
+    fn process_memory_nodes(
+        &self,
+        lua: &mlua::Lua,
+        tick: u64,
+        snapshots: &mut HashMap<PlayerKey, WorldSnapshot>,
+    ) -> eyre::Result<()> {
+        let policies_to_remove = {
+            let mut inner_guard = self.inner.borrow_mut();
+            let NetworkReplicatorInner {
+                memory,
+                policies,
+                by_target,
+                sentries,
+                ..
+            } = &mut *inner_guard;
+
+            let mut policies_to_remove: Vec<PolicyId> = Vec::new();
+            for (key, value) in memory.iter() {
+                let key_str: Arc<str> = Arc::from(key.as_str());
+
+                let target = ReplicationTarget::MemoryNode(key.clone());
+                let Some(policy_ids) = by_target.get(&target) else {
+                    continue;
+                };
+                let node_sentries = sentries.entry(target).or_default();
+
+                let lua_value = lua.to_value(&value).wrap_err(&format!(
+                    "Failed to convert JSON value for memory node '{}' to Lua value",
+                    key
+                ))?;
+
+                for &policy_id in policy_ids {
+                    let Some(policy) = policies.get(policy_id) else {
+                        continue;
+                    };
+
+                    match policy.routing {
+                        PolicyRouting::DynamicFollow => {
+                            return Err(eyre::eyre!(
+                                "Failed to process a memory node policy: encountered a memory node policy with dynamic follow routing, key {}",
+                                key
+                            ));
+                        }
+                        PolicyRouting::Pinned(room_id) => {
+                            let sentry = node_sentries
+                                .entry(policy_id)
+                                .or_insert_with(|| RxSentry::new(policy.pipeline.clone()));
+
+                            let args = mlua::MultiValue::from_vec(vec![lua_value.clone()]);
+                            match sentry.process(args) {
+                                Ok(Some(args)) => {
+                                    let json_str: Arc<str> =
+                                                Arc::from(multivalue_to_json(lua, args).wrap_err(&format!("Failed to convert processed sentry args to JSON for memory node, key '{}'", key))?);
+
+                                    let mut write_snapshot = |pk| {
+                                        let room_snapshot = snapshots
+                                            .entry(pk)
+                                            .or_insert_with(|| WorldSnapshot::new(tick))
+                                            .rooms
+                                            .entry(room_id)
+                                            .or_default();
+                                        room_snapshot
+                                            .state
+                                            .insert(key_str.clone(), json_str.clone());
+                                    };
+                                    match policy.spatial {
+                                        SpatialFilter::Global => {
+                                            for pk in self.get_players_in_room(room_id) {
+                                                write_snapshot(pk);
+                                            }
+                                        }
+                                        SpatialFilter::Radius(_) => {
+                                            return Err(eyre::eyre!(
+                                                "Failed to process a memory node policy: encountered a memory node policy with radius-based spatial filter, key {}",
+                                                key
+                                            ));
+                                        }
+                                        SpatialFilter::Area(area) => {
+                                            let world = get_app_data::<app_data::World>(lua)
+                                                .wrap_err("App data is not initialized")?;
+                                            for pk in
+                                                self.get_players_in_area(&*world, room_id, area)
+                                            {
+                                                write_snapshot(pk);
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(err) => match err {
+                                    RxSentryError::Core(CoreSentryError::LimitReached(_)) => {
+                                        policies_to_remove.push(policy_id);
+                                    }
+                                    RxSentryError::Core(CoreSentryError::Skipping)
+                                    | RxSentryError::Core(CoreSentryError::Throttled) => {}
+                                    RxSentryError::Op(err) => {
+                                        return Err(eyre::eyre!(
+                                            "Failed to process Rx sentry for memory node '{}': operator error ({})",
+                                            key,
+                                            err.to_string()
+                                        ));
+                                    }
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+
+            policies_to_remove
+        };
+
+        for policy_id in policies_to_remove {
+            self.revoke_policy_by_id(policy_id);
+        }
+
+        Ok(())
+    }
+
     // Replicate changes
     pub fn replicate(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
         while let Ok(mark) = self.mark_rx.try_recv() {
             self.mark_update(mark);
         }
 
+        // Construct snapshots
         let mut snapshots: HashMap<PlayerKey, WorldSnapshot> = HashMap::new();
         self.process_entities(lua, tick, &mut snapshots)?;
+        self.process_memory_nodes(lua, tick, &mut snapshots)?;
 
         // Cleanup
         {
@@ -644,6 +767,8 @@ impl NetworkReplicator {
             inner.entities.clear();
             inner.memory.clear();
         }
+
+        // Send snapshots
 
         Ok(())
     }
