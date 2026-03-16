@@ -1,15 +1,12 @@
 use color_eyre::eyre;
 use mlua::{IntoLuaMulti, LuaSerdeExt};
+use rustc_hash::FxHashMap;
 use shared::{
-    EntityData, PlayerKey, WorldSnapshot,
+    EntityData, OutgoingPacket, PlayerKey, WorldSnapshot,
     components::{RadialArea, Vector2D},
 };
 use slotmap::SlotMap;
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{cell::RefCell, collections::HashSet, sync::Arc};
 
 pub mod protocol;
 use protocol::*;
@@ -18,6 +15,7 @@ mod field_registry;
 pub(crate) use field_registry::FieldRegistry;
 
 use crate::{
+    envelope::{EnvelopeRecipient, ServerEnvelope},
     runtime::{
         GameModeClientApi, LuaResultExt, app_data, get_app_data, get_app_data_mut,
         plugins::entity::components::{
@@ -29,31 +27,30 @@ use crate::{
     utils::{custom_table_to_json, multivalue_to_json},
 };
 
-type PlayerAnchors = HashMap<PlayerKey, HashSet<hecs::Entity>>;
+type PlayerAnchors = FxHashMap<PlayerKey, HashSet<hecs::Entity>>;
 
 struct NetworkReplicatorInner {
-    client_api: Arc<dyn GameModeClientApi>,
-
-    updated_entities: HashMap<hecs::Entity, Vec<EntityDirtyComponent>>,
-    updated_memory: HashMap<String, serde_json::Value>,
+    updated_entities: FxHashMap<hecs::Entity, Vec<EntityDirtyComponent>>,
+    updated_memory: FxHashMap<String, serde_json::Value>,
 
     policies: SlotMap<PolicyId, ReplicationPolicy>,
-    by_target: HashMap<ReplicationTarget, HashSet<PolicyId>>,
+    by_target: FxHashMap<ReplicationTarget, HashSet<PolicyId>>,
 
-    sentries: HashMap<ReplicationTarget, HashMap<PolicyId, RxSentry>>,
+    sentries: FxHashMap<ReplicationTarget, FxHashMap<PolicyId, RxSentry>>,
 
     // Pinned policies only
-    room_to_policies: HashMap<RoomId, HashSet<PolicyId>>,
+    room_to_policies: FxHashMap<RoomId, HashSet<PolicyId>>,
 
     player_anchors: PlayerAnchors,
-    player_to_rooms: HashMap<PlayerKey, HashSet<RoomId>>,
-    room_to_players: HashMap<RoomId, HashSet<PlayerKey>>,
+    player_to_rooms: FxHashMap<PlayerKey, HashSet<RoomId>>,
+    room_to_players: FxHashMap<RoomId, HashSet<PlayerKey>>,
 
-    known_entities: HashMap<PlayerKey, HashSet<hecs::Entity>>,
-    despawn_candidates: HashMap<hecs::Entity, RoomId>,
+    known_entities: FxHashMap<PlayerKey, HashSet<hecs::Entity>>,
+    despawn_candidates: FxHashMap<hecs::Entity, RoomId>,
 }
 
 pub(crate) struct NetworkReplicator {
+    client_api: Arc<dyn GameModeClientApi>,
     inner: RefCell<NetworkReplicatorInner>,
     mark_tx: flume::Sender<ReplicationMark>,
     mark_rx: flume::Receiver<ReplicationMark>,
@@ -63,19 +60,19 @@ impl NetworkReplicator {
         let (mark_tx, mark_rx) = flume::unbounded::<ReplicationMark>();
 
         Self {
+            client_api,
             inner: RefCell::new(NetworkReplicatorInner {
-                client_api,
-                updated_entities: HashMap::new(),
-                updated_memory: HashMap::new(),
+                updated_entities: FxHashMap::default(),
+                updated_memory: FxHashMap::default(),
                 policies: SlotMap::<PolicyId, ReplicationPolicy>::with_key(),
-                by_target: HashMap::new(),
-                sentries: HashMap::new(),
-                room_to_policies: HashMap::new(),
-                player_anchors: HashMap::new(),
-                player_to_rooms: HashMap::new(),
-                room_to_players: HashMap::new(),
-                known_entities: HashMap::new(),
-                despawn_candidates: HashMap::new(),
+                by_target: FxHashMap::default(),
+                sentries: FxHashMap::default(),
+                room_to_policies: FxHashMap::default(),
+                player_anchors: FxHashMap::default(),
+                player_to_rooms: FxHashMap::default(),
+                room_to_players: FxHashMap::default(),
+                known_entities: FxHashMap::default(),
+                despawn_candidates: FxHashMap::default(),
             }),
             mark_tx,
             mark_rx,
@@ -124,7 +121,7 @@ impl NetworkReplicator {
         players_in_room
             .filter(|pk| {
                 if let Some(anchors) = inner.player_anchors.get(pk) {
-                    self.visible_to_anchors(room_id, area, anchors, world)
+                    self.is_area_visible(room_id, area, anchors, world)
                 } else {
                     false
                 }
@@ -304,7 +301,8 @@ impl NetworkReplicator {
     pub fn clear_player_anchors(&self, pk: PlayerKey) {
         self.inner.borrow_mut().player_anchors.remove(&pk);
     }
-    fn visible_to_anchors(
+
+    fn is_area_visible(
         &self,
         room_id: RoomId,
         area: RadialArea,
@@ -363,13 +361,13 @@ impl NetworkReplicator {
         mask: u64,
         world: &hecs::World,
         area: RadialArea,
-        room_masks: &mut HashMap<PlayerKey, u64>,
+        room_masks: &mut FxHashMap<PlayerKey, u64>,
     ) {
         let inner = self.inner.borrow();
 
         for &pk in players {
             if let Some(anchors) = inner.player_anchors.get(&pk) {
-                if self.visible_to_anchors(room_id, area, anchors, world) {
+                if self.is_area_visible(room_id, area, anchors, world) {
                     *room_masks.entry(pk).or_default() |= mask;
                 }
             }
@@ -384,7 +382,7 @@ impl NetworkReplicator {
         policy: &ReplicationPolicy,
         world: &hecs::World,
         entity_pos: Vector2D,
-        fields_masks: &mut HashMap<RoomId, HashMap<PlayerKey, u64>>,
+        fields_masks: &mut FxHashMap<RoomId, FxHashMap<PlayerKey, u64>>,
     ) {
         let room_masks = fields_masks.entry(room_id).or_default();
         match policy.spatial {
@@ -528,7 +526,7 @@ impl NetworkReplicator {
     fn process_entity_sentries(
         &self,
         lua: &mlua::Lua,
-    ) -> eyre::Result<(HashMap<hecs::Entity, Vec<PolicyId>>, Vec<PolicyId>)> {
+    ) -> eyre::Result<(FxHashMap<hecs::Entity, Vec<PolicyId>>, Vec<PolicyId>)> {
         let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
 
         let mut inner_guard = self.inner.borrow_mut();
@@ -546,7 +544,8 @@ impl NetworkReplicator {
             anchors.retain(|&anchor| world.contains(anchor));
         }
 
-        let mut allowed_policies_per_entity: HashMap<hecs::Entity, Vec<PolicyId>> = HashMap::new();
+        let mut allowed_policies_per_entity: FxHashMap<hecs::Entity, Vec<PolicyId>> =
+            FxHashMap::default();
         let mut policies_to_remove: Vec<PolicyId> = Vec::new();
 
         for (&entity, _) in updated_entities.iter() {
@@ -613,7 +612,7 @@ impl NetworkReplicator {
         &self,
         lua: &mlua::Lua,
         tick: u64,
-        snapshots: &mut HashMap<PlayerKey, WorldSnapshot>,
+        snapshots: &mut FxHashMap<PlayerKey, WorldSnapshot>,
     ) -> eyre::Result<()> {
         let (allowed_policies_per_entity, entity_policies_to_remove) =
             self.process_entity_sentries(lua)?;
@@ -621,25 +620,25 @@ impl NetworkReplicator {
         let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
 
         let inner = self.inner.borrow();
-        let mut newly_discovered_entities: HashMap<PlayerKey, HashSet<hecs::Entity>> =
-            HashMap::new();
+        let mut newly_discovered_entities: FxHashMap<PlayerKey, HashSet<hecs::Entity>> =
+            FxHashMap::default();
 
         for (&entity, dirty_components) in inner.updated_entities.iter() {
-            let mut query = world.query_one::<(&Room, &Position, &Blueprint)>(entity);
+            let mut query = world.query_one::<(&Room, &Position, Option<&Blueprint>)>(entity);
             if let Ok(components) = query.get() {
                 let (room_comp, pos_comp, blueprint_comp) = components;
 
                 let room_id = room_comp.0;
-                let blueprint_id = blueprint_comp.0;
+                let blueprint_id = blueprint_comp.map(|c| c.0);
                 let position = pos_comp.0;
 
                 // If there are players in this room who need to receive updates
                 if let Some(room_players) = inner.room_to_players.get(&room_id) {
-                    let mut fields_masks: HashMap<RoomId, HashMap<PlayerKey, u64>> = HashMap::new();
+                    let mut fields_masks: FxHashMap<RoomId, FxHashMap<PlayerKey, u64>> =
+                        FxHashMap::default();
 
-                    let blueprint_policy_ids = inner
-                        .by_target
-                        .get(&ReplicationTarget::Blueprint(blueprint_id))
+                    let blueprint_policy_ids = blueprint_id
+                        .and_then(|id| inner.by_target.get(&ReplicationTarget::Blueprint(id)))
                         .into_iter()
                         .flatten();
                     let entity_policy_ids = inner
@@ -741,7 +740,7 @@ impl NetworkReplicator {
         &self,
         lua: &mlua::Lua,
         tick: u64,
-        snapshots: &mut HashMap<PlayerKey, WorldSnapshot>,
+        snapshots: &mut FxHashMap<PlayerKey, WorldSnapshot>,
     ) -> eyre::Result<()> {
         let mut inner_guard = self.inner.borrow_mut();
         let NetworkReplicatorInner {
@@ -853,7 +852,7 @@ impl NetworkReplicator {
     fn process_despawned_entities(
         &self,
         tick: u64,
-        snapshots: &mut HashMap<PlayerKey, WorldSnapshot>,
+        snapshots: &mut FxHashMap<PlayerKey, WorldSnapshot>,
     ) {
         let mut inner_guard = self.inner.borrow_mut();
         let NetworkReplicatorInner {
@@ -863,7 +862,7 @@ impl NetworkReplicator {
             ..
         } = &mut *inner_guard;
 
-        let despawn_candidates: HashMap<hecs::Entity, RoomId> =
+        let despawn_candidates: FxHashMap<hecs::Entity, RoomId> =
             despawn_candidates.drain().collect();
 
         for (&entity, _) in despawn_candidates.iter() {
@@ -872,13 +871,10 @@ impl NetworkReplicator {
 
         for (&pk, entities) in known_entities {
             entities.retain(|e| {
-                despawn_candidates.get(e).map_or(true, |&room_id| {
+                despawn_candidates.get(e).map_or(true, |_| {
                     snapshots
                         .entry(pk)
                         .or_insert_with(|| WorldSnapshot::new(tick))
-                        .rooms
-                        .entry(room_id)
-                        .or_default()
                         .despawn
                         .push(e.id());
 
@@ -892,7 +888,91 @@ impl NetworkReplicator {
             self.revoke_policies_by_target(ReplicationTarget::Entity(entity));
         }
     }
-    fn despawn_by_spatial(&self, tick: u64, snapshots: &mut HashMap<PlayerKey, WorldSnapshot>) {}
+    fn despawn_by_spatial(
+        &self,
+        lua: &mlua::Lua,
+        tick: u64,
+        snapshots: &mut FxHashMap<PlayerKey, WorldSnapshot>,
+    ) -> eyre::Result<()> {
+        let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
+
+        let mut inner_guard = self.inner.borrow_mut();
+        let NetworkReplicatorInner {
+            policies,
+            by_target,
+            player_anchors,
+            known_entities,
+            ..
+        } = &mut *inner_guard;
+
+        for (&pk, entities) in known_entities {
+            let Some(anchors) = player_anchors.get(&pk) else {
+                continue;
+            };
+
+            let mut despawned_entities: HashSet<hecs::Entity> = HashSet::new();
+            for &entity in entities.iter() {
+                let mut mark_despawned = || {
+                    snapshots
+                        .entry(pk)
+                        .or_insert_with(|| WorldSnapshot::new(tick))
+                        .despawn
+                        .push(entity.id());
+                    despawned_entities.insert(entity);
+                };
+
+                let mut query = world.query_one::<(Option<&Blueprint>, &Room, &Position)>(entity);
+                match query.get() {
+                    Ok(components) => {
+                        let (blueprint_comp, room_comp, pos_comp) = components;
+                        let blueprint_id = blueprint_comp.map(|c| c.0);
+                        let room_id = room_comp.0;
+                        let position = pos_comp.0;
+
+                        let blueprint_policy_ids = blueprint_id
+                            .and_then(|id| by_target.get(&ReplicationTarget::Blueprint(id)))
+                            .into_iter()
+                            .flatten();
+                        let entity_policy_ids = by_target
+                            .get(&ReplicationTarget::Entity(entity))
+                            .into_iter()
+                            .flatten();
+                        let mut policy_ids = blueprint_policy_ids.chain(entity_policy_ids);
+
+                        let visible = policy_ids.any(|&policy_id| {
+                            let Some(policy) = policies.get(policy_id) else {
+                                return false;
+                            };
+
+                            match policy.spatial {
+                                SpatialFilter::Global => true,
+                                SpatialFilter::Radius(radius) => self.is_area_visible(
+                                    room_id,
+                                    RadialArea { position, radius },
+                                    anchors,
+                                    &*world,
+                                ),
+                                SpatialFilter::Area(area) => {
+                                    self.is_area_visible(room_id, area, anchors, &*world)
+                                }
+                            }
+                        });
+
+                        if !visible {
+                            mark_despawned();
+                        }
+                    }
+                    Err(_) => {
+                        mark_despawned();
+                    }
+                }
+            }
+
+            entities.retain(|e| !despawned_entities.contains(e));
+        }
+
+        Ok(())
+    }
 
     // Replicate changes
     pub fn replicate(&self, lua: &mlua::Lua, tick: u64) -> eyre::Result<()> {
@@ -901,11 +981,11 @@ impl NetworkReplicator {
         }
 
         // Construct snapshots
-        let mut snapshots: HashMap<PlayerKey, WorldSnapshot> = HashMap::new();
+        let mut snapshots: FxHashMap<PlayerKey, WorldSnapshot> = FxHashMap::default();
         self.process_despawned_entities(tick, &mut snapshots);
         self.process_entities(lua, tick, &mut snapshots)?;
         self.process_memory_nodes(lua, tick, &mut snapshots)?;
-        self.despawn_by_spatial(tick, &mut snapshots);
+        self.despawn_by_spatial(lua, tick, &mut snapshots)?;
 
         // Cleanup
         let mut inner = self.inner.borrow_mut();
@@ -913,6 +993,12 @@ impl NetworkReplicator {
         inner.updated_memory.clear();
 
         // Send snapshots
+        for (pk, snapshot) in snapshots {
+            self.client_api.send(ServerEnvelope {
+                recipient: EnvelopeRecipient::Single(pk),
+                payload: OutgoingPacket::World(snapshot),
+            });
+        }
 
         Ok(())
     }
