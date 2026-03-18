@@ -9,6 +9,7 @@ use crate::{
     runtime::{
         app_data::{self, ExecutionContext},
         event_bus::SequenceId,
+        plugins::on::protocol::TimerEventKey,
         utils::{get_app_data, get_app_data_mut},
     },
     rx::{
@@ -133,7 +134,7 @@ impl UserData for OnRx {
             Ok(next)
         });
 
-        // DSL sugar -> where + select for input events
+        // DSL sugar for input events -> where + select
         methods.add_method("bind_action", |lua, this, event_name: String| {
             if this.event_key != GameModeEventKey::Player(PlayerEventKey::Input) {
                 return Err(mlua::Error::external(
@@ -151,14 +152,34 @@ impl UserData for OnRx {
             )?);
             next.pipeline_mut().add_operator(predicate);
 
-            let map = RxOp::Map(lua.create_function(
-                move |_, args: (SequenceId, mlua::Table)| {
-                    let pid = args.0;
-                    let action_table = args.1;
-                    let data: mlua::Value = action_table.get("data")?;
-                    Ok((pid, data))
-                },
-            )?);
+            let map = RxOp::Map(lua.create_function(|_, args: (SequenceId, mlua::Table)| {
+                let pid = args.0;
+                let action_table = args.1;
+                let data: mlua::Value = action_table.get("data")?;
+                Ok((pid, data))
+            })?);
+            next.pipeline_mut().add_operator(map);
+
+            Ok(next)
+        });
+
+        // DSL sugar for timers -> named filter
+        methods.add_method("named", |lua, this, name: String| {
+            if this.event_key != GameModeEventKey::Timer(TimerEventKey::Fire) {
+                return Err(mlua::Error::external(
+                    "Method `:named()` can only be used with 'on.timer.fire' events",
+                ));
+            }
+
+            let mut next = this.clone();
+            let predicate =
+                RxOp::Filter(lua.create_function(move |_, args: (String, mlua::Value)| {
+                    let timer_id = args.0;
+                    Ok(timer_id == name)
+                })?);
+            next.pipeline_mut().add_operator(predicate);
+
+            let map = RxOp::Map(lua.create_function(|_, args: (String, mlua::Value)| Ok(args.1))?);
             next.pipeline_mut().add_operator(map);
 
             Ok(next)
