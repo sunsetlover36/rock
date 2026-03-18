@@ -85,9 +85,8 @@ async fn main() -> Result<()> {
             .listen()
             .await?;
         }
-        cli::Command::Genesis { name } => {}
-        cli::Command::Accrete { geode_name } => {}
-        cli::Command::Scan => {}
+        cli::Command::Genesis { name } => {} // cli::Command::Accrete { geode_name } => {}
+                                             // cli::Command::Scan => {}
     }
 
     Ok(())
