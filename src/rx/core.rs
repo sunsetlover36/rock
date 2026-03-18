@@ -60,20 +60,11 @@ enum CycleBehavior {
     Repeat,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct OrderState {
     current_rule_idx: usize,
     call_diff: i32,
-    cycle_behavior: CycleBehavior,
-}
-impl Default for OrderState {
-    fn default() -> Self {
-        Self {
-            current_rule_idx: 0,
-            call_diff: 0,
-            cycle_behavior: CycleBehavior::Repeat,
-        }
-    }
+    cycle_behavior: Option<CycleBehavior>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -84,8 +75,6 @@ pub(crate) struct CoreSentry {
 }
 impl CoreSentry {
     pub fn new(pipeline: CorePipeline) -> Self {
-        // By default, order pipeline is repeated
-        // For example, :take(2):skip(1) -> take 2, then skip 1 and repeat
         let mut order_state = OrderState::default();
 
         let mut takes = 0;
@@ -103,15 +92,17 @@ impl CoreSentry {
 
         let takes_only = takes > 0 && skips == 0;
         let skips_only = takes == 0 && skips > 0;
+        let takes_and_skips = takes > 0 && skips > 0;
 
-        // Finite cycle (take N, then delete immediately)
         if takes_only {
-            order_state.cycle_behavior = CycleBehavior::FiniteTake(takes);
-        }
-
-        // Infinite cycle (skip N, then emit forever)
-        if skips_only {
-            order_state.cycle_behavior = CycleBehavior::InfiniteSkip;
+            // Finite cycle (take N, then delete immediately)
+            order_state.cycle_behavior = Some(CycleBehavior::FiniteTake(takes));
+        } else if skips_only {
+            // Infinite cycle (skip N, then emit forever)
+            order_state.cycle_behavior = Some(CycleBehavior::InfiniteSkip);
+        } else if takes_and_skips {
+            // Infinite cycle (skip/take N, then take/skip M)
+            order_state.cycle_behavior = Some(CycleBehavior::Repeat);
         }
 
         Self {
@@ -122,7 +113,11 @@ impl CoreSentry {
     }
 
     pub fn is_exhausted(&self) -> bool {
-        match self.order_state.cycle_behavior {
+        let Some(cycle_behavior) = &self.order_state.cycle_behavior else {
+            return false;
+        };
+
+        match cycle_behavior {
             CycleBehavior::FiniteTake(_) => {
                 self.order_state.current_rule_idx >= self.pipeline.order.len()
                     && self.order_state.call_diff == 0
@@ -142,6 +137,11 @@ impl CoreSentry {
             }
         }
 
+        // If there's any cycle behavior (takes or skips), then we need to process it and make a decision
+        // Otherwise (no :take or :skip were called) -> all listener calls are allowed by default
+        let Some(cycle_behavior) = &self.order_state.cycle_behavior else {
+            return Ok(());
+        };
         loop {
             // We skip
             if self.order_state.call_diff < 0 {
@@ -178,9 +178,9 @@ impl CoreSentry {
             }
 
             // There are no rules left, need a decision
-            match self.order_state.cycle_behavior {
+            match cycle_behavior {
                 CycleBehavior::FiniteTake(total) => {
-                    return Err(CoreSentryError::LimitReached(total));
+                    return Err(CoreSentryError::LimitReached(*total));
                 }
                 CycleBehavior::InfiniteSkip => {
                     return Ok(());
