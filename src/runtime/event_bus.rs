@@ -45,12 +45,11 @@ impl EventBus {
     }
 
     pub fn schedule_event(&self, event: GameModeEvent) {
-        let mut inner = self.inner.borrow_mut();
+        let created_at_seq = self.increment_sequence();
 
-        let seq = inner.sequence;
-        inner.sequence += 1;
+        let mut inner = self.inner.borrow_mut();
         inner.queue.push(QueuedEvent {
-            created_at_seq: seq,
+            created_at_seq,
             event,
         });
     }
