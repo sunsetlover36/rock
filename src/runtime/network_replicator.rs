@@ -268,22 +268,6 @@ impl NetworkReplicator {
         Ok(())
     }
 
-    pub fn stop_replication(&self, target: &ReplicationTarget) {
-        let mut inner = self.inner.borrow_mut();
-        if let Some(ids) = inner.by_target.remove(target) {
-            for removed_id in ids {
-                if let Some(policy) = inner.policies.remove(removed_id) {
-                    if let PolicyRouting::Pinned(room_id) = policy.routing {
-                        inner
-                            .room_to_policies
-                            .entry(room_id)
-                            .and_modify(|ids| ids.retain(|&id| id != removed_id));
-                    }
-                }
-            }
-        }
-    }
-
     pub fn add_player_anchor(&self, pk: PlayerKey, anchor: hecs::Entity) {
         self.inner
             .borrow_mut()
