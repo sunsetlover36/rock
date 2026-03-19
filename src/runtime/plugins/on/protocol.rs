@@ -1,6 +1,9 @@
 use color_eyre::eyre;
 
-use crate::{runtime::app_data::ExecutionContext, rx::RxSentry};
+use crate::{
+    runtime::app_data::ExecutionContext,
+    rx::{RxSentry, RxSentryError},
+};
 
 pub(crate) mod event;
 pub(crate) use event::*;
@@ -50,12 +53,16 @@ impl GameModeListener {
             return Ok(None);
         }
 
-        self.rx_sentry.process(args).map_err(|_| {
-            eyre::eyre!(
-                "Failed to process a chain for the event listener (name: {:?})",
-                self.name
-            )
-        })
+        match self.rx_sentry.process(args) {
+            Err(RxSentryError::Core(_)) => Ok(None),
+            res => res.map_err(|e| {
+                eyre::eyre!(
+                    "Failed to process a chain for the event listener (name: {:?}): {}",
+                    self.name,
+                    e
+                )
+            }),
+        }
     }
 
     pub fn get_seq(&self) -> u64 {
