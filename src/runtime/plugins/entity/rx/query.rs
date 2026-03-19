@@ -6,6 +6,7 @@ use crate::{
         app_data,
         network_replicator::protocol::RoomId,
         plugins::entity::{
+            BlueprintId, EntityBlueprint,
             components::{Blueprint, Name, OwnedBy, Position, Room},
             handle::EntityHandle,
         },
@@ -24,8 +25,48 @@ pub(in crate::runtime::plugins::entity) struct QueryRx {
     owned_by: Option<PlayerId>,
     named: Option<String>,
     in_room: Option<RoomId>,
-    near: Option<RadialArea>,
+    area: Option<RadialArea>,
+    blueprint_id: Option<BlueprintId>,
     pipeline: RxPipeline,
+}
+impl QueryRx {
+    fn matches(
+        &self,
+        blueprint: &Blueprint,
+        name: Option<&Name>,
+        owned_by: Option<&OwnedBy>,
+        room: Option<&Room>,
+        position: Option<&Position>,
+    ) -> bool {
+        let blueprint_check = self.blueprint_id.map_or(true, |b_id| b_id == blueprint.0);
+
+        let ownership_check = match owned_by {
+            Some(owned_by) => self.owned_by.map_or(true, |owner| owner == owned_by.0),
+            None => self.owned_by.is_none(),
+        };
+
+        let name_check = match name {
+            Some(name) => self
+                .named
+                .as_ref()
+                .map_or(true, |filter_name| filter_name == &name.0),
+            None => self.named.is_none(),
+        };
+
+        let room_check = match room {
+            Some(room) => self.in_room.map_or(true, |room_id| room_id == room.0),
+            None => self.in_room.is_none(),
+        };
+
+        let pos_check = match position {
+            Some(position) => self.area.map_or(true, |area| {
+                area.position.distance_squared(&position.0) <= area.radius * area.radius
+            }),
+            None => self.area.is_none(),
+        };
+
+        blueprint_check && ownership_check && name_check && room_check && pos_check
+    }
 }
 
 impl HasPipeline for QueryRx {
@@ -60,12 +101,42 @@ impl UserData for QueryRx {
             Ok(next)
         });
 
-        methods.add_method("near", |lua, this, area: mlua::Value| {
+        methods.add_method("at", |lua, this, area: mlua::Value| {
             let area: RadialArea = lua.from_value(area)?;
 
             let mut next = this.clone();
-            next.near = Some(area);
+            next.area = Some(area);
             Ok(next)
+        });
+
+        methods.add_method("blueprint", |_, this, bp: mlua::AnyUserData| {
+            let bp = bp.borrow::<EntityBlueprint>()?;
+
+            let mut next = this.clone();
+            next.blueprint_id = Some(bp.id());
+            Ok(next)
+        });
+
+        methods.add_method("count", |lua, this, _: ()| {
+            let world = get_app_data::<app_data::World>(lua)?;
+            let mut count: usize = 0;
+
+            for (blueprint, name, owned_by, room, position) in world
+                .query::<(
+                    &Blueprint,
+                    Option<&Name>,
+                    Option<&OwnedBy>,
+                    Option<&Room>,
+                    Option<&Position>,
+                )>()
+                .iter()
+            {
+                if this.matches(blueprint, name, owned_by, room, position) {
+                    count += 1;
+                }
+            }
+
+            Ok(count)
         });
 
         methods.add_method("each", |lua, this, handle: mlua::Function| {
@@ -84,29 +155,7 @@ impl UserData for QueryRx {
                     )>()
                     .iter()
                 {
-                    let ownership_check = match owned_by {
-                        Some(owned_by) => this.owned_by.map_or(true, |owner| owner == owned_by.0),
-                        None => this.owned_by.is_none(),
-                    };
-                    let name_check = match name {
-                        Some(name) => this
-                            .named
-                            .as_ref()
-                            .map_or(true, |filter_name| filter_name == &name.0),
-                        None => this.named.is_none(),
-                    };
-                    let room_check = match room {
-                        Some(room) => this.in_room.map_or(true, |room_id| room_id == room.0),
-                        None => this.in_room.is_none(),
-                    };
-                    let pos_check = match position {
-                        Some(position) => this.near.map_or(true, |area| {
-                            area.position.distance_squared(&position.0) <= area.radius * area.radius
-                        }),
-                        None => this.near.is_none(),
-                    };
-
-                    if ownership_check && name_check && room_check && pos_check {
+                    if this.matches(blueprint, name, owned_by, room, position) {
                         entities.push((entity, blueprint.0));
                     }
                 }
