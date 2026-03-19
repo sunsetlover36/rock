@@ -11,6 +11,7 @@ use crate::{
     socket::protocol::ServerMessage,
 };
 
+#[derive(Clone)]
 pub(crate) struct PlayerHandle {
     pk: PlayerKey,
 }

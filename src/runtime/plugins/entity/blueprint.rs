@@ -12,9 +12,10 @@ use super::{
     rx::SyncRx,
 };
 use crate::runtime::{
-    app_data, despawn_entity, get_str_hash,
+    app_data, despawn_entity,
     network_replicator::{FieldRegistry, protocol::ReplicationTarget},
     plugins::{OnPluginLazy, entity::components::ComponentKey, on::protocol::EventScope},
+    room_str_to_id,
     utils::{get_app_data, get_app_data_mut},
 };
 
@@ -60,11 +61,11 @@ impl UserData for EntityBlueprint {
             Ok(next)
         });
 
-        methods.add_method("room", |_, this, name: String| {
+        methods.add_method("room", |lua, this, name: String| {
             let mut next = this.clone();
             next.components.insert(
                 ComponentKey::Room,
-                ComponentData::Room(Room(get_str_hash(&name))),
+                ComponentData::Room(Room(room_str_to_id(lua, &name)?)),
             );
             Ok(next)
         });

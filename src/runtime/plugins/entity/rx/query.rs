@@ -4,10 +4,12 @@ use shared::PlayerId;
 use crate::{
     runtime::{
         app_data,
+        network_replicator::protocol::RoomId,
         plugins::entity::{
-            components::{Blueprint, Name, OwnedBy},
+            components::{Blueprint, Name, OwnedBy, Room},
             handle::EntityHandle,
         },
+        room_str_to_id,
         utils::get_app_data,
     },
     rx::{
@@ -21,6 +23,7 @@ use crate::{
 pub(in crate::runtime::plugins::entity) struct QueryRx {
     owned_by: Option<PlayerId>,
     named: Option<String>,
+    in_room: Option<RoomId>,
     pipeline: RxPipeline,
 }
 
@@ -50,13 +53,25 @@ impl UserData for QueryRx {
             Ok(next)
         });
 
+        methods.add_method("in_room", |lua, this, room: String| {
+            let mut next = this.clone();
+            next.in_room = Some(room_str_to_id(lua, &room)?);
+            Ok(next)
+        });
+
         methods.add_method("each", |lua, this, handle: mlua::Function| {
             let mut entities = Vec::new();
             {
                 let world = get_app_data::<app_data::World>(lua)?;
 
-                for (entity, name, owned_by, blueprint) in world
-                    .query::<(hecs::Entity, Option<&Name>, Option<&OwnedBy>, &Blueprint)>()
+                for (entity, name, owned_by, room, blueprint) in world
+                    .query::<(
+                        hecs::Entity,
+                        Option<&Name>,
+                        Option<&OwnedBy>,
+                        Option<&Room>,
+                        &Blueprint,
+                    )>()
                     .iter()
                 {
                     let ownership_check = match owned_by {
@@ -70,8 +85,12 @@ impl UserData for QueryRx {
                             .map_or(true, |filter_name| filter_name == &name.0),
                         None => this.named.is_none(),
                     };
+                    let room_check = match room {
+                        Some(room) => this.in_room.map_or(true, |room_id| room_id == room.0),
+                        None => this.in_room.is_none(),
+                    };
 
-                    if ownership_check && name_check {
+                    if ownership_check && name_check && room_check {
                         entities.push((entity, blueprint.0));
                     }
                 }

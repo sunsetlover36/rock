@@ -5,7 +5,10 @@ use shared::{InputAction, InputKind};
 
 use crate::runtime::{
     GameModeClientApi, event_bus,
-    network_replicator::{self, protocol::ReplicationMark},
+    network_replicator::{
+        self,
+        protocol::{ReplicationMark, RoomId},
+    },
     plugins::{
         entity::{BlueprintId, EntityBlueprint},
         input::protocol::InputEvent,
@@ -109,7 +112,9 @@ pub type ActiveLayers = Vec<LayerId>;
 pub type ClientApi = Arc<dyn GameModeClientApi>;
 pub type TimerManager = Rc<timer_manager::TimerManager>;
 pub type EntityCustoms = HashMap<hecs::Entity, mlua::Table>;
+
 pub type NetworkReplicator = Rc<network_replicator::NetworkReplicator>;
+pub struct RoomIdToName(pub HashMap<RoomId, String>);
 
 #[derive(Clone)]
 pub struct ReplicatorMarkTx(pub flume::Sender<ReplicationMark>);

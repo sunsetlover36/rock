@@ -9,7 +9,7 @@ use crate::{
     runtime::{
         app_data::{self, ExecutionContext},
         event_bus::SequenceId,
-        plugins::on::protocol::TimerEventKey,
+        plugins::{on::protocol::TimerEventKey, player::PlayerHandle},
         utils::{get_app_data, get_app_data_mut},
     },
     rx::{
@@ -144,20 +144,20 @@ impl UserData for OnRx {
 
             let mut next = this.clone();
             let predicate = RxOp::Filter(lua.create_function(
-                move |_, args: (SequenceId, mlua::Table)| {
-                    let action_table: mlua::Table = args.1;
+                move |_, (_, action_table): (mlua::AnyUserData, mlua::Table)| {
                     let action_name: String = action_table.get("name")?;
                     Ok(action_name == event_name)
                 },
             )?);
             next.pipeline_mut().add_operator(predicate);
 
-            let map = RxOp::Map(lua.create_function(|_, args: (SequenceId, mlua::Table)| {
-                let pid = args.0;
-                let action_table = args.1;
-                let data: mlua::Value = action_table.get("data")?;
-                Ok((pid, data))
-            })?);
+            let map = RxOp::Map(lua.create_function(
+                |_, (ud, action_table): (mlua::AnyUserData, mlua::Table)| {
+                    let player = ud.borrow::<PlayerHandle>()?;
+                    let data: mlua::Value = action_table.get("data")?;
+                    Ok((player.clone(), data))
+                },
+            )?);
             next.pipeline_mut().add_operator(map);
 
             Ok(next)

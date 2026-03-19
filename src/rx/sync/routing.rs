@@ -2,8 +2,9 @@ use mlua::{UserData, UserDataMethods};
 
 use crate::{
     runtime::{
-        EyreResultExt, app_data, get_app_data, get_str_hash,
+        EyreResultExt, app_data, get_app_data,
         network_replicator::protocol::{PolicyFieldUpdate, PolicyRouting},
+        room_str_to_id,
     },
     rx::sync::{HasPolicy, PolicyHandle},
 };
@@ -13,9 +14,9 @@ where
     T: UserData + HasPolicy + Clone + 'static,
     M: UserDataMethods<T>,
 {
-    methods.add_method("room", |_, this, name: String| {
+    methods.add_method("room", |lua, this, name: String| {
         let mut next = this.clone();
-        let id = get_str_hash(&name);
+        let id = room_str_to_id(lua, &name)?;
         next.policy_mut().routing = PolicyRouting::Pinned(id);
         Ok(next)
     });
@@ -31,7 +32,7 @@ where
             .update_policy(
                 this.policy_id(),
                 PolicyFieldUpdate::Room {
-                    id: get_str_hash(&name),
+                    id: room_str_to_id(lua, &name)?,
                 },
             )
             .wrap_eyre_err()?;

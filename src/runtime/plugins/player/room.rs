@@ -1,7 +1,7 @@
 use mlua::UserData;
 use shared::PlayerKey;
 
-use crate::runtime::{app_data, get_app_data, get_str_hash};
+use crate::runtime::{app_data, get_app_data, room_str_to_id};
 
 pub(super) struct PlayerRoom {
     pk: PlayerKey,
@@ -14,8 +14,11 @@ impl PlayerRoom {
 impl UserData for PlayerRoom {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("enter", |lua, this, name: String| {
-            get_app_data::<app_data::NetworkReplicator>(lua)?
-                .add_player_to_room(this.pk, get_str_hash(&name));
+            get_app_data::<app_data::NetworkReplicator>(lua)?.add_player_to_room(
+                lua,
+                this.pk,
+                room_str_to_id(lua, &name)?,
+            )?;
             Ok(())
         });
 
@@ -23,10 +26,14 @@ impl UserData for PlayerRoom {
             let replicator = get_app_data::<app_data::NetworkReplicator>(lua)?;
             match name {
                 Some(name) => {
-                    replicator.remove_player_from_room(this.pk, get_str_hash(&name));
+                    replicator.remove_player_from_room(
+                        lua,
+                        this.pk,
+                        room_str_to_id(lua, &name)?,
+                    )?;
                 }
                 None => {
-                    replicator.clear_player_rooms(this.pk);
+                    replicator.clear_player_rooms(lua, this.pk)?;
                 }
             }
             Ok(())

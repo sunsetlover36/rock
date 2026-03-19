@@ -15,18 +15,28 @@ pub(crate) const GLOBAL_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
     },
     EventDescriptor {
         namespace: Some("player"),
-        name: "connect",
-        event_key: GameModeEventKey::Player(PlayerEventKey::Connect),
+        name: "online",
+        event_key: GameModeEventKey::Player(PlayerEventKey::Online),
     },
     EventDescriptor {
         namespace: Some("player"),
-        name: "disconnect",
-        event_key: GameModeEventKey::Player(PlayerEventKey::Disconnect),
+        name: "offline",
+        event_key: GameModeEventKey::Player(PlayerEventKey::Offline),
     },
     EventDescriptor {
         namespace: Some("player"),
         name: "input",
         event_key: GameModeEventKey::Player(PlayerEventKey::Input),
+    },
+    EventDescriptor {
+        namespace: Some("player"),
+        name: "enter",
+        event_key: GameModeEventKey::Player(PlayerEventKey::Enter),
+    },
+    EventDescriptor {
+        namespace: Some("player"),
+        name: "exit",
+        event_key: GameModeEventKey::Player(PlayerEventKey::Exit),
     },
     EventDescriptor {
         namespace: Some("timer"),

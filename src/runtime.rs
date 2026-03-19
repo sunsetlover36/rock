@@ -113,6 +113,7 @@ impl Runtime {
         // TODO: should i get rid of app_data prefix everywhere?
         lua.set_app_data::<FieldRegistry>(FieldRegistry::new(&lua)?);
         lua.set_app_data::<app_data::EntityCustoms>(HashMap::new());
+        lua.set_app_data::<app_data::RoomIdToName>(app_data::RoomIdToName(HashMap::new()));
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
@@ -245,7 +246,7 @@ impl Runtime {
             SystemCallback::OnPlayerConnect { pk } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
-                    data: GameModeEventData::Player(PlayerEventData::Connect {
+                    data: GameModeEventData::Player(PlayerEventData::Online {
                         player: PlayerHandle::new(pk),
                     }),
                 });
@@ -253,7 +254,7 @@ impl Runtime {
             SystemCallback::OnPlayerDisconnect { pk } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
-                    data: GameModeEventData::Player(PlayerEventData::Disconnect {
+                    data: GameModeEventData::Player(PlayerEventData::Offline {
                         player: PlayerHandle::new(pk),
                     }),
                 });

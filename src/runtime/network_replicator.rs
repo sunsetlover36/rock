@@ -6,6 +6,7 @@ use shared::{
     components::{RadialArea, Vector2D},
 };
 use slotmap::SlotMap;
+use smallvec::smallvec;
 use std::{cell::RefCell, collections::HashSet, sync::Arc};
 
 pub mod protocol;
@@ -18,9 +19,13 @@ use crate::{
     envelope::{EnvelopeRecipient, ServerEnvelope},
     runtime::{
         GameModeClientApi, LuaResultExt, app_data, get_app_data, get_app_data_mut,
-        plugins::entity::components::{
-            Blueprint, ComponentData, ComponentKey, Control, Name, OwnedBy, Position, Room,
-            Rotation, Sprite2D, SpriteChar,
+        plugins::{
+            entity::components::{
+                Blueprint, ComponentData, ComponentKey, Control, Name, OwnedBy, Position, Room,
+                Rotation, Sprite2D, SpriteChar,
+            },
+            on::protocol::{EventScope, GameModeEvent, GameModeEventData, PlayerEventData},
+            player::PlayerHandle,
         },
     },
     rx::{RxSentry, RxSentryError, core::CoreSentryError},
@@ -305,13 +310,34 @@ impl NetworkReplicator {
         })
     }
 
-    pub fn add_player_to_room(&self, pk: PlayerKey, id: RoomId) {
+    pub fn add_player_to_room(
+        &self,
+        lua: &mlua::Lua,
+        pk: PlayerKey,
+        id: RoomId,
+    ) -> mlua::Result<()> {
         let mut inner = self.inner.borrow_mut();
 
         inner.player_to_rooms.entry(pk).or_default().insert(id);
         inner.room_to_players.entry(id).or_default().insert(pk);
+
+        let event_bus = get_app_data::<app_data::EventBus>(lua)?;
+        event_bus.schedule_event(GameModeEvent {
+            scopes: smallvec![EventScope::Global],
+            data: GameModeEventData::Player(PlayerEventData::Enter {
+                player: PlayerHandle::new(pk),
+                room: id,
+            }),
+        });
+
+        Ok(())
     }
-    pub fn remove_player_from_room(&self, pk: PlayerKey, id: RoomId) {
+    pub fn remove_player_from_room(
+        &self,
+        lua: &mlua::Lua,
+        pk: PlayerKey,
+        id: RoomId,
+    ) -> mlua::Result<()> {
         let mut inner = self.inner.borrow_mut();
 
         inner
@@ -322,12 +348,34 @@ impl NetworkReplicator {
             .room_to_players
             .entry(id)
             .and_modify(|pks| pks.retain(|&r_pk| r_pk != pk));
+
+        let event_bus = get_app_data::<app_data::EventBus>(lua)?;
+        event_bus.schedule_event(GameModeEvent {
+            scopes: smallvec![EventScope::Global],
+            data: GameModeEventData::Player(PlayerEventData::Exit {
+                player: PlayerHandle::new(pk),
+                room: id,
+            }),
+        });
+
+        Ok(())
     }
-    pub fn clear_player_rooms(&self, pk: PlayerKey) {
+    pub fn clear_player_rooms(&self, lua: &mlua::Lua, pk: PlayerKey) -> mlua::Result<()> {
         let mut inner = self.inner.borrow_mut();
 
         if let Some(rooms) = inner.player_to_rooms.remove(&pk) {
+            let event_bus = get_app_data::<app_data::EventBus>(lua)?;
+            let player_handle = PlayerHandle::new(pk);
+
             for room_id in rooms {
+                event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![EventScope::Global],
+                    data: GameModeEventData::Player(PlayerEventData::Exit {
+                        player: player_handle.clone(),
+                        room: room_id,
+                    }),
+                });
+
                 inner
                     .room_to_players
                     .entry(room_id)
@@ -336,6 +384,8 @@ impl NetworkReplicator {
         }
 
         inner.known_entities.remove(&pk);
+
+        Ok(())
     }
 
     fn merge_mask_within_area(

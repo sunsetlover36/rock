@@ -3,7 +3,7 @@ use shared::{OutgoingPacket, PlayerKey, SignalPacket, components::RadialArea};
 
 use crate::{
     envelope::{EnvelopeRecipient, ServerEnvelope},
-    runtime::{app_data, get_app_data, get_str_hash, network_replicator::protocol::RoomId},
+    runtime::{app_data, get_app_data, network_replicator::protocol::RoomId, room_str_to_id},
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -52,7 +52,7 @@ impl UserData for SignalRx {
             Ok(next)
         });
 
-        methods.add_method("room", |_, this, name: String| {
+        methods.add_method("room", |lua, this, name: String| {
             if this.scope != SignalScope::Global {
                 return Err(mlua::Error::runtime(
                     "Cannot set `:room()` constraint for a signal tied to a specific player",
@@ -60,7 +60,7 @@ impl UserData for SignalRx {
             }
 
             let mut next = this.clone();
-            next.room = Some(get_str_hash(&name));
+            next.room = Some(room_str_to_id(lua, &name)?);
             Ok(next)
         });
 

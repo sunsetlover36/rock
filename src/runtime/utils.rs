@@ -5,7 +5,7 @@ use color_eyre::eyre;
 
 use crate::runtime::{
     app_data,
-    network_replicator::protocol::{EntityReplicationAction, ReplicationMark},
+    network_replicator::protocol::{EntityReplicationAction, ReplicationMark, RoomId},
     plugins::entity::components::Room,
 };
 
@@ -50,6 +50,17 @@ pub fn get_str_hash(s: &str) -> u64 {
     let mut hasher = AHasher::default();
     s.hash(&mut hasher);
     hasher.finish()
+}
+pub fn room_str_to_id(lua: &mlua::Lua, s: &str) -> mlua::Result<RoomId> {
+    let id = get_str_hash(s);
+    get_app_data_mut::<app_data::RoomIdToName>(lua)?
+        .0
+        .insert(id, s.to_owned());
+    Ok(id)
+}
+pub fn room_id_to_name(lua: &mlua::Lua, id: u64) -> mlua::Result<String> {
+    let room_id_to_name = get_app_data::<app_data::RoomIdToName>(lua)?;
+    room_id_to_name.0.get(&id).map(|name| name.clone()).ok_or_else(|| mlua::Error::runtime(format!("Failed to convert an argument for PlayerEventData::Warp: room name not found for room ID {}", id)))
 }
 
 pub fn despawn_entity(lua: &mlua::Lua, entity: hecs::Entity) -> mlua::Result<bool> {

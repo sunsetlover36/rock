@@ -10,7 +10,7 @@ use super::{
     rx::SyncRx,
 };
 use crate::runtime::{
-    app_data, despawn_entity, get_str_hash,
+    app_data, despawn_entity,
     network_replicator::{
         FieldRegistry,
         protocol::{
@@ -21,6 +21,7 @@ use crate::runtime::{
         OnPluginLazy,
         on::protocol::{EntityEventData, EventScope, GameModeEvent, GameModeEventData},
     },
+    room_str_to_id,
     utils::{get_app_data, get_app_data_mut},
 };
 
@@ -89,16 +90,39 @@ impl UserData for EntityHandle {
             let mut world = get_app_data_mut::<app_data::World>(lua)?;
             match name {
                 Some(name) => {
+                    let room_comp = Room(room_str_to_id(lua, &name)?);
                     if let Ok(mut field) = world.get::<&mut Room>(this.entity) {
-                        *field = Room(get_str_hash(&name));
+                        *field = room_comp;
+                    } else {
+                        world.insert_one(this.entity, room_comp).map_err(|e| {
+                            mlua::Error::runtime(format!(
+                                "Failed to add a room component to the entity in method `:room`: {}",
+                                e
+                            ))
+                        })?;
                     }
+
+                    let event_bus = get_app_data::<app_data::EventBus>(lua)?;
+                    event_bus.schedule_event(GameModeEvent {
+                        scopes: smallvec![
+                            EventScope::Entity(this.entity.id().into()),
+                            EventScope::Blueprint(this.blueprint_id),
+                        ],
+                        data: GameModeEventData::Entity(EntityEventData::ComponentUpdate(
+                            ComponentData::Room(room_comp),
+                        )),
+                    });
+
+                    Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?))
                 }
                 None => {
-                    let _ = world.remove_one::<Room>(this.entity);
+                    if let Ok(room_comp) = world.get::<&Room>(this.entity) {
+                        Ok(mlua::Value::Integer(room_comp.0 as i64))
+                    } else {
+                        Ok(mlua::Value::Nil)
+                    }
                 }
             }
-
-            Ok(())
         });
 
         methods.add_method("custom", |lua, this, value: mlua::Value| match value {
