@@ -1,12 +1,12 @@
-use mlua::{IntoLuaMulti, UserData};
-use shared::PlayerId;
+use mlua::{IntoLuaMulti, LuaSerdeExt, UserData};
+use shared::{PlayerId, components::RadialArea};
 
 use crate::{
     runtime::{
         app_data,
         network_replicator::protocol::RoomId,
         plugins::entity::{
-            components::{Blueprint, Name, OwnedBy, Room},
+            components::{Blueprint, Name, OwnedBy, Position, Room},
             handle::EntityHandle,
         },
         room_str_to_id,
@@ -24,6 +24,7 @@ pub(in crate::runtime::plugins::entity) struct QueryRx {
     owned_by: Option<PlayerId>,
     named: Option<String>,
     in_room: Option<RoomId>,
+    near: Option<RadialArea>,
     pipeline: RxPipeline,
 }
 
@@ -59,18 +60,27 @@ impl UserData for QueryRx {
             Ok(next)
         });
 
+        methods.add_method("near", |lua, this, area: mlua::Value| {
+            let area: RadialArea = lua.from_value(area)?;
+
+            let mut next = this.clone();
+            next.near = Some(area);
+            Ok(next)
+        });
+
         methods.add_method("each", |lua, this, handle: mlua::Function| {
             let mut entities = Vec::new();
             {
                 let world = get_app_data::<app_data::World>(lua)?;
 
-                for (entity, name, owned_by, room, blueprint) in world
+                for (entity, blueprint, name, owned_by, room, position) in world
                     .query::<(
                         hecs::Entity,
+                        &Blueprint,
                         Option<&Name>,
                         Option<&OwnedBy>,
                         Option<&Room>,
-                        &Blueprint,
+                        Option<&Position>,
                     )>()
                     .iter()
                 {
@@ -89,8 +99,14 @@ impl UserData for QueryRx {
                         Some(room) => this.in_room.map_or(true, |room_id| room_id == room.0),
                         None => this.in_room.is_none(),
                     };
+                    let pos_check = match position {
+                        Some(position) => this.near.map_or(true, |area| {
+                            area.position.distance_squared(&position.0) <= area.radius * area.radius
+                        }),
+                        None => this.near.is_none(),
+                    };
 
-                    if ownership_check && name_check && room_check {
+                    if ownership_check && name_check && room_check && pos_check {
                         entities.push((entity, blueprint.0));
                     }
                 }

@@ -1,4 +1,4 @@
-use mlua::{UserData, UserDataMethods};
+pub(crate) use mlua::{UserData, UserDataMethods};
 
 use crate::{
     runtime::{
@@ -29,6 +29,13 @@ where
     T: UserData + HasPipeline + HasPolicy + ToPolicyHandle,
     M: UserDataMethods<T>,
 {
+    methods.add_method("clear", |lua, this, _: ()| {
+        get_app_data::<app_data::NetworkReplicator>(lua)?
+            .revoke_policies_by_target(&this.policy().target);
+
+        Ok(())
+    });
+
     methods.add_method("commit", |lua, this, _: ()| {
         let mut policy = this.policy().clone();
         policy.pipeline = this.pipeline().clone();

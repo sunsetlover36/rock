@@ -154,7 +154,7 @@ impl NetworkReplicator {
             }
         }
     }
-    pub fn revoke_policies_by_target(&self, target: ReplicationTarget) {
+    pub fn revoke_policies_by_target(&self, target: &ReplicationTarget) {
         let mut inner_guard = self.inner.borrow_mut();
         let NetworkReplicatorInner {
             policies,
@@ -164,7 +164,7 @@ impl NetworkReplicator {
             ..
         } = &mut *inner_guard;
 
-        if let Some(policy_ids) = by_target.get_mut(&target) {
+        if let Some(policy_ids) = by_target.get_mut(target) {
             for &policy_id in policy_ids.iter() {
                 if let Some(policy) = policies.remove(policy_id) {
                     if let PolicyRouting::Pinned(room_id) = policy.routing {
@@ -176,8 +176,8 @@ impl NetworkReplicator {
             }
         }
 
-        by_target.remove(&target);
-        sentries.remove(&target);
+        by_target.remove(target);
+        sentries.remove(target);
     }
 
     pub fn commit_policy(&self, policy: ReplicationPolicy) -> eyre::Result<PolicyId> {
@@ -919,7 +919,7 @@ impl NetworkReplicator {
         drop(inner_guard);
 
         for (&entity, _) in despawn_candidates.iter() {
-            self.revoke_policies_by_target(ReplicationTarget::Entity(entity));
+            self.revoke_policies_by_target(&ReplicationTarget::Entity(entity));
         }
     }
     fn despawn_by_spatial(
