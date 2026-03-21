@@ -6,7 +6,8 @@ use strum::IntoEnumIterator;
 use crate::runtime::{LuaResultExt, plugins::entity::components::ComponentKey};
 
 pub(crate) struct FieldRegistry {
-    mapping: HashMap<String, u8>,
+    field_to_bit: HashMap<String, u8>,
+    bit_to_field: HashMap<u8, String>,
     reserved_fields: HashSet<String>,
     component_keys: mlua::Table,
 }
@@ -23,7 +24,9 @@ impl FieldRegistry {
     }
 
     pub fn new(lua: &mlua::Lua) -> eyre::Result<Self> {
-        let mut mapping = HashMap::new();
+        let mut field_to_bit = HashMap::new();
+        let mut bit_to_field = HashMap::new();
+
         let mut reserved_fields = HashSet::new();
         let component_keys = lua
             .create_table()
@@ -40,27 +43,34 @@ impl FieldRegistry {
             ))?;
 
             let key = key.to_string();
-            mapping.insert(key.clone(), bit_index);
+            field_to_bit.insert(key.clone(), bit_index);
+            bit_to_field.insert(bit_index, key.clone());
             reserved_fields.insert(key);
         }
 
         Ok(Self {
-            mapping,
+            field_to_bit,
+            bit_to_field,
             reserved_fields,
             component_keys,
         })
     }
 
     pub fn get_bit_index(&mut self, name: &str) -> eyre::Result<u8> {
-        if let Some(&bit) = self.mapping.get(name) {
+        if let Some(&bit) = self.field_to_bit.get(name) {
             return Ok(bit);
         }
 
-        let new_bit: u8 = self.mapping.len().try_into()?;
+        let new_bit: u8 = self.field_to_bit.len().try_into()?;
         FieldRegistry::check_bit_range(new_bit)?;
 
-        self.mapping.insert(name.to_string(), new_bit);
+        let name = name.to_string();
+        self.field_to_bit.insert(name.clone(), new_bit);
+        self.bit_to_field.insert(new_bit, name);
         Ok(new_bit)
+    }
+    pub fn get_field_name(&self, bit: u8) -> Option<&str> {
+        self.bit_to_field.get(&bit).map(|s| s.as_str())
     }
 
     pub fn get_component_keys(&self) -> mlua::Table {

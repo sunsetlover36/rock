@@ -3,7 +3,7 @@ use mlua::{UserData, UserDataMethods};
 use crate::{
     runtime::{
         EyreResultExt, app_data, get_app_data,
-        network_replicator::protocol::{PolicyFieldUpdate, SpatialFilter},
+        network_replicator::protocol::{PolicyFieldUpdate, PolicyRouting, SpatialFilter},
     },
     rx::sync::{HasPolicy, PolicyHandle},
 };
@@ -14,6 +14,12 @@ where
     M: UserDataMethods<T>,
 {
     methods.add_method("radius", |_, this, radius: f32| {
+        if matches!(this.policy().routing, PolicyRouting::Pinned(_)) {
+            return Err(mlua::Error::runtime(
+                "Policy with a pinned room routing cannot have a radius-based spatial filter",
+            ));
+        }
+
         let mut next = this.clone();
         next.policy_mut().spatial = SpatialFilter::Radius(radius);
         Ok(next)

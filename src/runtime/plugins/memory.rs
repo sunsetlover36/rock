@@ -171,11 +171,11 @@ impl GameModePlugin for MemoryPlugin {
                 let future = Box::pin(async move {
                     if key.ends_with("/") {
                         meta_db.update_prefix(&key, value.clone()).await?;
-                        let _ = replicator_tx.send(ReplicationMark::Memory { key, value });
                     } else {
                         meta_db.update_key(&key, Some(value.clone())).await?;
-                        let _ = replicator_tx.send(ReplicationMark::Memory { key, value });
                     }
+
+                    let _ = replicator_tx.send(ReplicationMark::Memory { key, value });
 
                     Ok(AsyncTaskResult::Nil)
                 });
