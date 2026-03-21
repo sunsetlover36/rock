@@ -52,6 +52,7 @@ struct NetworkReplicatorInner {
 
     known_entities: FxHashMap<PlayerKey, HashSet<hecs::Entity>>,
     despawn_candidates: FxHashMap<hecs::Entity, RoomId>,
+    room_to_entities: FxHashMap<RoomId, HashSet<hecs::Entity>>,
 }
 
 pub(crate) struct NetworkReplicator {
@@ -78,6 +79,7 @@ impl NetworkReplicator {
                 room_to_players: FxHashMap::default(),
                 known_entities: FxHashMap::default(),
                 despawn_candidates: FxHashMap::default(),
+                room_to_entities: FxHashMap::default(),
             }),
             mark_tx,
             mark_rx,
@@ -91,10 +93,48 @@ impl NetworkReplicator {
         let mut inner = self.inner.borrow_mut();
         match mark {
             ReplicationMark::Entity { entity, action } => match action {
-                EntityReplicationAction::Update(comp) => {
-                    inner.updated_entities.entry(entity).or_default().push(comp);
+                EntityReplicationAction::Spawn(room_id) => {
+                    inner
+                        .room_to_entities
+                        .entry(room_id)
+                        .or_default()
+                        .insert(entity);
+                }
+                EntityReplicationAction::Update(comp) => match comp {
+                    EntityDirtyComponent::Core(ComponentData::Room(_)) => {
+                        // WARNING: :room() method doesn't trigger a replication action (unlike other component methods)
+                        //          just in case if it was triggered and we are here -> we just ignore it
+                        //          because clients shouldn't receive updates related to the internal logic of network replicator
+                        //
+                        // TODO:    maybe it'll be better to get rid of two sources of truth about entity room (hecs and network replicator)
+                    }
+                    _ => {
+                        inner.updated_entities.entry(entity).or_default().push(comp);
+                    }
+                },
+                EntityReplicationAction::Warp { from, to } => {
+                    if let Some(old_room_id) = from {
+                        if let Some(entities) = inner.room_to_entities.get_mut(&old_room_id) {
+                            entities.remove(&entity);
+                        }
+
+                        inner.despawn_candidates.insert(entity, old_room_id);
+                    }
+
+                    if let Some(new_room_id) = to {
+                        inner
+                            .room_to_entities
+                            .entry(new_room_id)
+                            .or_default()
+                            .insert(entity);
+                        inner.updated_entities.entry(entity).or_default();
+                    }
                 }
                 EntityReplicationAction::Despawn(room_id) => {
+                    if let Some(entities) = inner.room_to_entities.get_mut(&room_id) {
+                        entities.remove(&entity);
+                    }
+
                     inner.despawn_candidates.insert(entity, room_id);
                 }
             },
@@ -890,7 +930,6 @@ impl NetworkReplicator {
     ) {
         let mut inner_guard = self.inner.borrow_mut();
         let NetworkReplicatorInner {
-            updated_entities,
             known_entities,
             despawn_candidates,
             ..
@@ -898,10 +937,6 @@ impl NetworkReplicator {
 
         let despawn_candidates: FxHashMap<hecs::Entity, RoomId> =
             despawn_candidates.drain().collect();
-
-        for (&entity, _) in despawn_candidates.iter() {
-            updated_entities.remove(&entity);
-        }
 
         for (&pk, entities) in known_entities {
             entities.retain(|e| {

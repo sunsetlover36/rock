@@ -90,8 +90,10 @@ impl UserData for EntityHandle {
             let mut world = get_app_data_mut::<app_data::World>(lua)?;
             match name {
                 Some(name) => {
+                    let mut prev_room_id = None;
                     let room_comp = Room(room_str_to_id(lua, &name)?);
                     if let Ok(mut field) = world.get::<&mut Room>(this.entity) {
+                        prev_room_id = Some(field.0);
                         *field = room_comp;
                     } else {
                         world.insert_one(this.entity, room_comp).map_err(|e| {
@@ -111,6 +113,15 @@ impl UserData for EntityHandle {
                         data: GameModeEventData::Entity(EntityEventData::ComponentUpdate(
                             ComponentData::Room(room_comp),
                         )),
+                    });
+
+                    let replicator_tx = get_app_data::<app_data::ReplicatorMarkTx>(lua)?;
+                    let _ = replicator_tx.0.send(ReplicationMark::Entity {
+                        entity: this.entity,
+                        action: EntityReplicationAction::Warp {
+                            from: prev_room_id,
+                            to: Some(room_comp.0)
+                        },
                     });
 
                     Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?))

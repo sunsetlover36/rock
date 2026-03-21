@@ -63,6 +63,20 @@ pub fn room_id_to_name(lua: &mlua::Lua, id: u64) -> mlua::Result<String> {
     room_id_to_name.0.get(&id).map(|name| name.clone()).ok_or_else(|| mlua::Error::runtime(format!("Failed to convert an argument for PlayerEventData::Warp: room name not found for room ID {}", id)))
 }
 
+pub fn spawn_entity(lua: &mlua::Lua, entity: hecs::BuiltEntity) -> mlua::Result<hecs::Entity> {
+    let mut world = get_app_data_mut::<app_data::World>(lua)?;
+    let entity = world.spawn(entity);
+    if let Ok(room_comp) = world.get::<&Room>(entity) {
+        let room_id = room_comp.0;
+        let replicator_tx = get_app_data::<app_data::ReplicatorMarkTx>(lua)?;
+        let _ = replicator_tx.0.send(ReplicationMark::Entity {
+            entity,
+            action: EntityReplicationAction::Spawn(room_id),
+        });
+    }
+
+    Ok(entity)
+}
 pub fn despawn_entity(lua: &mlua::Lua, entity: hecs::Entity) -> mlua::Result<bool> {
     let mut world = get_app_data_mut::<app_data::World>(lua)?;
     let room_id = world.get::<&Room>(entity).ok().map(|c| c.0);

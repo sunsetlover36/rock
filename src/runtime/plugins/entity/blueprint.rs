@@ -15,7 +15,7 @@ use crate::runtime::{
     app_data, despawn_entity,
     network_replicator::{FieldRegistry, protocol::ReplicationTarget},
     plugins::{OnPluginLazy, entity::components::ComponentKey, on::protocol::EventScope},
-    room_str_to_id,
+    room_str_to_id, spawn_entity,
     utils::{get_app_data, get_app_data_mut},
 };
 
@@ -171,8 +171,7 @@ impl UserData for EntityBlueprint {
             }
             builder.add(Blueprint(this.id));
 
-            let entity = get_app_data_mut::<app_data::World>(lua)?.spawn(builder.build());
-
+            let entity = spawn_entity(lua, builder.build())?;
             if let Some(customs) = &this.customs {
                 get_app_data_mut::<app_data::EntityCustoms>(lua)?.insert(entity, customs.clone());
             }

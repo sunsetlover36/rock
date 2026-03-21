@@ -26,7 +26,12 @@ pub(crate) enum EntityDirtyComponent {
 }
 
 pub(crate) enum EntityReplicationAction {
+    Spawn(RoomId),
     Update(EntityDirtyComponent),
+    Warp {
+        from: Option<RoomId>,
+        to: Option<RoomId>,
+    },
     Despawn(RoomId),
 }
 pub(crate) enum ReplicationMark {
