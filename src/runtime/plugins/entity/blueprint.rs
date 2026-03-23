@@ -26,7 +26,7 @@ pub(crate) struct EntityBlueprint {
     id: BlueprintId,
     pub name: Option<String>,
     pub components: HashMap<ComponentKey, ComponentData>,
-    pub customs: Option<mlua::Table>,
+    pub customs: Option<serde_json::Map<String, serde_json::Value>>,
 }
 impl EntityBlueprint {
     pub fn new(id: BlueprintId) -> Self {
@@ -85,7 +85,10 @@ impl UserData for EntityBlueprint {
                     }
                 }
 
-                next.customs = Some(table);
+                let json = lua.from_value::<serde_json::Map<String, serde_json::Value>>(
+                    mlua::Value::Table(table),
+                )?;
+                next.customs = Some(json);
             } else {
                 next.customs = None;
             }
@@ -94,7 +97,7 @@ impl UserData for EntityBlueprint {
         });
 
         methods.add_method("from", |lua, this, name: String| {
-            let has_customs = this.customs.as_ref().map_or(false, |t| t.is_empty());
+            let has_customs = this.customs.as_ref().map_or(false, |v| v.is_empty());
             if !this.components.is_empty() || has_customs {
                 return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint already contains components or custom data", name)));
             }
@@ -173,7 +176,9 @@ impl UserData for EntityBlueprint {
 
             let entity = spawn_entity(lua, builder.build())?;
             if let Some(customs) = &this.customs {
-                get_app_data_mut::<app_data::EntityCustoms>(lua)?.insert(entity, customs.clone());
+                let value = lua.to_value(customs)?;
+                let table = value.as_table().ok_or_else(|| mlua::Error::runtime(format!("Failed to spawn an entity: custom component data is not a table, blueprint ID '{}'", this.id)))?;
+                get_app_data_mut::<app_data::EntityCustoms>(lua)?.insert(entity, table.clone());
             }
 
             // Layer garbage collection

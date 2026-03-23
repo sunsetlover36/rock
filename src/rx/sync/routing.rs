@@ -3,7 +3,7 @@ use mlua::{UserData, UserDataMethods};
 use crate::{
     runtime::{
         EyreResultExt, app_data, get_app_data,
-        network_replicator::protocol::{PolicyFieldUpdate, PolicyRouting},
+        network_replicator::protocol::{PolicyFieldUpdate, PolicyRouting, ReplicationTarget},
         room_str_to_id,
     },
     rx::sync::{HasPolicy, PolicyHandle},
@@ -15,6 +15,13 @@ where
     M: UserDataMethods<T>,
 {
     methods.add_method("room", |lua, this, name: String| {
+        match this.policy().target {
+            ReplicationTarget::Blueprint(_) | ReplicationTarget::Entity(_) => {
+                return Err(mlua::Error::runtime("Cannot pin a policy to the room if a policy has a blueprint or an entity target"));
+            }
+            _ => {}
+        }
+
         let mut next = this.clone();
         let id = room_str_to_id(lua, &name)?;
         next.policy_mut().routing = PolicyRouting::Pinned(id);

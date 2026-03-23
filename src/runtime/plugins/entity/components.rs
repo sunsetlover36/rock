@@ -32,12 +32,15 @@ pub(crate) use room::Room;
 #[serde(untagged)]
 #[strum_discriminants(name(ComponentKey))]
 #[strum_discriminants(derive(Hash, EnumIter, EnumString, AsRefStr))]
-#[strum_discriminants(strum(serialize_all = "lowercase"))]
+#[strum_discriminants(strum(serialize_all = "snake_case"))]
 pub(crate) enum ComponentData {
     Position(Position),
     Rotation(Rotation),
     Control(Control),
+
+    #[strum_discriminants(strum(serialize = "sprite_2d"))]
     Sprite2D(Sprite2D),
+
     SpriteChar(SpriteChar),
     OwnedBy(OwnedBy),
     Blueprint(Blueprint),
