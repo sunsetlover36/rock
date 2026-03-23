@@ -4,13 +4,15 @@ use color_eyre::eyre;
 use mlua::{IntoLuaMulti, Lua};
 
 use crate::runtime::{
-    api::on::GameModeEvent,
     app_data::{self, ExecutionContext},
+    plugins::on::protocol::GameModeEvent,
     utils::LuaResultExt,
 };
 
+pub type SequenceId = u64;
+
 struct QueuedEvent {
-    created_at_seq: u64,
+    created_at_seq: SequenceId,
     event: GameModeEvent,
 }
 struct PendingHandle {
@@ -21,7 +23,7 @@ struct PendingHandle {
 
 struct EventBusInner {
     queue: Vec<QueuedEvent>,
-    sequence: u64,
+    sequence: SequenceId,
 }
 pub(crate) struct EventBus {
     inner: RefCell<EventBusInner>,
@@ -36,19 +38,18 @@ impl EventBus {
         }
     }
 
-    pub fn increment_sequence(&self) -> u64 {
+    pub fn increment_sequence(&self) -> SequenceId {
         let mut inner = self.inner.borrow_mut();
         inner.sequence += 1;
         inner.sequence
     }
 
     pub fn schedule_event(&self, event: GameModeEvent) {
-        let mut inner = self.inner.borrow_mut();
+        let created_at_seq = self.increment_sequence();
 
-        let seq = inner.sequence;
-        inner.sequence += 1;
+        let mut inner = self.inner.borrow_mut();
         inner.queue.push(QueuedEvent {
-            created_at_seq: seq,
+            created_at_seq,
             event,
         });
     }
@@ -63,11 +64,12 @@ impl EventBus {
                 Some(d) => d,
                 None => return Err(eyre::eyre!("App data is not initialized")),
             };
-            let listeners = match listeners.get_mut(&key) {
+
+            let listeners_for_key = match listeners.get_mut(&key) {
                 Some(fns) => fns,
                 None => return Ok(()),
             };
-            if listeners.is_empty() {
+            if listeners_for_key.is_empty() {
                 return Ok(());
             }
 
@@ -76,14 +78,12 @@ impl EventBus {
                 .wrap_err("Failed to materialize args")?;
 
             let mut pending_handles: Vec<PendingHandle> = Vec::new();
-            for listener in listeners.iter_mut().filter(|l| scopes.contains(&l.scope)) {
-                if !listener.can_process(q_event.created_at_seq) {
-                    continue;
-                }
 
-                let handle_args = listener.process_pipeline(args.clone())?;
-                if let Some(args) = handle_args {
-                    listener.increment_call_count();
+            for listener in listeners_for_key
+                .iter_mut()
+                .filter(|l| scopes.contains(&l.scope))
+            {
+                if let Some(args) = listener.call(q_event.created_at_seq, args.clone())? {
                     pending_handles.push(PendingHandle {
                         context: listener.context,
                         args,
@@ -93,7 +93,7 @@ impl EventBus {
                     continue;
                 }
             }
-            listeners.retain(|l| !l.limit_reached());
+            listeners_for_key.retain(|l| !l.is_exhausted());
 
             pending_handles
         };

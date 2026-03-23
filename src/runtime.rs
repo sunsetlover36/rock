@@ -13,17 +13,7 @@ use smallvec::smallvec;
 use crate::{
     meta_db::MetaDb,
     router::CommitRouter,
-    runtime::{
-        api::{
-            InputPlugin, LayerPlugin, SceneManagerParams,
-            on::{
-                EventScope, GameModeEvent, GameModeEventData, OnPlugin, PlayerEventData,
-                WorldEventData, event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
-            },
-            protocol::GameModePlugin,
-        },
-        app_data::{ExecutionContext, InputEventRegistry, LayerRegistry},
-    },
+    runtime::network_replicator::FieldRegistry,
     world::{WorldNatives, WorldState},
 };
 
@@ -31,25 +21,40 @@ pub mod default_client_api;
 pub(crate) mod event_bus;
 pub(crate) use event_bus::EventBus;
 
-mod api;
-use api::{
-    EntityPlugin, MemoryPlugin, PluginComposer, SceneManager, SceneManagerMessage, ScenePlugin,
+pub(crate) mod plugins;
+use plugins::{
+    EntityPlugin, InputPlugin, LayerPlugin, MemoryPlugin, OnPlugin, PlayerPlugin, PluginComposer,
+    RoomPlugin, ScenePlugin, TimerPlugin,
+    on::{
+        event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
+        protocol::{EventScope, GameModeEvent, GameModeEventData, PlayerEventData, WorldEventData},
+    },
+    player::PlayerHandle,
+    protocol::GameModePlugin,
+    scene::{SceneManager, SceneManagerMessage, SceneManagerParams},
 };
 
-mod app_data;
+pub(crate) mod app_data;
+use app_data::{BlueprintRegistry, ExecutionContext, InputEventRegistry, LayerRegistry};
+
+pub(crate) mod network_replicator;
+use network_replicator::NetworkReplicator;
 
 mod geode;
 use geode::{inject_geodes, scan_geodes};
 
-pub mod protocol;
+pub(crate) mod protocol;
 pub use protocol::*;
 
+mod timer_manager;
+use timer_manager::{TimerManager, TimerManagerParams};
+
 mod utils;
-use utils::LuaResultExt;
+pub use utils::*;
 
 pub struct RuntimeParams {
     pub name: String,
-    pub client_api: Box<dyn GameModeClientApi>,
+    pub client_api: Arc<dyn GameModeClientApi>,
     pub callback_rx: flume::Receiver<RuntimeCallback>,
     pub commit_router: CommitRouter,
     pub meta_db: MetaDb,
@@ -57,8 +62,8 @@ pub struct RuntimeParams {
 }
 
 pub struct Runtime {
+    tick: u64,
     lua: Lua,
-    client_api: Box<dyn GameModeClientApi>,
     callback_rx: flume::Receiver<RuntimeCallback>,
     world_state: Rc<WorldState>,
     world_natives: WorldNatives,
@@ -66,10 +71,13 @@ pub struct Runtime {
     meta_db: Arc<MetaDb>,
     scene_manager: SceneManager,
     event_bus: Rc<EventBus>,
+    timer_manager: Rc<TimerManager>,
+    replicator: Rc<NetworkReplicator>,
 }
 impl Runtime {
     pub fn new(params: RuntimeParams) -> eyre::Result<Self> {
         let lua = Lua::new();
+        let client_api = params.client_api.clone();
 
         // Dependencies
         let meta_db = Arc::new(params.meta_db);
@@ -78,6 +86,11 @@ impl Runtime {
             state: world_state.clone(),
         };
         let event_bus = Rc::new(EventBus::new());
+        let timer_manager = Rc::new(TimerManager::new(TimerManagerParams {
+            tokio_handle: params.tokio_handle.clone(),
+            event_bus: event_bus.clone(),
+        }));
+        let replicator = Rc::new(NetworkReplicator::new(client_api.clone()));
 
         // App data
         lua.set_app_data::<app_data::EventListeners>(HashMap::new());
@@ -86,11 +99,21 @@ impl Runtime {
         lua.set_app_data::<app_data::Yielder>(None);
         lua.set_app_data::<app_data::World>(hecs::World::new());
         lua.set_app_data::<app_data::EventBus>(event_bus.clone());
-        lua.set_app_data::<app_data::Blueprints>(HashMap::new());
+        lua.set_app_data::<app_data::BlueprintRegistry>(BlueprintRegistry::new());
         lua.set_app_data::<app_data::InputEventRegistry>(InputEventRegistry::default());
         lua.set_app_data::<app_data::ExecutionContext>(ExecutionContext::Global);
         lua.set_app_data::<app_data::LayerRegistry>(LayerRegistry::new());
         lua.set_app_data::<app_data::ActiveLayers>(Vec::new());
+        lua.set_app_data::<app_data::ClientApi>(client_api.clone());
+        lua.set_app_data::<app_data::TimerManager>(timer_manager.clone());
+        lua.set_app_data::<app_data::NetworkReplicator>(replicator.clone());
+        lua.set_app_data::<app_data::ReplicatorMarkTx>(app_data::ReplicatorMarkTx(
+            replicator.get_mark_tx(),
+        ));
+        // TODO: should i get rid of app_data prefix everywhere?
+        lua.set_app_data::<FieldRegistry>(FieldRegistry::new(&lua)?);
+        lua.set_app_data::<app_data::EntityCustoms>(HashMap::new());
+        lua.set_app_data::<app_data::RoomIdToName>(app_data::RoomIdToName(HashMap::new()));
 
         // Plugins
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
@@ -106,6 +129,9 @@ impl Runtime {
                 meta_db: meta_db.clone(),
             }),
             Box::new(LayerPlugin {}),
+            Box::new(PlayerPlugin {}),
+            Box::new(TimerPlugin {}),
+            Box::new(RoomPlugin {}),
             Box::new(ScenePlugin {
                 manager_tx: scene_manager_tx.clone(),
             }),
@@ -132,8 +158,8 @@ impl Runtime {
             .wrap_err("Script execution error")?;
 
         Ok(Self {
+            tick: 0,
             lua,
-            client_api: params.client_api,
             callback_rx: params.callback_rx,
             world_state,
             world_natives,
@@ -141,6 +167,8 @@ impl Runtime {
             meta_db,
             scene_manager,
             event_bus,
+            timer_manager,
+            replicator,
         })
     }
 
@@ -153,6 +181,8 @@ impl Runtime {
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();
         loop {
+            self.tick += 1;
+
             self.scene_manager.tick(&self.lua);
 
             while let Ok(cb) = self.callback_rx.try_recv() {
@@ -168,9 +198,11 @@ impl Runtime {
                 }
             }
 
-            // Physics step
+            // TODO: Physics step
 
+            self.timer_manager.tick();
             self.event_bus.flush(&self.lua)?;
+            self.replicator.replicate(&self.lua, self.tick)?;
 
             let now = Instant::now();
             next_tick += tick_interval;
@@ -185,7 +217,7 @@ impl Runtime {
 
     // Untrusted input (called by the client)
     fn on_client_request(&self, message: ClientRequest) -> eyre::Result<()> {
-        let id = message.sender.pack();
+        let player = PlayerHandle::new(message.sender);
 
         match message.payload {
             IncomingRequest::Input(action) => {
@@ -197,7 +229,7 @@ impl Runtime {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Input {
-                        id,
+                        player,
                         name: action_name,
                         data: action.data,
                     }),
@@ -214,13 +246,17 @@ impl Runtime {
             SystemCallback::OnPlayerConnect { pk } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
-                    data: GameModeEventData::Player(PlayerEventData::Connect { id: pk.pack() }),
+                    data: GameModeEventData::Player(PlayerEventData::Online {
+                        player: PlayerHandle::new(pk),
+                    }),
                 });
             }
             SystemCallback::OnPlayerDisconnect { pk } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
-                    data: GameModeEventData::Player(PlayerEventData::Disconnect { id: pk.pack() }),
+                    data: GameModeEventData::Player(PlayerEventData::Offline {
+                        player: PlayerHandle::new(pk),
+                    }),
                 });
             }
             SystemCallback::OnImpromptuRequest { name, code } => {

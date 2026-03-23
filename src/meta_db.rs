@@ -6,26 +6,23 @@ use mlua::{IntoLua, Lua};
 use serde_json::Value as JsonValue;
 use sqlx::{Row, sqlite::SqlitePoolOptions};
 
-use crate::utils::json_to_lua;
+use crate::{meta_db::json::flatten_json, utils::json_to_lua};
+
+mod json;
+use json::insert_nested;
 
 #[derive(Debug, Clone)]
 pub enum MetaValue {
     Missing,
-    Stale(Option<JsonValue>),
-    Fresh(Option<JsonValue>),
+    Stale(JsonValue),
+    Fresh(JsonValue),
 }
 impl IntoLua for MetaValue {
     fn into_lua(self, lua: &Lua) -> mlua::Result<mlua::Value> {
         match self {
             MetaValue::Missing => Ok(mlua::Value::Nil),
-            MetaValue::Stale(v) => Ok(match v {
-                Some(v) => json_to_lua(lua, v)?,
-                None => mlua::Value::Nil,
-            }),
-            MetaValue::Fresh(v) => Ok(match v {
-                Some(v) => json_to_lua(lua, v)?,
-                None => mlua::Value::Nil,
-            }),
+            MetaValue::Stale(v) => Ok(json_to_lua(lua, v)?),
+            MetaValue::Fresh(v) => Ok(json_to_lua(lua, v)?),
         }
     }
 }
@@ -38,17 +35,27 @@ pub struct MetaEntry {
 }
 
 #[derive(Debug)]
-pub enum MetaEnsureError {
+pub enum MetaDbError {
     Db(sqlx::Error),
     InvalidJson(serde_json::Error),
+    InvalidKey { key: String },
+    InvalidPrefix { prefix: String },
+    Custom(eyre::Report),
 }
-impl From<MetaEnsureError> for eyre::ErrReport {
-    fn from(err: MetaEnsureError) -> Self {
+impl From<MetaDbError> for eyre::ErrReport {
+    fn from(err: MetaDbError) -> Self {
         match err {
-            MetaEnsureError::Db(e) => eyre::eyre!("Unknown database error: {}", e),
-            MetaEnsureError::InvalidJson(e) => {
+            MetaDbError::Db(e) => eyre::eyre!("Unknown database error: {}", e),
+            MetaDbError::InvalidJson(e) => {
                 eyre::eyre!("Database error when trying to parse JSON: {}", e)
             }
+            MetaDbError::InvalidKey { key } => {
+                eyre::eyre!("Invalid key: expected key, got prefix ({})", key)
+            }
+            MetaDbError::InvalidPrefix { prefix } => {
+                eyre::eyre!("Invalid prefix: expected prefix, got key ({})", prefix)
+            }
+            MetaDbError::Custom(e) => e,
         }
     }
 }
@@ -66,7 +73,7 @@ pub struct MetaDb {
 impl MetaDb {
     pub async fn new(config: MetaDbConfig) -> Result<Self, sqlx::Error> {
         let pool = SqlitePoolOptions::new()
-            .max_connections(1)
+            .max_connections(5)
             .after_connect(|conn, _| {
                 Box::pin(async move {
                     for pragma in [
@@ -93,75 +100,124 @@ impl MetaDb {
         })
     }
 
-    pub fn get(&self, key: &str) -> MetaValue {
-        let entry = match self.cache.get(key) {
-            Some(v) => v.clone(),
-            None => return MetaValue::Missing,
-        };
-
-        let is_stale = entry
-            .updated_at
-            .checked_add(entry.ttl)
-            .map(|expires_at| SystemTime::now() > expires_at)
-            .unwrap_or(true);
-        if is_stale {
-            return MetaValue::Stale(entry.value);
+    fn validate_key(&self, key: &str) -> Result<(), MetaDbError> {
+        if key.ends_with("/") {
+            Err(MetaDbError::InvalidKey {
+                key: key.to_string(),
+            })
+        } else {
+            Ok(())
         }
-
-        MetaValue::Fresh(entry.value)
+    }
+    fn validate_prefix(&self, prefix: &str) -> Result<(), MetaDbError> {
+        if prefix.ends_with("/") {
+            Ok(())
+        } else {
+            Err(MetaDbError::InvalidPrefix {
+                prefix: prefix.to_string(),
+            })
+        }
     }
 
-    fn update_entry(&self, key: &str, value: Option<JsonValue>) {
+    pub fn get(&self, key: &str) -> Result<MetaValue, MetaDbError> {
+        if key.ends_with("/") {
+            let mut map = serde_json::Map::new();
+            for e in self.cache.iter() {
+                if let Some(key) = e.key().strip_prefix(key) {
+                    if let Some(value) = &e.value().value {
+                        insert_nested(&mut map, key, value.clone()).map_err(MetaDbError::Custom)?;
+                    }
+                }
+            }
+
+            if map.is_empty() {
+                Ok(MetaValue::Missing)
+            } else {
+                Ok(MetaValue::Fresh(JsonValue::Object(map)))
+            }
+        } else {
+            let entry = match self.cache.get(key) {
+                Some(v) => v.clone(),
+                None => return Ok(MetaValue::Missing),
+            };
+            let value = entry.value.unwrap_or(JsonValue::Null);
+
+            let is_stale = entry
+                .updated_at
+                .checked_add(entry.ttl)
+                .map(|expires_at| SystemTime::now() > expires_at)
+                .unwrap_or(true);
+            if is_stale {
+                return Ok(MetaValue::Stale(value));
+            }
+
+            Ok(MetaValue::Fresh(value))
+        }
+    }
+
+    fn update_cache(&self, key: &str, new_value: Option<JsonValue>) -> bool {
         let now = SystemTime::now();
 
         match self.cache.entry(key.to_owned()) {
             dashmap::Entry::Occupied(mut e) => {
                 let entry = e.get_mut();
+                let changed = new_value == entry.value;
+
                 entry.updated_at = now;
-                entry.value = value;
+                entry.value = new_value;
+
+                changed
             }
             dashmap::Entry::Vacant(e) => {
+                let changed = new_value.is_some();
+
                 e.insert(MetaEntry {
                     ttl: self.config.default_ttl,
                     updated_at: now,
-                    value,
+                    value: new_value,
                 });
+
+                changed
             }
         }
     }
 
-    pub async fn ensure_key(&self, key: &str) -> Result<Option<JsonValue>, MetaEnsureError> {
+    pub async fn ensure_key(&self, key: &str) -> Result<(JsonValue, bool), MetaDbError> {
+        self.validate_key(key)?;
+
         let raw_str: Option<String> =
             sqlx::query_scalar("SELECT value FROM meta_kv WHERE mode_id = ? AND key = ?")
                 .bind(self.config.mode_id.clone())
                 .bind(key)
                 .fetch_optional(&self.pool)
                 .await
-                .map_err(MetaEnsureError::Db)?;
+                .map_err(MetaDbError::Db)?;
 
         match raw_str {
             Some(raw_str) => {
-                let json_value: Option<JsonValue> =
-                    Some(serde_json::from_str(&raw_str).map_err(MetaEnsureError::InvalidJson)?);
+                let json_value: JsonValue =
+                    serde_json::from_str(&raw_str).map_err(MetaDbError::InvalidJson)?;
 
-                self.update_entry(key, json_value.clone());
-                Ok(json_value.clone())
+                let changed = self.update_cache(key, Some(json_value.clone()));
+                Ok((json_value.clone(), changed))
             }
             None => {
-                self.update_entry(key, None);
-                Ok(None)
+                let changed = self.update_cache(key, None);
+                Ok((serde_json::Value::Null, changed))
             }
         }
     }
 
-    pub async fn ensure_prefix(&self, prefix: &str) -> Result<Option<JsonValue>, MetaEnsureError> {
+    pub async fn ensure_prefix(&self, prefix: &str) -> Result<(JsonValue, bool), MetaDbError> {
+        self.validate_prefix(prefix)?;
+
         let rows =
             sqlx::query("SELECT key, value FROM meta_kv WHERE mode_id = ? AND key LIKE ? || '%'")
                 .bind(self.config.mode_id.clone())
                 .bind(prefix)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(MetaEnsureError::Db)?;
+                .map_err(MetaDbError::Db)?;
 
         let mut map = serde_json::Map::new();
         for row in rows {
@@ -170,34 +226,118 @@ impl MetaDb {
 
             if let Ok(json_value) = serde_json::from_str(&value_str) {
                 if let Some(stripped_prefix) = key.strip_prefix(prefix) {
-                    map.insert(stripped_prefix.to_string(), json_value);
+                    insert_nested(
+                        &mut map,
+                        stripped_prefix.trim_start_matches('/'),
+                        json_value,
+                    )
+                    .map_err(|e| MetaDbError::Custom(e))?;
                 }
             }
         }
 
         if map.is_empty() {
-            self.update_entry(prefix, None);
-            Ok(None)
+            let changed = self.update_cache(prefix, None);
+            Ok((serde_json::Value::Null, changed))
         } else {
             let json_map = JsonValue::Object(map);
-            self.update_entry(prefix, Some(json_map.clone()));
-            Ok(Some(json_map))
+            let changed = self.update_cache(prefix, Some(json_map.clone()));
+            Ok((json_map, changed))
         }
     }
 
-    pub async fn get_or_ensure_key(&self, key: &str) -> Result<Option<JsonValue>, MetaEnsureError> {
-        match self.get(key) {
+    pub async fn get_or_ensure_key(&self, key: &str) -> Result<(JsonValue, bool), MetaDbError> {
+        self.validate_key(key)?;
+
+        match self.get(key)? {
             MetaValue::Missing | MetaValue::Stale(_) => self.ensure_key(key).await,
-            MetaValue::Fresh(v) => Ok(v),
+            MetaValue::Fresh(v) => Ok((v, false)),
         }
     }
     pub async fn get_or_ensure_prefix(
         &self,
         prefix: &str,
-    ) -> Result<Option<JsonValue>, MetaEnsureError> {
-        match self.get(prefix) {
-            MetaValue::Missing | MetaValue::Stale(_) => self.ensure_prefix(prefix).await,
-            MetaValue::Fresh(v) => Ok(v),
+    ) -> Result<(JsonValue, bool), MetaDbError> {
+        self.validate_prefix(prefix)?;
+
+        match self.get(&prefix)? {
+            MetaValue::Missing | MetaValue::Stale(_) => self.ensure_prefix(&prefix).await,
+            MetaValue::Fresh(v) => Ok((v, false)),
         }
+    }
+
+    pub async fn update_key(&self, key: &str, value: Option<JsonValue>) -> Result<(), MetaDbError> {
+        sqlx::query(
+            r#"
+            INSERT INTO meta_kv (mode_id, key, value)
+            VALUES (?, ?, ?)
+            ON CONFLICT (mode_id, key)
+            DO UPDATE SET value = excluded.value
+            "#,
+        )
+        .bind(self.config.mode_id.clone())
+        .bind(key)
+        .bind(value.clone())
+        .execute(&self.pool)
+        .await
+        .map_err(MetaDbError::Db)?;
+
+        self.update_cache(key, value);
+
+        Ok(())
+    }
+    pub async fn update_prefix(&self, prefix: &str, value: JsonValue) -> Result<(), MetaDbError> {
+        self.validate_prefix(prefix)?;
+
+        let mut kvs: Vec<(String, JsonValue)> = Vec::new();
+        flatten_json(&prefix, value.clone(), &mut kvs);
+
+        let mut tx = self.pool.begin().await.map_err(MetaDbError::Db)?;
+        for (k, v) in kvs {
+            sqlx::query(
+                r#"
+                    INSERT INTO meta_kv (mode_id, key, value)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT (mode_id, key)
+                    DO UPDATE SET value = excluded.value 
+                "#,
+            )
+            .bind(self.config.mode_id.clone())
+            .bind(k.clone())
+            .bind(v.clone())
+            .execute(&mut *tx)
+            .await
+            .map_err(MetaDbError::Db)?;
+
+            self.update_cache(&k, Some(v));
+        }
+        tx.commit().await.map_err(MetaDbError::Db)?;
+
+        Ok(())
+    }
+
+    pub async fn delete_key(&self, key: &str) -> Result<(), MetaDbError> {
+        sqlx::query("DELETE FROM meta_kv WHERE mode_id = ? AND key = ?")
+            .bind(self.config.mode_id.clone())
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .map_err(MetaDbError::Db)?;
+        self.cache.remove(key);
+
+        Ok(())
+    }
+    pub async fn delete_prefix(&self, prefix: &str) -> Result<(), MetaDbError> {
+        self.validate_prefix(prefix)?;
+
+        sqlx::query("DELETE FROM meta_kv WHERE mode_id = ? AND key LIKE ?")
+            .bind(self.config.mode_id.clone())
+            .bind(format!("{}%", prefix))
+            .execute(&self.pool)
+            .await
+            .map_err(MetaDbError::Db)?;
+        self.cache.retain(|key, _| !key.starts_with(prefix));
+
+        Ok(())
     }
 }

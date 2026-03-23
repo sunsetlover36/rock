@@ -1,15 +1,22 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use color_eyre::eyre;
 use shared::{InputAction, InputKind};
 
 use crate::runtime::{
-    EventBus as EventBusStruct,
-    api::{
-        EntityBlueprint, InputEvent, LayerEntry, LayerId,
-        on::{GameModeEventKey, GameModeListener},
+    GameModeClientApi, event_bus,
+    network_replicator::{
+        self,
+        protocol::{ReplicationMark, RoomId},
+    },
+    plugins::{
+        entity::{BlueprintId, EntityBlueprint},
+        input::protocol::InputEvent,
+        layer::{LayerEntry, LayerId},
+        on::{GameModeListener, protocol::GameModeEventKey},
         protocol::PluginName,
     },
+    timer_manager,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -25,8 +32,25 @@ pub type Scenes = HashMap<String, Vec<mlua::Function>>;
 pub type ScenePlugins = HashMap<PluginName, mlua::Table>;
 pub type Yielder = Option<mlua::Function>;
 pub type World = hecs::World;
-pub type EventBus = Rc<EventBusStruct>;
-pub type Blueprints = HashMap<String, EntityBlueprint>;
+pub type EventBus = Rc<event_bus::EventBus>;
+
+pub struct BlueprintRegistry {
+    last_id: BlueprintId,
+    pub blueprints: HashMap<String, EntityBlueprint>,
+}
+impl BlueprintRegistry {
+    pub fn new() -> Self {
+        Self {
+            last_id: 0,
+            blueprints: HashMap::new(),
+        }
+    }
+
+    pub fn increment_id(&mut self) -> BlueprintId {
+        self.last_id += 1;
+        self.last_id
+    }
+}
 
 #[derive(Default, Debug, Clone)]
 pub struct InputEventRegistry {
@@ -62,7 +86,6 @@ pub enum ExecutionContext {
 
 // Layer management
 // -- Registry
-#[derive(Debug)]
 pub struct LayerRegistry {
     last_id: LayerId,
     pub layers: HashMap<LayerId, LayerEntry>,
@@ -85,3 +108,13 @@ impl LayerRegistry {
 
 // -- Active layers at initialization phase
 pub type ActiveLayers = Vec<LayerId>;
+
+pub type ClientApi = Arc<dyn GameModeClientApi>;
+pub type TimerManager = Rc<timer_manager::TimerManager>;
+pub type EntityCustoms = HashMap<hecs::Entity, mlua::Table>;
+
+pub type NetworkReplicator = Rc<network_replicator::NetworkReplicator>;
+pub struct RoomIdToName(pub HashMap<RoomId, String>);
+
+#[derive(Clone)]
+pub struct ReplicatorMarkTx(pub flume::Sender<ReplicationMark>);

@@ -1,18 +1,13 @@
 use shared::{IncomingRequest, PlayerKey};
 
-use crate::envelope::ClientEnvelope;
+use crate::{envelope::ClientEnvelope, socket::protocol::ServerMessage};
 
 pub type ClientRequest = ClientEnvelope<IncomingRequest>;
 
-#[derive(Debug, Clone)]
-pub enum GameModeClientCommand {
-    SendMessage { pk: PlayerKey, text: String },
-    Broadcast { text: String },
-    Log { text: String },
-    KickPlayer { pk: PlayerKey },
-}
-pub trait GameModeClientApi: Send {
-    fn send(&self, event: GameModeClientCommand);
+pub trait GameModeClientApi: Send + Sync {
+    fn has(&self, pk: PlayerKey) -> bool;
+    fn list(&self) -> Vec<PlayerKey>;
+    fn send(&self, message: ServerMessage);
 }
 
 pub enum SystemCallback {

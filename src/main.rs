@@ -1,4 +1,4 @@
-use std::{thread, time::Duration};
+use std::{sync::Arc, thread, time::Duration};
 
 use clap::Parser;
 use color_eyre::eyre::Result;
@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
                 flume::bounded::<RuntimeCallback>(1024);
             let runtime_params = RuntimeParams {
                 name: config.gamemode_name,
-                client_api: Box::new(GameModeDefaultClientApi {
+                client_api: Arc::new(GameModeDefaultClientApi {
                     ws_session_sender: session_sender.clone(),
                 }),
                 callback_rx: runtime_callback_rx,
@@ -85,9 +85,8 @@ async fn main() -> Result<()> {
             .listen()
             .await?;
         }
-        cli::Command::Genesis { name } => {}
-        cli::Command::Accrete { geode_name } => {}
-        cli::Command::Scan => {}
+        cli::Command::Genesis { name } => {} // cli::Command::Accrete { geode_name } => {}
+                                             // cli::Command::Scan => {}
     }
 
     Ok(())

@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
-use shared::{PlayerData, Position};
+use shared::{PlayerData, PlayerId, Position};
 
 pub struct PlayerState {
-    pub players: HashMap<u64, PlayerData>,
+    pub players: HashMap<PlayerId, PlayerData>,
 }
 impl PlayerState {
-    pub fn get_player(&self, id: &u64) -> Option<&PlayerData> {
+    pub fn get_player(&self, id: PlayerId) -> Option<&PlayerData> {
         self.players.get(&id)
     }
 
-    pub fn set_player_position(&mut self, id: u64, position: Position) {
+    pub fn set_player_position(&mut self, id: PlayerId, position: Position) {
         self.players.entry(id).and_modify(|p| {
             p.position = position;
         });

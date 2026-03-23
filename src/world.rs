@@ -1,4 +1,3 @@
-pub mod protocol;
 pub mod state;
 pub use state::*;
 pub mod natives;

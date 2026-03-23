@@ -1,0 +1,59 @@
+pub(crate) use mlua::{UserData, UserDataMethods};
+
+use crate::{
+    runtime::{
+        app_data, get_app_data,
+        network_replicator::protocol::{PolicyId, ReplicationPolicy},
+    },
+    rx::HasPipeline,
+};
+
+pub(crate) mod entity;
+pub(crate) mod routing;
+pub(crate) mod spatial;
+
+pub(crate) trait PolicyHandle {
+    fn policy_id(&self) -> PolicyId;
+}
+pub(crate) trait ToPolicyHandle {
+    type Handle: mlua::UserData + PolicyHandle + Send + 'static;
+    fn to_policy_handle(&self, id: PolicyId) -> Self::Handle;
+}
+pub(crate) trait HasPolicy {
+    fn policy(&self) -> &ReplicationPolicy;
+    fn policy_mut(&mut self) -> &mut ReplicationPolicy;
+}
+
+pub(crate) fn add_sync_consumer_methods<T, M>(methods: &mut M)
+where
+    T: UserData + HasPipeline + HasPolicy + ToPolicyHandle,
+    M: UserDataMethods<T>,
+{
+    methods.add_method("clear", |lua, this, _: ()| {
+        get_app_data::<app_data::NetworkReplicator>(lua)?
+            .revoke_policies_by_target(&this.policy().target);
+
+        Ok(())
+    });
+
+    methods.add_method("commit", |lua, this, _: ()| {
+        let mut policy = this.policy().clone();
+        policy.pipeline = this.pipeline().clone();
+
+        let id = get_app_data::<app_data::NetworkReplicator>(lua)?
+            .commit_policy(policy)
+            .map_err(mlua::Error::runtime)?;
+        Ok(this.to_policy_handle(id))
+    });
+}
+
+pub(crate) fn add_base_handle_methods<T, M>(methods: &mut M)
+where
+    T: UserData + PolicyHandle,
+    M: UserDataMethods<T>,
+{
+    methods.add_method("revoke", |lua, this, _: ()| {
+        get_app_data::<app_data::NetworkReplicator>(lua)?.revoke_policy_by_id(this.policy_id());
+        Ok(())
+    });
+}

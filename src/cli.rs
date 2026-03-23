@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "rock")]
-#[command(author = "Uroboros")]
-#[command(version = "0.1.1")]
+#[command(author = "Luther Blissett")]
+#[command(version = "0.2.0")]
 #[command(about = "ROCK game engine", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
@@ -22,12 +22,11 @@ pub enum Command {
     Genesis {
         name: String,
     },
-
     // Install a geode
-    Accrete {
-        geode_name: String,
-    },
+    // Accrete {
+    //     geode_name: String,
+    // },
 
     // Doctor
-    Scan,
+    // Scan,
 }
