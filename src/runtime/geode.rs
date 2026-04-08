@@ -106,6 +106,7 @@ pub fn scan_geodes() -> eyre::Result<Vec<Geode>> {
 
 pub fn inject_geodes(lua: &Lua, geodes: &[Geode]) -> eyre::Result<()> {
     if geodes.is_empty() {
+        lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Gamemode);
         return Ok(());
     }
 
