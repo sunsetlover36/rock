@@ -14,6 +14,7 @@ pub(crate) enum PlayerEventKey {
     Input,
     Enter,
     Exit,
+    Chat,
 }
 
 pub(crate) enum PlayerEventData {
@@ -36,6 +37,10 @@ pub(crate) enum PlayerEventData {
         player: PlayerHandle,
         room: RoomId,
     },
+    Chat {
+        player: PlayerHandle,
+        text: String,
+    },
 }
 impl PlayerEventData {
     pub fn key(&self) -> PlayerEventKey {
@@ -45,6 +50,7 @@ impl PlayerEventData {
             PlayerEventData::Input { .. } => PlayerEventKey::Input,
             PlayerEventData::Enter { .. } => PlayerEventKey::Enter,
             PlayerEventData::Exit { .. } => PlayerEventKey::Exit,
+            PlayerEventData::Chat { .. } => PlayerEventKey::Chat,
         }
     }
 }
@@ -65,6 +71,7 @@ impl IntoLuaMulti for PlayerEventData {
             PlayerEventData::Exit { player, room } => {
                 (player, room_id_to_name(lua, room)?).into_lua_multi(lua)
             }
+            PlayerEventData::Chat { player, text } => (player, text).into_lua_multi(lua),
         }
     }
 }

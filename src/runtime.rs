@@ -235,6 +235,12 @@ impl Runtime {
                     }),
                 });
             }
+            IncomingRequest::Chat(text) => {
+                self.event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![EventScope::Global],
+                    data: GameModeEventData::Player(PlayerEventData::Chat { player, text }),
+                });
+            }
         }
 
         Ok(())

@@ -39,6 +39,11 @@ pub(crate) const GLOBAL_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
         event_key: GameModeEventKey::Player(PlayerEventKey::Exit),
     },
     EventDescriptor {
+        namespace: Some("player"),
+        name: "chat",
+        event_key: GameModeEventKey::Player(PlayerEventKey::Chat),
+    },
+    EventDescriptor {
         namespace: Some("timer"),
         name: "fire",
         event_key: GameModeEventKey::Timer(TimerEventKey::Fire),
