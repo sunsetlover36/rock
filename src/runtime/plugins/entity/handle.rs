@@ -41,7 +41,7 @@ impl EntityHandle {
     }
     fn set_custom(&self, lua: &mlua::Lua, table: mlua::Table) -> mlua::Result<()> {
         if !table.is_empty() {
-            let field_registry = get_app_data::<FieldRegistry>(lua)?;
+            let mut field_registry = get_app_data_mut::<FieldRegistry>(lua)?;
             for pair in table.pairs::<String, mlua::Value>() {
                 let (key, _) = pair?;
                 if field_registry.is_reserved_field(&key) {
@@ -50,6 +50,13 @@ impl EntityHandle {
                         key
                     )));
                 }
+
+                field_registry.add_bit_for(&key).map_err(|e| {
+                    mlua::Error::runtime(format!(
+                        "Failed to add a new bit index for key '{}': {}",
+                        key, e
+                    ))
+                })?;
             }
         }
 

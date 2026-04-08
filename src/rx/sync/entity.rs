@@ -11,9 +11,15 @@ fn get_fields_mask(lua: &mlua::Lua, table: mlua::Table) -> mlua::Result<u64> {
     let mut mask = 0u64;
     for key in table.sequence_values::<String>() {
         let key = key?;
-        let bit = field_registry.get_bit_index(&key).map_err(|e| {
-            mlua::Error::runtime(format!("Failed to get a bit index of key '{}': {}", key, e))
-        })?;
+        let bit = match field_registry.get_bit_index(&key) {
+            Some(bit) => bit,
+            None => field_registry.add_bit_for(&key).map_err(|e| {
+                mlua::Error::runtime(format!(
+                    "Failed to add a new bit index for key '{}': {}",
+                    key, e
+                ))
+            })?,
+        };
 
         mask |= 1 << bit;
     }

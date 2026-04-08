@@ -56,11 +56,7 @@ impl FieldRegistry {
         })
     }
 
-    pub fn get_bit_index(&mut self, name: &str) -> eyre::Result<u8> {
-        if let Some(&bit) = self.field_to_bit.get(name) {
-            return Ok(bit);
-        }
-
+    pub fn add_bit_for(&mut self, name: &str) -> eyre::Result<u8> {
         let new_bit: u8 = self.field_to_bit.len().try_into()?;
         FieldRegistry::check_bit_range(new_bit)?;
 
@@ -68,6 +64,9 @@ impl FieldRegistry {
         self.field_to_bit.insert(name.clone(), new_bit);
         self.bit_to_field.insert(new_bit, name);
         Ok(new_bit)
+    }
+    pub fn get_bit_index(&mut self, name: &str) -> Option<u8> {
+        self.field_to_bit.get(name).copied()
     }
     pub fn get_field_name(&self, bit: u8) -> Option<&str> {
         self.bit_to_field.get(&bit).map(|s| s.as_str())

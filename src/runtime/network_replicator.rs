@@ -249,12 +249,12 @@ impl NetworkReplicator {
 
         if let Some(policy_ids) = by_target.get_mut(target) {
             for &policy_id in policy_ids.iter() {
-                if let Some(policy) = policies.remove(policy_id) {
-                    if let PolicyRouting::Pinned(room_id) = policy.routing {
-                        room_to_policies
-                            .entry(room_id)
-                            .and_modify(|ids| ids.retain(|&id| id != policy_id));
-                    }
+                if let Some(policy) = policies.remove(policy_id)
+                    && let PolicyRouting::Pinned(room_id) = policy.routing
+                {
+                    room_to_policies
+                        .entry(room_id)
+                        .and_modify(|ids| ids.retain(|&id| id != policy_id));
                 }
             }
         }
@@ -562,7 +562,11 @@ impl NetworkReplicator {
             match comp {
                 EntityDirtyComponent::Core(comp) => {
                     let key = ComponentKey::from(comp);
-                    let bit = field_registry.get_bit_index(key.as_ref())?;
+                    let key_str = key.as_ref();
+
+                    let bit = field_registry.get_bit_index(key_str).ok_or_else(|| {
+                        eyre::eyre!("Failed to get a bit index for key '{}'", key_str)
+                    })?;
                     if (mask & (1 << bit)) == 0 {
                         continue;
                     }
@@ -594,7 +598,7 @@ impl NetworkReplicator {
                 }
                 EntityDirtyComponent::Custom => {
                     // FIXME: one custom field change triggers a whole custom component replication
-                    entity_data.custom = custom_table_to_json(lua, entity_customs.get(&entity)).wrap_err(&format!(
+                    entity_data.custom = custom_table_to_json(lua, entity_customs.get(entity)).wrap_err(&format!(
                         "Failed to convert a custom component table to JSON for an entity with ID '{}'",
                         entity.id()
                     ))?;
@@ -676,8 +680,8 @@ impl NetworkReplicator {
         to.owned_by = from.owned_by.or(to.owned_by.take());
         to.sprite = from.sprite.clone().or(to.sprite.take());
         to.char = from.char.clone().or(to.char.take());
-        to.position = from.position.clone().or(to.position.take());
-        to.rotation = from.rotation.clone().or(to.rotation.take());
+        to.position = from.position.or(to.position.take());
+        to.rotation = from.rotation.or(to.rotation.take());
         to.custom.extend(from.custom.clone());
     }
 
@@ -695,14 +699,14 @@ impl NetworkReplicator {
         } = &mut *inner_guard;
 
         let despawn_candidates: FxHashMap<hecs::Entity, RoomId> =
-            despawn_candidates.drain().collect();
+            std::mem::take(despawn_candidates);
 
         for &entity in despawn_candidates.keys() {
             updated_entities.remove(&entity);
         }
         for (&pk, entities) in known_entities {
             entities.retain(|e| {
-                despawn_candidates.get(e).map_or(true, |_| {
+                despawn_candidates.get(e).is_none_or(|_| {
                     snapshots
                         .entry(pk)
                         .or_insert_with(|| base_snapshot.clone())
@@ -812,21 +816,21 @@ impl NetworkReplicator {
                     for anchor in anchors {
                         let visible = match policy.spatial {
                             SpatialFilter::Global => true,
-                            SpatialFilter::Radius(radius) => position.map_or(false, |position| {
+                            SpatialFilter::Radius(radius) => position.is_some_and(|position| {
                                 self.visible_to_anchor(
                                     room_id,
                                     RadialArea { position, radius },
                                     anchor.entity,
-                                    &*world,
+                                    &world,
                                 )
                             }),
                             SpatialFilter::Area(area) => {
-                                self.visible_to_anchor(room_id, area, anchor.entity, &*world)
+                                self.visible_to_anchor(room_id, area, anchor.entity, &world)
                             }
                         };
                         let known = known_entities
                             .get(&anchor.pk)
-                            .map_or(false, |entities| entities.contains(&entity));
+                            .is_some_and(|entities| entities.contains(&entity));
                         let needs_update = known && dirty_components.is_some();
 
                         if visible {
@@ -837,10 +841,8 @@ impl NetworkReplicator {
                             } else if needs_update {
                                 update_for.entry(policy_id).or_default().insert(anchor.pk);
                             }
-                        } else if known {
-                            if despawn_for.get(&anchor.pk) == None {
-                                despawn_for.insert(anchor.pk, true);
-                            }
+                        } else if known && despawn_for.contains_key(&anchor.pk) {
+                            despawn_for.insert(anchor.pk, true);
                         }
                     }
                 }
@@ -867,69 +869,70 @@ impl NetworkReplicator {
                                 entity_data,
                                 &entity_custom_data,
                                 policy.fields_mask,
-                                &*field_registry,
-                                &*world,
+                                &field_registry,
+                                &world,
                             )?;
 
                             known_entities.entry(pk).or_default().insert(entity);
                         }
                     }
 
-                    if let Some(update_recipients) = update_for.get(&policy_id) {
-                        if let Some(components) = dirty_components
-                            && update_recipients.len() > 0
-                        {
-                            let sentry = entity_sentries
-                                .entry(policy_id)
-                                .or_insert_with(|| RxSentry::new(policy.pipeline.clone()));
-                            match sentry.process(
-                                ().into_lua_multi(lua)
-                                    .wrap_err("Failed to convert an empty value `()` to Lua")?,
-                            ) {
-                                Ok(_) => {
-                                    let updates = self.compose_dirty_entity_data(
-                                        lua,
-                                        &policy.fields_mask,
-                                        &entity,
-                                        components,
-                                        &mut *field_registry,
-                                        &*entity_customs,
-                                    )?;
+                    if let Some(update_recipients) = update_for.get(&policy_id)
+                        && let Some(components) = dirty_components
+                    {
+                        if update_recipients.is_empty() {
+                            continue;
+                        }
 
-                                    for &pk in update_recipients {
-                                        let snapshot = snapshots
-                                            .entry(pk)
-                                            .or_insert_with(|| base_snapshot.clone());
-                                        self.append_entity_data(
-                                            &updates,
-                                            snapshot
-                                                .rooms
-                                                .entry(room_id)
-                                                .or_default()
-                                                .update
-                                                .entry(entity_id)
-                                                .or_default(),
-                                        );
+                        let sentry = entity_sentries
+                            .entry(policy_id)
+                            .or_insert_with(|| RxSentry::new(policy.pipeline.clone()));
+                        match sentry.process(
+                            ().into_lua_multi(lua)
+                                .wrap_err("Failed to convert an empty value `()` to Lua")?,
+                        ) {
+                            Ok(_) => {
+                                let updates = self.compose_dirty_entity_data(
+                                    lua,
+                                    &policy.fields_mask,
+                                    &entity,
+                                    components,
+                                    &mut field_registry,
+                                    &entity_customs,
+                                )?;
+
+                                for &pk in update_recipients {
+                                    let snapshot = snapshots
+                                        .entry(pk)
+                                        .or_insert_with(|| base_snapshot.clone());
+                                    self.append_entity_data(
+                                        &updates,
+                                        snapshot
+                                            .rooms
+                                            .entry(room_id)
+                                            .or_default()
+                                            .update
+                                            .entry(entity_id)
+                                            .or_default(),
+                                    );
+                                }
+                            }
+                            Err(err) => match err {
+                                RxSentryError::Core(CoreSentryError::LimitReached(_)) => {
+                                    if !matches!(policy.target, ReplicationTarget::Blueprint(_)) {
+                                        policies_to_remove.insert(policy_id);
                                     }
                                 }
-                                Err(err) => match err {
-                                    RxSentryError::Core(CoreSentryError::LimitReached(_)) => {
-                                        if !matches!(policy.target, ReplicationTarget::Blueprint(_))
-                                        {
-                                            policies_to_remove.insert(policy_id);
-                                        }
-                                    }
-                                    RxSentryError::Core(CoreSentryError::Skipping)
-                                    | RxSentryError::Core(CoreSentryError::Throttled) => {}
-                                    RxSentryError::Op(err) => {
-                                        return Err(eyre::eyre!(
-                                            "Failed to process Rx sentry for entity with ID '{}': operator error ({})",
-                                            entity_id,
-                                            err.to_string()
-                                        ));
-                                    }
-                                },
-                            }
+                                RxSentryError::Core(CoreSentryError::Skipping)
+                                | RxSentryError::Core(CoreSentryError::Throttled) => {}
+                                RxSentryError::Op(err) => {
+                                    return Err(eyre::eyre!(
+                                        "Failed to process Rx sentry for entity with ID '{}': operator error ({})",
+                                        entity_id,
+                                        err.to_string()
+                                    ));
+                                }
+                            },
                         }
                     }
                 }
@@ -979,7 +982,7 @@ impl NetworkReplicator {
                 continue;
             };
 
-            if policy_ids.len() == 0 {
+            if policy_ids.is_empty() {
                 continue;
             }
 
@@ -1023,7 +1026,7 @@ impl NetworkReplicator {
                             false
                         }
                         SpatialFilter::Area(area) => {
-                            self.visible_to_anchor(policy_room_id, area, anchor.entity, &*world)
+                            self.visible_to_anchor(policy_room_id, area, anchor.entity, &world)
                         }
                     };
 
@@ -1034,7 +1037,7 @@ impl NetworkReplicator {
                     affected_anchors.push(anchor);
                 }
 
-                if affected_anchors.len() == 0 {
+                if affected_anchors.is_empty() {
                     continue;
                 }
 
