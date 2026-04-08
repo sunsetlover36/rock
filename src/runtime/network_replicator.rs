@@ -985,7 +985,6 @@ impl NetworkReplicator {
 
             let node_sentries = sentries.entry(target).or_default();
 
-            let key_str: Arc<str> = Arc::from(key.as_str());
             let lua_snapshot_value = lua.to_value(snapshot_value).wrap_err(&format!(
                 "Failed to convert JSON value for memory node '{}' to Lua value",
                 key
@@ -1045,10 +1044,10 @@ impl NetworkReplicator {
                 match sentry.process(node_args.clone()) {
                     Ok(args) => {
                         let Some(args) = args else { continue };
-                        let json_str: Arc<str> = Arc::from(multivalue_to_json(lua, args).wrap_err(&format!(
+                        let json_str = multivalue_to_json(lua, args).wrap_err(&format!(
                             "Failed to convert processed sentry args to JSON for memory node, key '{}'",
                             key
-                        ))?);
+                        ))?;
 
                         for anchor in affected_anchors {
                             snapshots
@@ -1058,7 +1057,7 @@ impl NetworkReplicator {
                                 .entry(policy_room_id)
                                 .or_default()
                                 .state
-                                .insert(key_str.clone(), json_str.clone());
+                                .insert(key.clone(), json_str.clone());
 
                             // TODO: known memory is independent of spatial filters (not garbage collected by the client if out of visibility range)
                             known_memory
