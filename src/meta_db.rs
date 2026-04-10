@@ -1,10 +1,17 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    fs,
+    path::Path,
+    time::{Duration, SystemTime},
+};
 
 use color_eyre::eyre;
 use dashmap::DashMap;
 use mlua::{IntoLua, Lua};
 use serde_json::Value as JsonValue;
-use sqlx::{Row, sqlite::SqlitePoolOptions};
+use sqlx::{
+    Row,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
 
 use crate::{meta_db::json::flatten_json, utils::json_to_lua};
 
@@ -72,26 +79,39 @@ pub struct MetaDb {
 }
 impl MetaDb {
     pub async fn new(config: MetaDbConfig) -> Result<Self, sqlx::Error> {
+        let db_dir = Path::new("./db");
+        fs::create_dir_all(db_dir)?;
+
+        let options = SqliteConnectOptions::new()
+            .filename("./db/db.sqlite")
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .pragma("busy_timeout", "5000")
+            .pragma("cache_size", "-262144")
+            .pragma("synchronous", "NORMAL")
+            .pragma("journal_mode", "WAL");
+
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
-            .after_connect(|conn, _| {
-                Box::pin(async move {
-                    for pragma in [
-                        "PRAGMA foreign_keys = ON;",
-                        "PRAGMA busy_timeout = 5000;",
-                        "PRAGMA cache_size = -262144;",
-                        "PRAGMA synchronous = NORMAL;",
-                        "PRAGMA journal_mode = WAL;",
-                    ] {
-                        sqlx::query(pragma).execute(&mut *conn).await?;
-                    }
-
-                    Ok(())
-                })
-            })
-            .connect("sqlite://./db/db.sqlite?mode=rwc")
+            .connect_with(options)
             .await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS meta_kv (
+            mode_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL CHECK (json_valid(value)),
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (mode_id, key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_meta_kv_mode_latest ON meta_kv (mode_id, updated_at DESC);
+            "#,
+        )
+        .execute(&pool)
+        .await?;
 
         Ok(Self {
             config,
@@ -123,10 +143,10 @@ impl MetaDb {
         if key.ends_with("/") {
             let mut map = serde_json::Map::new();
             for e in self.cache.iter() {
-                if let Some(key) = e.key().strip_prefix(key) {
-                    if let Some(value) = &e.value().value {
-                        insert_nested(&mut map, key, value.clone()).map_err(MetaDbError::Custom)?;
-                    }
+                if let Some(key) = e.key().strip_prefix(key)
+                    && let Some(value) = &e.value().value
+                {
+                    insert_nested(&mut map, key, value.clone()).map_err(MetaDbError::Custom)?;
                 }
             }
 
@@ -224,15 +244,15 @@ impl MetaDb {
             let key: String = row.get("key");
             let value_str: String = row.get("value");
 
-            if let Ok(json_value) = serde_json::from_str(&value_str) {
-                if let Some(stripped_prefix) = key.strip_prefix(prefix) {
-                    insert_nested(
-                        &mut map,
-                        stripped_prefix.trim_start_matches('/'),
-                        json_value,
-                    )
-                    .map_err(|e| MetaDbError::Custom(e))?;
-                }
+            if let Ok(json_value) = serde_json::from_str(&value_str)
+                && let Some(stripped_prefix) = key.strip_prefix(prefix)
+            {
+                insert_nested(
+                    &mut map,
+                    stripped_prefix.trim_start_matches('/'),
+                    json_value,
+                )
+                .map_err(MetaDbError::Custom)?;
             }
         }
 
@@ -260,8 +280,8 @@ impl MetaDb {
     ) -> Result<(JsonValue, bool), MetaDbError> {
         self.validate_prefix(prefix)?;
 
-        match self.get(&prefix)? {
-            MetaValue::Missing | MetaValue::Stale(_) => self.ensure_prefix(&prefix).await,
+        match self.get(prefix)? {
+            MetaValue::Missing | MetaValue::Stale(_) => self.ensure_prefix(prefix).await,
             MetaValue::Fresh(v) => Ok((v, false)),
         }
     }
@@ -290,7 +310,7 @@ impl MetaDb {
         self.validate_prefix(prefix)?;
 
         let mut kvs: Vec<(String, JsonValue)> = Vec::new();
-        flatten_json(&prefix, value.clone(), &mut kvs);
+        flatten_json(prefix, value.clone(), &mut kvs);
 
         let mut tx = self.pool.begin().await.map_err(MetaDbError::Db)?;
         for (k, v) in kvs {

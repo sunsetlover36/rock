@@ -44,6 +44,11 @@ fn load_scripts_from_dir(path: &Path) -> Vec<ScriptAsset> {
 }
 pub fn scan_geodes() -> eyre::Result<Vec<Geode>> {
     let mut paths: Vec<PathBuf> = vec![];
+
+    if !Path::new("geodes").is_dir() {
+        return Ok(Vec::new());
+    }
+
     for entry in WalkDir::new("geodes").min_depth(1).max_depth(1) {
         let entry = entry.wrap_err("Failed to parse a file")?;
         for geode in WalkDir::new(entry.path()).min_depth(1).max_depth(1) {
