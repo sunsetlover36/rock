@@ -1,4 +1,4 @@
-# ROCK Engine -- Scripting Guide
+# ROCK Engine → Scripting Guide
 
 Documentation for gamemode scripters. Everything you need to build multiplayer worlds with Lua.
 
@@ -8,15 +8,15 @@ Documentation for gamemode scripters. Everything you need to build multiplayer w
 - [Core Concepts](#core-concepts)
 - [Tutorial: Build Your First Gamemode](#tutorial-build-your-first-gamemode)
 - [API Reference](#api-reference)
-  - [on -- Events](#on)
-  - [entity -- Entities and Blueprints](#entity)
-  - [player -- Players](#player)
-  - [input -- Input Bindings](#input)
-  - [memory -- Persistent Storage](#memory)
-  - [scene -- Async Scenes](#scene)
-  - [timer -- Timers](#timer)
-  - [layer -- Layers](#layer)
-  - [room -- Rooms](#room)
+  - [on → Events](#on)
+  - [entity → Entities and Blueprints](#entity)
+  - [player → Players](#player)
+  - [input → Input Bindings](#input)
+  - [memory → Persistent Storage](#memory)
+  - [scene → Async Scenes](#scene)
+  - [timer → Timers](#timer)
+  - [layer → Layers](#layer)
+  - [room → Rooms](#room)
 - [Reactive Operators](#reactive-operators)
 - [Network Replication](#network-replication)
 - [Components Reference](#components-reference)
@@ -71,7 +71,7 @@ rock genesis my_gamemode
 
 ### Hot Reload
 
-The engine watches `config.cfg` and all `.lua` files in `gamemodes/`. Save a file and the runtime reloads automatically -- no restart needed.
+The engine watches `config.cfg` and all `.lua` files in `gamemodes/`. Save a file and the runtime reloads automatically → no restart needed.
 
 ---
 
@@ -131,7 +131,7 @@ on.player.online():each(function(p)
 end)
 ```
 
-Handlers support **reactive operators** -- you can filter, transform, throttle, and limit events with a chainable API.
+Handlers support **reactive operators** → you can filter, transform, throttle, and limit events with a chainable API.
 
 ### Scenes
 
@@ -433,7 +433,7 @@ local bp = entity.blueprint()
 
 A live entity in the world. Returned by `:spawn()` or from queries.
 
-**Getter/Setter methods** -- call with no args to get, call with args to set (returns self for chaining):
+**Getter/Setter methods** → call with no args to get, call with args to set (returns self for chaining):
 
 ```lua
 local ent = bp:spawn():position({ x = 10, y = 5 }):name("bob")
@@ -567,7 +567,7 @@ player.broadcast()
 
 #### PlayerVision
 
-Vision determines what a player can "see" for network replication. You attach the player's vision to entities -- the player will receive updates for entities near their anchors, in the same rooms.
+Vision determines what a player can "see" for network replication. You attach the player's vision to entities → the player will receive updates for entities near their anchors, in the same rooms.
 
 | Method | Args | Description |
 |--------|------|-------------|
@@ -743,7 +743,7 @@ end)
 
 ### `scene`
 
-Scenes let you run async code (database calls, network requests) inside what looks like synchronous Lua. Under the hood they use coroutines -- the engine yields when an async operation starts and resumes when it completes.
+Scenes let you run async code (database calls, network requests) inside what looks like synchronous Lua. Under the hood they use coroutines → the engine yields when an async operation starts and resumes when it completes.
 
 #### `scene.run(fn)`
 
