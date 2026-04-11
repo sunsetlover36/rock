@@ -20,6 +20,9 @@ Documentation for gamemode scripters. Everything you need to build multiplayer w
 - [Reactive Operators](#reactive-operators)
 - [Network Replication](#network-replication)
 - [Components Reference](#components-reference)
+- [WebSocket Protocol](#websocket-protocol)
+- [Geodes](#geodes)
+- [Impromptu (Live Coding)](#impromptu-live-coding)
 
 ---
 
