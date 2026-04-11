@@ -83,7 +83,7 @@ macro_rules! add_handle_methods {
             } else {
                 // get
                 if let Ok(field) = world.get::<&$comp_type>(this.entity) {
-                    return Ok(lua.to_value(&*field)?);
+                    return lua.to_value(&*field);
                 } else {
                     return Ok(mlua::Value::Nil);
                 }
