@@ -11,11 +11,21 @@ pub trait GameModeClientApi: Send + Sync {
 }
 
 pub enum SystemCallback {
-    OnPlayerConnect { pk: PlayerKey },
-    OnPlayerDisconnect { pk: PlayerKey },
-    OnImpromptuRequest { name: Option<String>, code: String },
+    PlayerConnect { pk: PlayerKey },
+    PlayerDisconnect { pk: PlayerKey },
+    ImpromptuRequest { name: Option<String>, code: String },
 }
+
 pub enum RuntimeCallback {
     System(SystemCallback),
     Client(ClientRequest),
+}
+
+pub enum RuntimeCommand {
+    Reload,
+    Shutdown,
+}
+pub enum RuntimeExit {
+    Reload,
+    Shutdown,
 }

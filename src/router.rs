@@ -6,6 +6,7 @@ use crate::socket::session_registry::SessionSender;
 mod protocol;
 pub(crate) use protocol::*;
 
+#[derive(Clone)]
 pub struct CommitRouter {
     // db: DatabaseSystem
     // logger: LoggerSystem

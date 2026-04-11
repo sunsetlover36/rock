@@ -12,9 +12,12 @@ use crate::{
     player_pool::PlayerPool,
     router::CommitRouter,
     runtime::{
-        Runtime, RuntimeCallback, RuntimeParams, default_client_api::GameModeDefaultClientApi,
+        Runtime, RuntimeCallback, RuntimeCommand, RuntimeExit, RuntimeParams,
+        default_client_api::GameModeDefaultClientApi,
     },
     socket::session_registry::{SessionRegistry, SessionRegistryParams},
+    utils::should_reload_runtime,
+    watcher::spawn_reload_watcher,
 };
 
 mod api;
@@ -28,14 +31,13 @@ mod runtime;
 mod rx;
 mod socket;
 mod utils;
+mod watcher;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match &cli.command {
         cli::Command::Ignite => {
-            let config = ServerConfig::new()?;
-
             let tokio_handle = Handle::current();
 
             // WS Session registry
@@ -51,29 +53,78 @@ async fn main() -> Result<()> {
             // Commit Router -> listen for and distribute new world events as they're committed
             let commit_router = CommitRouter::new(session_sender.clone());
 
-            // Meta database
-            let meta_db = MetaDb::new(MetaDbConfig {
-                mode_id: config.gamemode_name.clone(),
-                default_ttl: Duration::from_secs(30),
-            })
-            .await?;
-
             // Runtime main process (single-threaded)
             let (runtime_callback_tx, runtime_callback_rx) =
                 flume::bounded::<RuntimeCallback>(1024);
-            let runtime_params = RuntimeParams {
-                name: config.gamemode_name,
-                client_api: Arc::new(GameModeDefaultClientApi {
-                    ws_session_sender: session_sender.clone(),
-                }),
-                callback_rx: runtime_callback_rx,
-                commit_router,
-                meta_db,
-                tokio_handle,
-            };
+            let (runtime_cmd_tx, runtime_cmd_rx) = flume::bounded::<RuntimeCommand>(32);
+
+            // Hot reload watcher
+            let _watcher_thread = spawn_reload_watcher(runtime_cmd_tx);
             thread::spawn(move || {
-                let mut runtime = Runtime::new(runtime_params).unwrap();
-                runtime.awaken().unwrap();
+                loop {
+                    let config = match ServerConfig::new() {
+                        Ok(c) => c,
+                        Err(err) => {
+                            eprintln!("[HRM] Failed to read config: {err:?}");
+
+                            if !should_reload_runtime(&runtime_cmd_rx) {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
+
+                    // Meta database
+                    let meta_db = match tokio_handle.block_on(MetaDb::new(MetaDbConfig {
+                        mode_id: config.gamemode_name.clone(),
+                        default_ttl: Duration::from_secs(30),
+                    })) {
+                        Ok(db) => db,
+                        Err(err) => {
+                            eprintln!("Failed to create MetaDb: {err:?}");
+                            break;
+                        }
+                    };
+
+                    let runtime_params = RuntimeParams {
+                        name: config.gamemode_name,
+                        client_api: Arc::new(GameModeDefaultClientApi {
+                            ws_session_sender: session_sender.clone(),
+                        }),
+                        callback_rx: runtime_callback_rx.clone(),
+                        command_rx: runtime_cmd_rx.clone(),
+                        commit_router: commit_router.clone(),
+                        meta_db,
+                        tokio_handle: tokio_handle.clone(),
+                    };
+                    let mut runtime = match Runtime::new(runtime_params) {
+                        Ok(r) => r,
+                        Err(err) => {
+                            eprintln!("[HRM] Failed to boot up a new runtime: {err:?}");
+
+                            if !should_reload_runtime(&runtime_cmd_rx) {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
+
+                    match runtime.awaken() {
+                        Ok(RuntimeExit::Reload) => {
+                            println!("[HRM] Reloading a runtime...");
+                        }
+                        Ok(RuntimeExit::Shutdown) => {
+                            break;
+                        }
+                        Err(err) => {
+                            eprintln!("[HRM] Runtime crashed: {err:?}");
+
+                            if !should_reload_runtime(&runtime_cmd_rx) {
+                                break;
+                            }
+                        }
+                    }
+                }
             });
 
             // Axum API

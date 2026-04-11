@@ -67,12 +67,10 @@ impl Api {
     ) -> Result<&'static str, StatusCode> {
         state
             .runtime_callback_tx
-            .send_async(RuntimeCallback::System(
-                SystemCallback::OnImpromptuRequest {
-                    name: payload.name,
-                    code: payload.code,
-                },
-            ))
+            .send_async(RuntimeCallback::System(SystemCallback::ImpromptuRequest {
+                name: payload.name,
+                code: payload.code,
+            }))
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         Ok("ok")

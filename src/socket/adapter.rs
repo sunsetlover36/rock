@@ -51,7 +51,7 @@ impl SocketAdapter {
 
     pub async fn activate(mut self) -> eyre::Result<()> {
         self.runtime_callback_tx
-            .send_async(RuntimeCallback::System(SystemCallback::OnPlayerConnect {
+            .send_async(RuntimeCallback::System(SystemCallback::PlayerConnect {
                 pk: self.session.pk,
             }))
             .await?;
@@ -125,11 +125,9 @@ impl SocketAdapter {
         }
 
         self.runtime_callback_tx
-            .send_async(RuntimeCallback::System(
-                SystemCallback::OnPlayerDisconnect {
-                    pk: self.session.pk,
-                },
-            ))
+            .send_async(RuntimeCallback::System(SystemCallback::PlayerDisconnect {
+                pk: self.session.pk,
+            }))
             .await?;
         Ok(())
     }

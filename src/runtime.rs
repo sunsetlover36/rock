@@ -47,10 +47,12 @@ use timer_manager::{TimerManager, TimerManagerParams};
 mod utils;
 pub use utils::*;
 
+#[derive(Clone)]
 pub struct RuntimeParams {
     pub name: String,
     pub client_api: Arc<dyn GameModeClientApi>,
     pub callback_rx: flume::Receiver<RuntimeCallback>,
+    pub command_rx: flume::Receiver<RuntimeCommand>,
     pub commit_router: CommitRouter,
     pub meta_db: MetaDb,
     pub tokio_handle: tokio::runtime::Handle,
@@ -60,6 +62,7 @@ pub struct Runtime {
     tick: u64,
     lua: Lua,
     callback_rx: flume::Receiver<RuntimeCallback>,
+    command_rx: flume::Receiver<RuntimeCommand>,
     commit_router: CommitRouter,
     meta_db: Arc<MetaDb>,
     scene_manager: SceneManager,
@@ -101,7 +104,6 @@ impl Runtime {
         lua.set_app_data::<app_data::ReplicatorMarkTx>(app_data::ReplicatorMarkTx(
             replicator.get_mark_tx(),
         ));
-        // TODO: should i get rid of app_data prefix everywhere?
         lua.set_app_data::<FieldRegistry>(FieldRegistry::new(&lua)?);
         lua.set_app_data::<app_data::EntityCustoms>(app_data::EntityCustoms(HashMap::new()));
         lua.set_app_data::<app_data::RoomIdToName>(app_data::RoomIdToName(HashMap::new()));
@@ -152,6 +154,7 @@ impl Runtime {
             tick: 0,
             lua,
             callback_rx: params.callback_rx,
+            command_rx: params.command_rx,
             commit_router: params.commit_router,
             meta_db,
             scene_manager,
@@ -161,7 +164,7 @@ impl Runtime {
         })
     }
 
-    pub fn awaken(&mut self) -> eyre::Result<Self> {
+    pub fn awaken(&mut self) -> eyre::Result<RuntimeExit> {
         self.event_bus.schedule_event(GameModeEvent {
             scopes: smallvec![EventScope::Global],
             data: GameModeEventData::World(WorldEventData::Awake),
@@ -170,9 +173,14 @@ impl Runtime {
         let tick_interval = Duration::from_nanos(16_666_667);
         let mut next_tick = Instant::now();
         loop {
-            self.tick += 1;
+            if let Ok(cmd) = self.command_rx.try_recv() {
+                match cmd {
+                    RuntimeCommand::Reload => return Ok(RuntimeExit::Reload),
+                    RuntimeCommand::Shutdown => return Ok(RuntimeExit::Shutdown),
+                }
+            }
 
-            self.scene_manager.tick(&self.lua);
+            self.tick += 1;
 
             while let Ok(cb) = self.callback_rx.try_recv() {
                 match cb {
@@ -187,8 +195,7 @@ impl Runtime {
                 }
             }
 
-            // TODO: Physics step
-
+            self.scene_manager.tick(&self.lua);
             self.timer_manager.tick();
             self.event_bus.flush(&self.lua)?;
             self.replicator.replicate(&self.lua, self.tick)?;
@@ -238,7 +245,7 @@ impl Runtime {
     // Trusted input (called by the engine)
     fn on_system_callback(&self, cb: SystemCallback) {
         match cb {
-            SystemCallback::OnPlayerConnect { pk } => {
+            SystemCallback::PlayerConnect { pk } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Online {
@@ -246,7 +253,7 @@ impl Runtime {
                     }),
                 });
             }
-            SystemCallback::OnPlayerDisconnect { pk } => {
+            SystemCallback::PlayerDisconnect { pk } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Offline {
@@ -254,7 +261,7 @@ impl Runtime {
                     }),
                 });
             }
-            SystemCallback::OnImpromptuRequest { name, code } => {
+            SystemCallback::ImpromptuRequest { name, code } => {
                 if let Err(err) = self.process_impromptu(ImpromptuRequest { name, code }) {
                     eprintln!("Faile to process an impromptu: {err}");
                 }

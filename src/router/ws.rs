@@ -1,5 +1,6 @@
 use crate::{router::CommitKind, socket::session_registry::SessionSender};
 
+#[derive(Clone)]
 pub struct WsCommitRouter {
     pub ws_session_sender: SessionSender,
 }

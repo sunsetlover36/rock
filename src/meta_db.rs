@@ -67,11 +67,13 @@ impl From<MetaDbError> for eyre::ErrReport {
     }
 }
 
+#[derive(Clone)]
 pub struct MetaDbConfig {
     pub mode_id: String,
     pub default_ttl: Duration,
 }
 
+#[derive(Clone)]
 pub struct MetaDb {
     config: MetaDbConfig,
     pool: sqlx::Pool<sqlx::Sqlite>,
