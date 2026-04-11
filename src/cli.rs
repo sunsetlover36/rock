@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "rock")]
 #[command(author = "Luther Blissett")]
-#[command(version = "0.2.2")]
+#[command(version = "0.2.3")]
 #[command(about = "ROCK game engine", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
