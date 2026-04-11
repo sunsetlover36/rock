@@ -11,8 +11,12 @@ pub struct ServerConfig {
     pub max_players: u32,
 }
 impl ServerConfig {
-    pub fn new(config_path: &str) -> Result<Self> {
-        let file = File::open(config_path)?;
+    pub fn filename() -> &'static str {
+        "config.cfg"
+    }
+
+    pub fn new() -> Result<Self> {
+        let file = File::open(ServerConfig::filename())?;
         let reader = io::BufReader::new(file);
 
         let mut config = ServerConfig::default();

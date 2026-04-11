@@ -1,4 +1,4 @@
-use std::{sync::Arc, thread, time::Duration};
+use std::{fs, path::Path, sync::Arc, thread, time::Duration};
 
 use clap::Parser;
 use color_eyre::eyre::Result;
@@ -33,8 +33,8 @@ mod utils;
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match &cli.command {
-        cli::Command::Ignite { config } => {
-            let config = ServerConfig::new(&config)?;
+        cli::Command::Ignite => {
+            let config = ServerConfig::new()?;
 
             let tokio_handle = Handle::current();
 
@@ -84,8 +84,43 @@ async fn main() -> Result<()> {
             .listen()
             .await?;
         }
-        cli::Command::Genesis { name } => {} // cli::Command::Accrete { geode_name } => {}
-                                             // cli::Command::Scan => {}
+        cli::Command::Genesis { name } => {
+            let gamemodes_dir = Path::new("./gamemodes");
+            fs::create_dir_all(gamemodes_dir)?;
+
+            let sample_gamemode = r#"on.world.awake()
+  :each(function ()
+    print("Hello, World!")
+  end)"#;
+            fs::write(format!("./gamemodes/{}.lua", name.clone()), sample_gamemode)?;
+
+            let config_path = format!("./{}", ServerConfig::filename());
+            let config = Path::new(&config_path);
+            if !config.exists() {
+                fs::write(config, format!("gamemode name is {}", name.clone()))?;
+            } else {
+                let content = fs::read_to_string(config)?;
+                let new_content = content
+                    .lines()
+                    .map(|line| {
+                        if line.starts_with("gamemode name is ") {
+                            format!("gamemode name is {}", name)
+                        } else {
+                            line.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                fs::write(config, new_content)?;
+            }
+
+            println!(
+                "Bootstrapped gamemodes/{}.lua! Use `rock ignite` to start the runtime.",
+                name
+            );
+        } // cli::Command::Accrete { geode_name } => {}
+          // cli::Command::Scan => {}
     }
 
     Ok(())

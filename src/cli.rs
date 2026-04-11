@@ -13,15 +13,10 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     // Start the engine
-    Ignite {
-        #[arg(short, long, default_value = "config.cfg")]
-        config: String,
-    },
+    Ignite,
 
     // Create a new gamemode
-    Genesis {
-        name: String,
-    },
+    Genesis { name: String },
     // Install a geode
     // Accrete {
     //     geode_name: String,
