@@ -65,6 +65,8 @@ rock ignite
 rock genesis my_gamemode
 ```
 
+`rock genesis` creates the gamemode Lua file in `gamemodes/` and, if `config.cfg` doesn't exist yet, creates it with the gamemode name already set.
+
 `rock ignite` starts the server on `127.0.0.1:3000`. Clients connect via WebSocket at `ws://localhost:3000/ws`.
 
 ### Hot Reload
@@ -188,11 +190,7 @@ Let's build a simple multiplayer world where players move on a grid.
 rock genesis my_world
 ```
 
-This creates `server/gamemodes/my_world.lua`. Set it in `config.cfg`:
-
-```
-gamemode name is my_world
-```
+This creates `server/gamemodes/my_world.lua` and sets up `config.cfg` pointing to it (if it doesn't already exist).
 
 ### Step 2: Register input
 
