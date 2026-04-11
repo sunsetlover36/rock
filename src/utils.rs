@@ -1,8 +1,6 @@
 use mlua::{Lua, LuaSerdeExt, Value as LuaValue};
 use serde_json::Value as JsonValue;
 
-use crate::runtime::RuntimeCommand;
-
 pub fn json_to_lua(lua: &Lua, value: JsonValue) -> mlua::Result<LuaValue> {
     Ok(match value {
         JsonValue::Null => LuaValue::Nil,
@@ -70,14 +68,4 @@ pub fn custom_table_to_json(
     }
 
     Ok(map)
-}
-
-pub fn should_reload_runtime(cmd_rx: &flume::Receiver<RuntimeCommand>) -> bool {
-    match cmd_rx.recv() {
-        Ok(RuntimeCommand::Reload) => {
-            println!("[HRM] Reloading a runtime...");
-            true
-        }
-        Ok(RuntimeCommand::Shutdown) | Err(_) => false,
-    }
 }

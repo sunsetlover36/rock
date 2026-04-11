@@ -16,7 +16,6 @@ use crate::{
         default_client_api::GameModeDefaultClientApi,
     },
     socket::session_registry::{SessionRegistry, SessionRegistryParams},
-    utils::should_reload_runtime,
     watcher::spawn_reload_watcher,
 };
 
@@ -61,6 +60,16 @@ async fn main() -> Result<()> {
             // Hot reload watcher
             let _watcher_thread = spawn_reload_watcher(runtime_cmd_tx);
             thread::spawn(move || {
+                fn should_reload_runtime(cmd_rx: &flume::Receiver<RuntimeCommand>) -> bool {
+                    match cmd_rx.recv() {
+                        Ok(RuntimeCommand::Reload) => {
+                            println!("[HRM] Reloading a runtime...");
+                            true
+                        }
+                        Ok(RuntimeCommand::Shutdown) | Err(_) => false,
+                    }
+                }
+
                 loop {
                     let config = match ServerConfig::new() {
                         Ok(c) => c,
