@@ -36,6 +36,7 @@ where
 {
     methods.add_method("radius", |lua, this, radius: f32| {
         get_app_data::<app_data::NetworkReplicator>(lua)?
+            .0
             .update_policy(
                 this.policy_id(),
                 PolicyFieldUpdate::Spatial {

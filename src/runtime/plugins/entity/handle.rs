@@ -33,7 +33,7 @@ pub(crate) struct EntityHandle {
 impl EntityHandle {
     fn get_custom(&self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
         let customs = get_app_data::<app_data::EntityCustoms>(lua)?;
-        if let Some(custom) = customs.get(&self.entity) {
+        if let Some(custom) = customs.0.get(&self.entity) {
             return Ok(mlua::Value::Table(custom.clone()));
         } else {
             return Ok(mlua::Value::Nil);
@@ -60,10 +60,12 @@ impl EntityHandle {
             }
         }
 
-        get_app_data_mut::<app_data::EntityCustoms>(lua)?.insert(self.entity, table.clone());
+        get_app_data_mut::<app_data::EntityCustoms>(lua)?
+            .0
+            .insert(self.entity, table.clone());
 
         let event_bus = get_app_data::<app_data::EventBus>(lua)?;
-        event_bus.schedule_event(GameModeEvent {
+        event_bus.0.schedule_event(GameModeEvent {
             scopes: smallvec![
                 EventScope::Entity(self.entity.id().into()),
                 EventScope::Blueprint(self.blueprint_id),
@@ -94,7 +96,8 @@ impl UserData for EntityHandle {
         for_each_handle!(methods, add_handle_methods);
 
         methods.add_method("room", |lua, this, name: Option<String>| {
-            let mut world = get_app_data_mut::<app_data::World>(lua)?;
+            let mut world_data = get_app_data_mut::<app_data::World>(lua)?;
+            let world = &mut world_data.0;
             match name {
                 Some(name) => {
                     let mut prev_room_id = None;
@@ -112,7 +115,7 @@ impl UserData for EntityHandle {
                     }
 
                     let event_bus = get_app_data::<app_data::EventBus>(lua)?;
-                    event_bus.schedule_event(GameModeEvent {
+                    event_bus.0.schedule_event(GameModeEvent {
                         scopes: smallvec![
                             EventScope::Entity(this.entity.id().into()),
                             EventScope::Blueprint(this.blueprint_id),
@@ -168,7 +171,9 @@ impl UserData for EntityHandle {
         });
 
         methods.add_method("exists", |lua, this, _: ()| {
-            Ok(get_app_data::<app_data::World>(lua)?.contains(this.entity))
+            Ok(get_app_data::<app_data::World>(lua)?
+                .0
+                .contains(this.entity))
         });
 
         methods.add_method("sync", |_, this, _: ()| {

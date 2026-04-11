@@ -25,7 +25,7 @@ impl GameModePlugin for PlayerPlugin {
 
         let get_fn = lua.create_function(|lua, pid: PlayerId| {
             let pk = PlayerKey::unpack(pid);
-            if get_app_data::<app_data::ClientApi>(lua)?.has(pk) {
+            if get_app_data::<app_data::ClientApi>(lua)?.0.has(pk) {
                 Ok(PlayerHandle::new(pk).into_lua(lua)?)
             } else {
                 Ok(mlua::Value::Nil)
@@ -38,6 +38,7 @@ impl GameModePlugin for PlayerPlugin {
 
         let list_fn = lua.create_function(|lua, _: ()| {
             let players: Vec<PlayerHandle> = get_app_data::<app_data::ClientApi>(lua)?
+                .0
                 .list()
                 .iter()
                 .map(|pk| PlayerHandle::new(*pk))

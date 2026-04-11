@@ -65,7 +65,8 @@ impl UserData for SignalRx {
         });
 
         methods.add_method("send", |lua, this, _: ()| {
-            let client_api = get_app_data::<app_data::ClientApi>(lua)?;
+            let client_api_data = get_app_data::<app_data::ClientApi>(lua)?;
+            let client_api = &client_api_data.0;
 
             let data = this.data.clone().ok_or_else(|| {
                 mlua::Error::runtime("Failed to send a signal: no data to send was provided")
@@ -78,14 +79,15 @@ impl UserData for SignalRx {
             match this.scope {
                 SignalScope::Global => match this.room {
                     Some(room_id) => {
-                        let replicator = get_app_data::<app_data::NetworkReplicator>(lua)?;
+                        let replicator_data = get_app_data::<app_data::NetworkReplicator>(lua)?;
+                        let replicator = &replicator_data.0;
 
                         match this.area {
                             Some(area) => {
                                 let world = get_app_data::<app_data::World>(lua)?;
                                 client_api.send(ServerEnvelope {
                                     recipient: EnvelopeRecipient::List(
-                                        replicator.get_players_in_area(&*world, room_id, area),
+                                        replicator.get_players_in_area(&world.0, room_id, area),
                                     ),
                                     payload,
                                 });

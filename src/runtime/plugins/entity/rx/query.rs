@@ -122,6 +122,7 @@ impl UserData for QueryRx {
             let mut count: usize = 0;
 
             for (blueprint, name, owned_by, room, position) in world
+                .0
                 .query::<(
                     &Blueprint,
                     Option<&Name>,
@@ -145,6 +146,7 @@ impl UserData for QueryRx {
                 let world = get_app_data::<app_data::World>(lua)?;
 
                 for (entity, blueprint, name, owned_by, room, position) in world
+                    .0
                     .query::<(
                         hecs::Entity,
                         &Blueprint,

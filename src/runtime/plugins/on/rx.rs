@@ -64,11 +64,13 @@ impl OnRx {
     ) -> mlua::Result<SequenceId> {
         let event_key = self.event_key;
 
-        let current_seq = get_app_data::<app_data::EventBus>(lua)?.increment_sequence();
+        let current_seq = get_app_data::<app_data::EventBus>(lua)?
+            .0
+            .increment_sequence();
         let context = *get_app_data::<app_data::ExecutionContext>(lua)?;
         {
             let mut listeners = get_app_data_mut::<app_data::EventListeners>(lua)?;
-            let entry = listeners.entry(event_key).or_default();
+            let entry = listeners.0.entry(event_key).or_default();
 
             if let Some(name) = &self.name
                 && entry.iter().any(|l| l.name.as_ref() == Some(name))
@@ -89,9 +91,10 @@ impl OnRx {
 
         // Layer garbage collection
         let layers = get_app_data::<app_data::ActiveLayers>(lua)?;
-        if let Some(layer) = layers.last() {
+        if let Some(layer) = layers.0.last() {
             let cleaner = lua.create_function(move |lua, _: ()| {
                 get_app_data_mut::<app_data::EventListeners>(lua)?
+                    .0
                     .entry(event_key)
                     .and_modify(|listeners| listeners.retain(|l| l.get_seq() != current_seq));
 

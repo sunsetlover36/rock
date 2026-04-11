@@ -38,6 +38,7 @@ where
 {
     methods.add_method("global", |lua, this, _: ()| {
         get_app_data::<app_data::NetworkReplicator>(lua)?
+            .0
             .update_policy(
                 this.policy_id(),
                 PolicyFieldUpdate::Spatial {
@@ -51,6 +52,7 @@ where
     methods.add_method("area", |lua, this, area: mlua::Table| {
         let area: RadialArea = lua.from_value(mlua::Value::Table(area))?;
         get_app_data::<app_data::NetworkReplicator>(lua)?
+            .0
             .update_policy(
                 this.policy_id(),
                 PolicyFieldUpdate::Spatial {

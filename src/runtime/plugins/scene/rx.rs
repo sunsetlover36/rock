@@ -41,7 +41,7 @@ impl UserData for SceneRx {
 
         methods.add_method("register", |lua, this, name: String| {
             let mut scenes = get_app_data_mut::<app_data::Scenes>(lua)?;
-            match scenes.entry(name.clone()) {
+            match scenes.0.entry(name.clone()) {
                 hash_map::Entry::Occupied(_) => {
                     return Err(mlua::Error::runtime(format!(
                         "Scene with name {} already exists",

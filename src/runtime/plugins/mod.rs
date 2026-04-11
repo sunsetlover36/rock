@@ -42,6 +42,7 @@ pub struct Yielder {}
 impl Yielder {
     pub fn get(lua: &Lua) -> mlua::Result<mlua::Function> {
         let yielder_fn = get_app_data::<app_data::Yielder>(lua)?
+            .0
             .clone()
             .ok_or_else(|| mlua::Error::runtime("`yielder` function not found in app data"))?;
 
@@ -73,7 +74,7 @@ impl PluginComposer {
         let mut yielder = lua
             .app_data_mut::<app_data::Yielder>()
             .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
-        *yielder = Some(Yielder::create(lua)?);
+        yielder.0 = Some(Yielder::create(lua)?);
 
         Ok(Self {
             plugins: HashMap::new(),
@@ -98,9 +99,11 @@ impl PluginComposer {
                 ))?;
         };
         if let Some(scene_api) = plugin.create_scene_api(lua).wrap_err(&err_msg)? {
-            let mut scene_plugins = lua
+            let mut scene_plugins_data = lua
                 .app_data_mut::<app_data::ScenePlugins>()
                 .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
+            let scene_plugins = &mut scene_plugins_data.0;
+
             if !scene_plugins.contains_key(&plugin_name) {
                 scene_plugins.insert(plugin_name, scene_api);
             }
@@ -123,6 +126,7 @@ impl PluginComposer {
             self.plugins.remove(&name);
             lua.app_data_mut::<app_data::ScenePlugins>()
                 .ok_or_else(|| eyre::eyre!("App data is not initialized"))?
+                .0
                 .remove(&name);
         }
 

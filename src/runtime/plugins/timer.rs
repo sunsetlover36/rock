@@ -21,7 +21,9 @@ impl GameModePlugin for TimerPlugin {
         table.set("create", create_fn)?;
 
         let cancel_fn = lua.create_function(|lua, id: String| {
-            get_app_data::<app_data::TimerManager>(lua)?.cancel_timer(id);
+            get_app_data::<app_data::TimerManager>(lua)?
+                .0
+                .cancel_timer(id);
             Ok(())
         })?;
         table.set("cancel", cancel_fn)?;

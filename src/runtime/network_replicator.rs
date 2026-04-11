@@ -423,7 +423,7 @@ impl NetworkReplicator {
             let mut cleared_anchors_per_room: HashMap<RoomId, HashSet<hecs::Entity>> =
                 HashMap::new();
             for anchor in anchors {
-                if let Ok(room_comp) = world.get::<&Room>(anchor) {
+                if let Ok(room_comp) = world.0.get::<&Room>(anchor) {
                     cleared_anchors_per_room
                         .entry(room_comp.0)
                         .or_default()
@@ -482,7 +482,7 @@ impl NetworkReplicator {
         inner.room_to_players.entry(id).or_default().insert(pk);
 
         let event_bus = get_app_data::<app_data::EventBus>(lua)?;
-        event_bus.schedule_event(GameModeEvent {
+        event_bus.0.schedule_event(GameModeEvent {
             scopes: smallvec![EventScope::Global],
             data: GameModeEventData::Player(PlayerEventData::Enter {
                 player: PlayerHandle::new(pk),
@@ -510,7 +510,7 @@ impl NetworkReplicator {
             .and_modify(|pks| pks.retain(|&r_pk| r_pk != pk));
 
         let event_bus = get_app_data::<app_data::EventBus>(lua)?;
-        event_bus.schedule_event(GameModeEvent {
+        event_bus.0.schedule_event(GameModeEvent {
             scopes: smallvec![EventScope::Global],
             data: GameModeEventData::Player(PlayerEventData::Exit {
                 player: PlayerHandle::new(pk),
@@ -528,7 +528,7 @@ impl NetworkReplicator {
             let player_handle = PlayerHandle::new(pk);
 
             for room_id in rooms {
-                event_bus.schedule_event(GameModeEvent {
+                event_bus.0.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Exit {
                         player: player_handle.clone(),
@@ -598,7 +598,7 @@ impl NetworkReplicator {
                 }
                 EntityDirtyComponent::Custom => {
                     // FIXME: one custom field change triggers a whole custom component replication
-                    entity_data.custom = custom_table_to_json(lua, entity_customs.get(entity)).wrap_err(&format!(
+                    entity_data.custom = custom_table_to_json(lua, entity_customs.0.get(entity)).wrap_err(&format!(
                         "Failed to convert a custom component table to JSON for an entity with ID '{}'",
                         entity.id()
                     ))?;
@@ -731,7 +731,10 @@ impl NetworkReplicator {
             ..
         } = &mut *inner_guard;
 
-        let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
+        let world_data =
+            get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
+        let world = &world_data.0;
+
         for anchors in room_to_anchors.values_mut() {
             anchors.retain(|anchor| world.contains(anchor.entity));
         }
@@ -759,7 +762,10 @@ impl NetworkReplicator {
             ..
         } = &mut *inner_guard;
 
-        let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
+        let world_data =
+            get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
+        let world = &world_data.0;
+
         let mut field_registry =
             get_app_data_mut::<FieldRegistry>(lua).wrap_err("App data is not initialized")?;
         let entity_customs =
@@ -774,11 +780,11 @@ impl NetworkReplicator {
                 };
 
                 let entity_id = entity.id();
-                let entity_custom_data = custom_table_to_json(lua, entity_customs.get(&entity))
+                let entity_custom_data = custom_table_to_json(lua, entity_customs.0.get(&entity))
                     .wrap_err(&format!(
-                        "Failed to deserialize a custom data table for an entity with ID '{}'",
-                        entity_id
-                    ))?;
+                    "Failed to deserialize a custom data table for an entity with ID '{}'",
+                    entity_id
+                ))?;
 
                 let blueprint_id = blueprint_comp.map(|c| c.0);
                 let position = pos_comp.map(|c| c.0);
@@ -1026,7 +1032,7 @@ impl NetworkReplicator {
                             false
                         }
                         SpatialFilter::Area(area) => {
-                            self.visible_to_anchor(policy_room_id, area, anchor.entity, &world)
+                            self.visible_to_anchor(policy_room_id, area, anchor.entity, &world.0)
                         }
                     };
 

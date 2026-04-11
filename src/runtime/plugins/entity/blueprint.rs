@@ -185,12 +185,12 @@ impl UserData for EntityBlueprint {
             if let Some(customs) = &this.customs {
                 let value = lua.to_value(customs)?;
                 let table = value.as_table().ok_or_else(|| mlua::Error::runtime(format!("Failed to spawn an entity: custom component data is not a table, blueprint ID '{}'", this.id)))?;
-                get_app_data_mut::<app_data::EntityCustoms>(lua)?.insert(entity, table.clone());
+                get_app_data_mut::<app_data::EntityCustoms>(lua)?.0.insert(entity, table.clone());
             }
 
             // Layer garbage collection
             let layers = get_app_data::<app_data::ActiveLayers>(lua)?;
-            if let Some(layer_id) = layers.last() {
+            if let Some(layer_id) = layers.0.last() {
                 let cleaner = lua.create_function(move |lua, _: ()| despawn_entity(lua, entity))?;
 
                 get_app_data_mut::<app_data::LayerRegistry>(lua)?

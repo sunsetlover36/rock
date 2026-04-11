@@ -53,7 +53,8 @@ impl UserData for TimerRx {
         });
 
         methods.add_method("register", |lua, this, id: String| {
-            let timer_manager = get_app_data::<app_data::TimerManager>(lua)?;
+            let timer_manager_data = get_app_data::<app_data::TimerManager>(lua)?;
+            let timer_manager = &timer_manager_data.0;
 
             let cloned_id = id.clone();
             let seconds = this.seconds.unwrap_or(0);

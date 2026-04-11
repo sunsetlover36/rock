@@ -36,6 +36,7 @@ where
 {
     methods.add_method("room", |lua, this, name: String| {
         get_app_data::<app_data::NetworkReplicator>(lua)?
+            .0
             .update_policy(
                 this.policy_id(),
                 PolicyFieldUpdate::Room {

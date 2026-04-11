@@ -82,26 +82,28 @@ impl Runtime {
         let replicator = Rc::new(NetworkReplicator::new(client_api.clone()));
 
         // App data
-        lua.set_app_data::<app_data::EventListeners>(HashMap::new());
-        lua.set_app_data::<app_data::Scenes>(HashMap::new());
-        lua.set_app_data::<app_data::ScenePlugins>(HashMap::new());
-        lua.set_app_data::<app_data::Yielder>(None);
-        lua.set_app_data::<app_data::World>(hecs::World::new());
-        lua.set_app_data::<app_data::EventBus>(event_bus.clone());
+        lua.set_app_data::<app_data::EventListeners>(app_data::EventListeners(HashMap::new()));
+        lua.set_app_data::<app_data::Scenes>(app_data::Scenes(HashMap::new()));
+        lua.set_app_data::<app_data::ScenePlugins>(app_data::ScenePlugins(HashMap::new()));
+        lua.set_app_data::<app_data::Yielder>(app_data::Yielder(None));
+        lua.set_app_data::<app_data::World>(app_data::World(hecs::World::new()));
+        lua.set_app_data::<app_data::EventBus>(app_data::EventBus(event_bus.clone()));
         lua.set_app_data::<app_data::BlueprintRegistry>(BlueprintRegistry::new());
         lua.set_app_data::<app_data::InputEventRegistry>(InputEventRegistry::default());
         lua.set_app_data::<app_data::ExecutionContext>(ExecutionContext::Global);
         lua.set_app_data::<app_data::LayerRegistry>(LayerRegistry::new());
-        lua.set_app_data::<app_data::ActiveLayers>(Vec::new());
-        lua.set_app_data::<app_data::ClientApi>(client_api.clone());
-        lua.set_app_data::<app_data::TimerManager>(timer_manager.clone());
-        lua.set_app_data::<app_data::NetworkReplicator>(replicator.clone());
+        lua.set_app_data::<app_data::ActiveLayers>(app_data::ActiveLayers(Vec::new()));
+        lua.set_app_data::<app_data::ClientApi>(app_data::ClientApi(client_api.clone()));
+        lua.set_app_data::<app_data::TimerManager>(app_data::TimerManager(timer_manager.clone()));
+        lua.set_app_data::<app_data::NetworkReplicator>(app_data::NetworkReplicator(
+            replicator.clone(),
+        ));
         lua.set_app_data::<app_data::ReplicatorMarkTx>(app_data::ReplicatorMarkTx(
             replicator.get_mark_tx(),
         ));
         // TODO: should i get rid of app_data prefix everywhere?
         lua.set_app_data::<FieldRegistry>(FieldRegistry::new(&lua)?);
-        lua.set_app_data::<app_data::EntityCustoms>(HashMap::new());
+        lua.set_app_data::<app_data::EntityCustoms>(app_data::EntityCustoms(HashMap::new()));
         lua.set_app_data::<app_data::RoomIdToName>(app_data::RoomIdToName(HashMap::new()));
 
         // Plugins

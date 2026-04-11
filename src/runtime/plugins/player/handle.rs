@@ -25,10 +25,12 @@ impl UserData for PlayerHandle {
         methods.add_method("id", |_, this, _: ()| Ok(this.pk.slot_idx));
 
         methods.add_method("kick", |lua, this, _: ()| {
-            get_app_data::<app_data::ClientApi>(lua)?.send(ServerMessage {
-                recipient: EnvelopeRecipient::Single(this.pk),
-                payload: OutgoingPacket::System(SystemPacket::PlayerKicked),
-            });
+            get_app_data::<app_data::ClientApi>(lua)?
+                .0
+                .send(ServerMessage {
+                    recipient: EnvelopeRecipient::Single(this.pk),
+                    payload: OutgoingPacket::System(SystemPacket::PlayerKicked),
+                });
             Ok(())
         });
 

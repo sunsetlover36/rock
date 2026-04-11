@@ -11,7 +11,7 @@ struct LayerGuard<'lua> {
 impl<'lua> Drop for LayerGuard<'lua> {
     fn drop(&mut self) {
         if let Some(mut layers) = self.lua.app_data_mut::<app_data::ActiveLayers>() {
-            layers.pop();
+            layers.0.pop();
         }
     }
 }
@@ -72,7 +72,7 @@ impl UserData for LayerRx {
                 });
             }
 
-            get_app_data_mut::<app_data::ActiveLayers>(lua)?.push(this.id);
+            get_app_data_mut::<app_data::ActiveLayers>(lua)?.0.push(this.id);
             let _guard = LayerGuard { lua };
 
             for cb in &this.callbacks {

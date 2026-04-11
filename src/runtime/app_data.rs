@@ -27,12 +27,12 @@ pub enum RuntimePhase {
     Gamemode,
 }
 
-pub type EventListeners = HashMap<GameModeEventKey, Vec<GameModeListener>>;
-pub type Scenes = HashMap<String, Vec<mlua::Function>>;
-pub type ScenePlugins = HashMap<PluginName, mlua::Table>;
-pub type Yielder = Option<mlua::Function>;
-pub type World = hecs::World;
-pub type EventBus = Rc<event_bus::EventBus>;
+pub struct EventListeners(pub HashMap<GameModeEventKey, Vec<GameModeListener>>);
+pub struct Scenes(pub HashMap<String, Vec<mlua::Function>>);
+pub struct ScenePlugins(pub HashMap<PluginName, mlua::Table>);
+pub struct Yielder(pub Option<mlua::Function>);
+pub struct World(pub hecs::World);
+pub struct EventBus(pub Rc<event_bus::EventBus>);
 
 pub struct BlueprintRegistry {
     last_id: BlueprintId,
@@ -107,13 +107,12 @@ impl LayerRegistry {
 }
 
 // -- Active layers at initialization phase
-pub type ActiveLayers = Vec<LayerId>;
+pub struct ActiveLayers(pub Vec<LayerId>);
+pub struct ClientApi(pub Arc<dyn GameModeClientApi>);
+pub struct TimerManager(pub Rc<timer_manager::TimerManager>);
+pub struct EntityCustoms(pub HashMap<hecs::Entity, mlua::Table>);
 
-pub type ClientApi = Arc<dyn GameModeClientApi>;
-pub type TimerManager = Rc<timer_manager::TimerManager>;
-pub type EntityCustoms = HashMap<hecs::Entity, mlua::Table>;
-
-pub type NetworkReplicator = Rc<network_replicator::NetworkReplicator>;
+pub struct NetworkReplicator(pub Rc<network_replicator::NetworkReplicator>);
 pub struct RoomIdToName(pub HashMap<RoomId, String>);
 
 #[derive(Clone)]

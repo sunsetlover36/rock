@@ -65,7 +65,7 @@ impl EventBus {
                 None => return Err(eyre::eyre!("App data is not initialized")),
             };
 
-            let listeners_for_key = match listeners.get_mut(&key) {
+            let listeners_for_key = match listeners.0.get_mut(&key) {
                 Some(fns) => fns,
                 None => return Ok(()),
             };

@@ -16,6 +16,7 @@ impl UserData for ListenerHandle {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("off", |lua, this, _: ()| {
             get_app_data_mut::<app_data::EventListeners>(lua)?
+                .0
                 .entry(this.event_key)
                 .and_modify(|listeners| listeners.retain(|l| l.get_seq() != this.seq));
 

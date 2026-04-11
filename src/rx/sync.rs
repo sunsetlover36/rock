@@ -31,6 +31,7 @@ where
 {
     methods.add_method("clear", |lua, this, _: ()| {
         get_app_data::<app_data::NetworkReplicator>(lua)?
+            .0
             .revoke_policies_by_target(&this.policy().target);
 
         Ok(())
@@ -41,6 +42,7 @@ where
         policy.pipeline = this.pipeline().clone();
 
         let id = get_app_data::<app_data::NetworkReplicator>(lua)?
+            .0
             .commit_policy(policy)
             .map_err(mlua::Error::runtime)?;
         Ok(this.to_policy_handle(id))
@@ -53,7 +55,9 @@ where
     M: UserDataMethods<T>,
 {
     methods.add_method("revoke", |lua, this, _: ()| {
-        get_app_data::<app_data::NetworkReplicator>(lua)?.revoke_policy_by_id(this.policy_id());
+        get_app_data::<app_data::NetworkReplicator>(lua)?
+            .0
+            .revoke_policy_by_id(this.policy_id());
         Ok(())
     });
 }

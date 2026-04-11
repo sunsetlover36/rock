@@ -17,7 +17,7 @@ fn get_scene_env(lua: &Lua) -> mlua::Result<mlua::Table> {
     env.set_metatable(Some(mt))?;
 
     let scene_plugins = get_app_data::<app_data::ScenePlugins>(lua)?;
-    for plugin in scene_plugins.iter() {
+    for plugin in scene_plugins.0.iter() {
         let (name, table) = plugin;
         env.set(name.as_ref(), table)?;
     }
@@ -82,7 +82,7 @@ impl GameModePlugin for ScenePlugin {
         let scene_play_fn = lua.create_function(move |lua, name: String| {
             let coroutine = {
                 let scenes = get_app_data::<app_data::Scenes>(lua)?;
-                let scripts = scenes.get(&name).ok_or_else(|| {
+                let scripts = scenes.0.get(&name).ok_or_else(|| {
                     mlua::Error::runtime(format!("{}.play: scene {} not found", plugin_name, name))
                 })?;
 

@@ -21,14 +21,13 @@ impl UserData for PlayerVision {
             |lua, this, handle: mlua::UserDataRef<EntityHandle>| {
                 let world = get_app_data::<app_data::World>(lua)?;
                 let room_id = world
+                    .0
                     .get::<&Room>(handle.entity)
                     .map_or(None, |room_comp| Some(room_comp.0));
 
-                get_app_data::<app_data::NetworkReplicator>(lua)?.add_player_anchor(
-                    this.pk,
-                    handle.entity,
-                    room_id,
-                );
+                get_app_data::<app_data::NetworkReplicator>(lua)?
+                    .0
+                    .add_player_anchor(this.pk, handle.entity, room_id);
 
                 Ok(())
             },
@@ -37,22 +36,21 @@ impl UserData for PlayerVision {
         methods.add_method(
             "detach",
             |lua, this, handle: Option<mlua::UserDataRef<EntityHandle>>| {
+                let nr_data = get_app_data::<app_data::NetworkReplicator>(lua)?;
+                let nr = &nr_data.0;
+
                 match handle {
                     Some(handle) => {
                         let world = get_app_data::<app_data::World>(lua)?;
                         let room_id = world
+                            .0
                             .get::<&Room>(handle.entity)
                             .map_or(None, |room_comp| Some(room_comp.0));
 
-                        get_app_data::<app_data::NetworkReplicator>(lua)?.remove_player_anchor(
-                            this.pk,
-                            handle.entity,
-                            room_id,
-                        );
+                        nr.remove_player_anchor(this.pk, handle.entity, room_id);
                     }
                     None => {
-                        get_app_data::<app_data::NetworkReplicator>(lua)?
-                            .clear_player_anchors(lua, this.pk)?;
+                        nr.clear_player_anchors(lua, this.pk)?;
                     }
                 }
 

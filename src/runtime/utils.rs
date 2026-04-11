@@ -64,7 +64,9 @@ pub fn room_id_to_name(lua: &mlua::Lua, id: u64) -> mlua::Result<String> {
 }
 
 pub fn spawn_entity(lua: &mlua::Lua, entity: hecs::BuiltEntity) -> mlua::Result<hecs::Entity> {
-    let mut world = get_app_data_mut::<app_data::World>(lua)?;
+    let mut world_data = get_app_data_mut::<app_data::World>(lua)?;
+    let world = &mut world_data.0;
+
     let entity = world.spawn(entity);
     if let Ok(room_comp) = world.get::<&Room>(entity) {
         let room_id = room_comp.0;
@@ -78,7 +80,9 @@ pub fn spawn_entity(lua: &mlua::Lua, entity: hecs::BuiltEntity) -> mlua::Result<
     Ok(entity)
 }
 pub fn despawn_entity(lua: &mlua::Lua, entity: hecs::Entity) -> mlua::Result<bool> {
-    let mut world = get_app_data_mut::<app_data::World>(lua)?;
+    let mut world_data = get_app_data_mut::<app_data::World>(lua)?;
+    let world = &mut world_data.0;
+
     let room_id = world.get::<&Room>(entity).ok().map(|c| c.0);
 
     match world.despawn(entity) {
