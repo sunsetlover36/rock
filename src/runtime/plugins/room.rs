@@ -16,18 +16,6 @@ impl GameModePlugin for RoomPlugin {
         let generate_id_fn = lua.create_function(|_, _: ()| Ok(nanoid!()))?;
         table.set("generate_id", generate_id_fn)?;
 
-        let players_fn = lua.create_function(|_, name: String| {
-            // unimpl
-            Ok(())
-        })?;
-        table.set("players", players_fn)?;
-
-        let destroy_fn = lua.create_function(|_, name: String| {
-            // unimpl
-            Ok(())
-        })?;
-        table.set("destroy", destroy_fn)?;
-
         Ok(Some(table))
     }
 
