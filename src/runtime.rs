@@ -253,7 +253,9 @@ impl Runtime {
                 });
             }
             SystemCallback::OnImpromptuRequest { name, code } => {
-                self.process_impromptu(ImpromptuRequest { name, code });
+                if let Err(err) = self.process_impromptu(ImpromptuRequest { name, code }) {
+                    eprintln!("Faile to process an impromptu: {err}");
+                }
             }
         }
     }

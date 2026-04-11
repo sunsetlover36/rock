@@ -48,13 +48,16 @@ impl Api {
 
     async fn handle_ws(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
         ws.on_upgrade(async move |socket| {
-            SocketAdapter::new(SocketAdapterParams {
+            if let Err(err) = SocketAdapter::new(SocketAdapterParams {
                 socket,
                 session: state.session_registrar.register(),
                 runtime_callback_tx: state.runtime_callback_tx.clone(),
             })
             .activate()
-            .await;
+            .await
+            {
+                eprintln!("Failed to upgrade a socket: {}", err);
+            };
         })
     }
 
