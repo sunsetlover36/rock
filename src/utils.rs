@@ -69,12 +69,3 @@ pub fn custom_table_to_json(
 
     Ok(map)
 }
-
-pub fn is_json_empty(v: &serde_json::Value) -> bool {
-    match v {
-        serde_json::Value::Null => true,
-        serde_json::Value::Array(arr) => arr.is_empty(),
-        serde_json::Value::Object(map) => map.is_empty(),
-        _ => false,
-    }
-}
