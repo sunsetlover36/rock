@@ -5,17 +5,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use color_eyre::eyre::{self};
+use color_eyre::eyre;
 use mlua::Lua;
 use shared::{ImpromptuRequest, IncomingRequest};
 use smallvec::smallvec;
 
-use crate::{
-    meta_db::MetaDb,
-    router::CommitRouter,
-    runtime::network_replicator::FieldRegistry,
-    world::{WorldNatives, WorldState},
-};
+use crate::{meta_db::MetaDb, router::CommitRouter, runtime::network_replicator::FieldRegistry};
 
 pub mod default_client_api;
 pub(crate) mod event_bus;
@@ -65,8 +60,6 @@ pub struct Runtime {
     tick: u64,
     lua: Lua,
     callback_rx: flume::Receiver<RuntimeCallback>,
-    world_state: Rc<WorldState>,
-    world_natives: WorldNatives,
     commit_router: CommitRouter,
     meta_db: Arc<MetaDb>,
     scene_manager: SceneManager,
@@ -81,10 +74,6 @@ impl Runtime {
 
         // Dependencies
         let meta_db = Arc::new(params.meta_db);
-        let world_state = Rc::new(WorldState::new());
-        let world_natives = WorldNatives {
-            state: world_state.clone(),
-        };
         let event_bus = Rc::new(EventBus::new());
         let timer_manager = Rc::new(TimerManager::new(TimerManagerParams {
             tokio_handle: params.tokio_handle.clone(),
@@ -161,8 +150,6 @@ impl Runtime {
             tick: 0,
             lua,
             callback_rx: params.callback_rx,
-            world_state,
-            world_natives,
             commit_router: params.commit_router,
             meta_db,
             scene_manager,

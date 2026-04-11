@@ -28,7 +28,6 @@ mod runtime;
 mod rx;
 mod socket;
 mod utils;
-mod world;
 
 #[tokio::main]
 async fn main() -> Result<()> {
