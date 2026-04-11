@@ -5,7 +5,7 @@ macro_rules! for_each_blueprint {
         $callback!($methods, "rotation", Rotation, Rotation);
         $callback!($methods, "control", Control, Control);
         $callback!($methods, "sprite", Sprite2D, Sprite2D);
-        $callback!($methods, "sprite_char", SpriteChar, SpriteChar);
+        $callback!($methods, "char", SpriteChar, SpriteChar);
         $callback!($methods, "owned_by", OwnedBy, OwnedBy);
     };
 }
@@ -17,7 +17,7 @@ macro_rules! for_each_handle {
         $callback!($methods, "rotation", Rotation, Rotation);
         $callback!($methods, "control", Control, Control);
         $callback!($methods, "sprite", Sprite2D, Sprite2D);
-        $callback!($methods, "sprite_char", SpriteChar, SpriteChar);
+        $callback!($methods, "char", SpriteChar, SpriteChar);
         $callback!($methods, "owned_by", OwnedBy, OwnedBy);
         $callback!($methods, "name", Name, Name);
     };
