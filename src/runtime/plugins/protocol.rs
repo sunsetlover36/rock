@@ -6,7 +6,6 @@ use strum::{AsRefStr, Display, EnumString};
 #[derive(Debug)]
 pub enum AsyncTaskResult {
     JsonValue(serde_json::Value),
-    Text(String),
     Nil,
 }
 pub type AsyncTask = BoxFuture<'static, eyre::Result<AsyncTaskResult>>;

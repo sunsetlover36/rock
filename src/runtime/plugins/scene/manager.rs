@@ -170,10 +170,6 @@ impl SceneManager {
                             mlua::Result::Ok(v) => v,
                             mlua::Result::Err(_) => continue,
                         },
-                        AsyncTaskResult::Text(s) => match lua.create_string(&s) {
-                            mlua::Result::Ok(s) => mlua::Value::String(s),
-                            mlua::Result::Err(_) => continue,
-                        },
                         AsyncTaskResult::Nil => mlua::Value::Nil,
                     };
 
