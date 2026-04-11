@@ -64,9 +64,9 @@ impl SessionSender {
                 let payload = SessionCommand::Control(command.payload);
 
                 match tx.try_send(payload.clone()) {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => Ok(()),
                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                        return Err(SessionSendError::ChannelClosed(payload));
+                        Err(SessionSendError::ChannelClosed(payload))
                     }
                     Err(mpsc::error::TrySendError::Full(_)) => {
                         let tx = tx.clone();
