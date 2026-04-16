@@ -1,7 +1,10 @@
+use std::net::SocketAddr;
+
 use axum::{
     Json, Router,
-    extract::{State, WebSocketUpgrade},
-    http::StatusCode,
+    extract::{ConnectInfo, State, WebSocketUpgrade},
+    http::{Request, StatusCode},
+    middleware::{self, Next},
     response::Response,
     routing::{any, get, post},
 };
@@ -16,6 +19,18 @@ use crate::{
         session_registry::SessionRegistrar,
     },
 };
+
+async fn localhost_only(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    req: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if !addr.ip().is_loopback() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    Ok(next.run(req).await)
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -38,9 +53,11 @@ impl Api {
         };
 
         let app = Router::new()
-            .route("/", get(async || "Hello, World!"))
-            .route("/ws", any(Api::handle_ws))
-            .route("/impromptu", post(Api::process_impromptu))
+            .route("/", any(Api::handle_ws))
+            .route(
+                "/impromptu",
+                post(Api::process_impromptu).route_layer(middleware::from_fn(localhost_only)),
+            )
             .with_state(state);
 
         Self { app }
