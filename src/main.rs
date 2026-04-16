@@ -141,7 +141,7 @@ async fn main() -> Result<()> {
                 session_registrar,
                 runtime_callback_tx: runtime_callback_tx.clone(),
             })
-            .listen()
+            .listen(std::env::var("PORT").ok().and_then(|p| p.parse().ok()))
             .await?;
         }
         cli::Command::Genesis { name } => {

@@ -58,6 +58,7 @@ impl Api {
                 "/impromptu",
                 post(Api::process_impromptu).route_layer(middleware::from_fn(localhost_only)),
             )
+            .route("/farcaster-webhook", post(Api::process_webhook))
             .with_state(state);
 
         Self { app }
@@ -93,8 +94,19 @@ impl Api {
         Ok("ok")
     }
 
-    pub async fn listen(self) -> eyre::Result<()> {
-        let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
+    async fn process_webhook(
+        State(state): State<AppState>,
+        Json(payload): Json<serde_json::Value>,
+    ) -> Result<(), StatusCode> {
+        println!("{}", payload);
+
+        Ok(())
+    }
+
+    pub async fn listen(self, port: Option<u16>) -> eyre::Result<()> {
+        let listener = TcpListener::bind(format!("localhost:{}", port.unwrap_or(3000)))
+            .await
+            .unwrap();
         axum::serve(listener, self.app).await?;
 
         Ok(())
