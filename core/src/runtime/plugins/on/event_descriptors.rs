@@ -1,5 +1,6 @@
 use super::protocol::{
-    EventDescriptor, GameModeEventKey, PlayerEventKey, TimerEventKey, WorldEventKey,
+    EventDescriptor, FarcasterEventKey, GameModeEventKey, PlayerEventKey, TimerEventKey,
+    WorldEventKey,
 };
 
 pub(crate) const GLOBAL_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
@@ -47,5 +48,10 @@ pub(crate) const GLOBAL_EVENT_DESCRIPTORS: &[EventDescriptor] = &[
         namespace: Some("timer"),
         name: "fire",
         event_key: GameModeEventKey::Timer(TimerEventKey::Fire),
+    },
+    EventDescriptor {
+        namespace: Some("fc"),
+        name: "webhook",
+        event_key: GameModeEventKey::Farcaster(FarcasterEventKey::Webhook),
     },
 ];

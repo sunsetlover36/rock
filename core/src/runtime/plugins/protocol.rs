@@ -1,4 +1,4 @@
-use color_eyre::eyre::{self};
+use color_eyre::eyre;
 use futures_util::future::BoxFuture;
 use mlua::{Lua, Table};
 use strum::{AsRefStr, Display, EnumString};
@@ -23,6 +23,7 @@ pub trait GameModePlugin {
 #[strum(serialize_all = "lowercase")]
 pub enum PluginName {
     Entity,
+    Farcaster,
     Input,
     Layer,
     Memory,

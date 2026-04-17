@@ -9,7 +9,7 @@ use axum::{
     routing::{any, post},
 };
 use color_eyre::eyre;
-use shared::ImpromptuRequest;
+use shared::{ImpromptuRequest, farcaster::WebhookPayload};
 use tokio::net::TcpListener;
 
 use crate::{
@@ -96,9 +96,15 @@ impl Api {
 
     async fn process_webhook(
         State(state): State<AppState>,
-        Json(payload): Json<serde_json::Value>,
+        Json(payload): Json<WebhookPayload>,
     ) -> Result<(), StatusCode> {
-        println!("{}", payload);
+        state
+            .runtime_callback_tx
+            .send_async(RuntimeCallback::System(SystemCallback::Webhook(
+                payload.event,
+            )))
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         Ok(())
     }

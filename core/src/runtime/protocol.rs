@@ -1,4 +1,4 @@
-use shared::{IncomingRequest, PlayerKey};
+use shared::{IncomingRequest, PlayerKey, farcaster::WebhookEvent};
 
 use crate::{envelope::ClientEnvelope, socket::protocol::ServerMessage};
 
@@ -14,6 +14,7 @@ pub enum SystemCallback {
     PlayerConnect { pk: PlayerKey },
     PlayerDisconnect { pk: PlayerKey },
     ImpromptuRequest { name: Option<String>, code: String },
+    Webhook(WebhookEvent),
 }
 
 pub enum RuntimeCallback {

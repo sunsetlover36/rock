@@ -6,6 +6,9 @@ use mlua::Lua;
 pub(crate) mod entity;
 pub(crate) use entity::EntityPlugin;
 
+pub(crate) mod farcaster;
+pub(crate) use farcaster::FcPlugin;
+
 pub(crate) mod input;
 pub(crate) use input::InputPlugin;
 

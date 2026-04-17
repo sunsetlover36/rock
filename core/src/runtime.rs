@@ -10,7 +10,11 @@ use mlua::Lua;
 use shared::{ImpromptuRequest, IncomingRequest};
 use smallvec::smallvec;
 
-use crate::{meta_db::MetaDb, router::CommitRouter, runtime::network_replicator::FieldRegistry};
+use crate::{
+    meta_db::MetaDb,
+    router::CommitRouter,
+    runtime::{network_replicator::FieldRegistry, plugins::on::protocol::FarcasterEventData},
+};
 
 pub mod default_client_api;
 pub(crate) mod event_bus;
@@ -18,8 +22,8 @@ pub(crate) use event_bus::EventBus;
 
 pub(crate) mod plugins;
 use plugins::{
-    EntityPlugin, InputPlugin, LayerPlugin, MemoryPlugin, OnPlugin, PlayerPlugin, PluginComposer,
-    RoomPlugin, ScenePlugin, TimerPlugin,
+    EntityPlugin, FcPlugin, InputPlugin, LayerPlugin, MemoryPlugin, OnPlugin, PlayerPlugin,
+    PluginComposer, RoomPlugin, ScenePlugin, TimerPlugin,
     on::{
         event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
         protocol::{EventScope, GameModeEvent, GameModeEventData, PlayerEventData, WorldEventData},
@@ -117,6 +121,7 @@ impl Runtime {
             Box::new(OnPlugin {
                 descriptors: GLOBAL_EVENT_DESCRIPTORS,
             }),
+            Box::new(FcPlugin {}),
             Box::new(EntityPlugin {}),
             Box::new(MemoryPlugin {
                 meta_db: meta_db.clone(),
@@ -265,6 +270,12 @@ impl Runtime {
                 if let Err(err) = self.process_impromptu(ImpromptuRequest { name, code }) {
                     eprintln!("Faile to process an impromptu: {err}");
                 }
+            }
+            SystemCallback::Webhook(event) => {
+                self.event_bus.schedule_event(GameModeEvent {
+                    scopes: smallvec![EventScope::Global],
+                    data: GameModeEventData::Farcaster(FarcasterEventData::Webhook(event)),
+                });
             }
         }
     }

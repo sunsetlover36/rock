@@ -6,6 +6,7 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 use strum::EnumDiscriminants;
 
 pub mod components;
+pub mod farcaster;
 
 #[derive(Serialize_repr, Deserialize_repr, Debug, Clone)]
 #[repr(u8)]
