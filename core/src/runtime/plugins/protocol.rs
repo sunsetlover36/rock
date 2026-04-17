@@ -23,7 +23,10 @@ pub trait GameModePlugin {
 #[strum(serialize_all = "lowercase")]
 pub enum PluginName {
     Entity,
+
+    #[strum(serialize = "fc")]
     Farcaster,
+
     Input,
     Layer,
     Memory,

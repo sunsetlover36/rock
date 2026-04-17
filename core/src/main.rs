@@ -7,6 +7,7 @@ use tokio::runtime::Handle;
 use crate::{
     api::{Api, ApiParams},
     cli::Cli,
+    clients::FarcasterApi,
     config::ServerConfig,
     meta_db::{MetaDb, MetaDbConfig},
     player_pool::PlayerPool,
@@ -21,6 +22,7 @@ use crate::{
 
 mod api;
 mod cli;
+mod clients;
 mod config;
 mod envelope;
 mod meta_db;
@@ -90,9 +92,21 @@ async fn main() -> Result<()> {
                     })) {
                         Ok(db) => db,
                         Err(err) => {
-                            eprintln!("Failed to create MetaDb: {err:?}");
+                            eprintln!("Failed to initialize MetaDb: {err:?}");
                             break;
                         }
+                    };
+
+                    let fc_api = if let Some(key) = &config.farcaster_key {
+                        match FarcasterApi::new(key) {
+                            Ok(api) => Some(api),
+                            Err(err) => {
+                                eprintln!("Failed to initialize Farcaster API: {err:?}");
+                                break;
+                            }
+                        }
+                    } else {
+                        None
                     };
 
                     let runtime_params = RuntimeParams {
@@ -104,6 +118,7 @@ async fn main() -> Result<()> {
                         command_rx: runtime_cmd_rx.clone(),
                         commit_router: commit_router.clone(),
                         meta_db,
+                        fc_api,
                         tokio_handle: tokio_handle.clone(),
                     };
                     let mut runtime = match Runtime::new(runtime_params) {

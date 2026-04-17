@@ -11,6 +11,7 @@ use shared::{ImpromptuRequest, IncomingRequest};
 use smallvec::smallvec;
 
 use crate::{
+    clients::FarcasterApi,
     meta_db::MetaDb,
     router::CommitRouter,
     runtime::{network_replicator::FieldRegistry, plugins::on::protocol::FarcasterEventData},
@@ -22,7 +23,7 @@ pub(crate) use event_bus::EventBus;
 
 pub(crate) mod plugins;
 use plugins::{
-    EntityPlugin, FcPlugin, InputPlugin, LayerPlugin, MemoryPlugin, OnPlugin, PlayerPlugin,
+    EntityPlugin, FarcasterPlugin, InputPlugin, LayerPlugin, MemoryPlugin, OnPlugin, PlayerPlugin,
     PluginComposer, RoomPlugin, ScenePlugin, TimerPlugin,
     on::{
         event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
@@ -59,6 +60,7 @@ pub struct RuntimeParams {
     pub command_rx: flume::Receiver<RuntimeCommand>,
     pub commit_router: CommitRouter,
     pub meta_db: MetaDb,
+    pub fc_api: Option<FarcasterApi>,
     pub tokio_handle: tokio::runtime::Handle,
 }
 
@@ -68,7 +70,6 @@ pub struct Runtime {
     callback_rx: flume::Receiver<RuntimeCallback>,
     command_rx: flume::Receiver<RuntimeCommand>,
     commit_router: CommitRouter,
-    meta_db: Arc<MetaDb>,
     scene_manager: SceneManager,
     event_bus: Rc<EventBus>,
     timer_manager: Rc<TimerManager>,
@@ -80,7 +81,6 @@ impl Runtime {
         let client_api = params.client_api.clone();
 
         // Dependencies
-        let meta_db = Arc::new(params.meta_db);
         let event_bus = Rc::new(EventBus::new());
         let timer_manager = Rc::new(TimerManager::new(TimerManagerParams {
             tokio_handle: params.tokio_handle.clone(),
@@ -116,15 +116,14 @@ impl Runtime {
         let (scene_manager_tx, scene_manager_rx) = flume::bounded::<SceneManagerMessage>(256);
 
         let mut plugin_composer = PluginComposer::new(&lua)?;
-        let plugins: Vec<Box<dyn GameModePlugin>> = vec![
+        let mut plugins: Vec<Box<dyn GameModePlugin>> = vec![
             Box::new(InputPlugin {}),
             Box::new(OnPlugin {
                 descriptors: GLOBAL_EVENT_DESCRIPTORS,
             }),
-            Box::new(FcPlugin {}),
             Box::new(EntityPlugin {}),
             Box::new(MemoryPlugin {
-                meta_db: meta_db.clone(),
+                meta_db: Arc::new(params.meta_db),
             }),
             Box::new(LayerPlugin {}),
             Box::new(PlayerPlugin {}),
@@ -134,6 +133,12 @@ impl Runtime {
                 manager_tx: scene_manager_tx.clone(),
             }),
         ];
+        if let Some(fc_api) = params.fc_api {
+            plugins.push(Box::new(FarcasterPlugin {
+                fc_api: Arc::new(fc_api),
+            }));
+        }
+
         for plugin in plugins {
             plugin_composer.add_plugin(&lua, plugin)?;
         }
@@ -161,7 +166,6 @@ impl Runtime {
             callback_rx: params.callback_rx,
             command_rx: params.command_rx,
             commit_router: params.commit_router,
-            meta_db,
             scene_manager,
             event_bus,
             timer_manager,

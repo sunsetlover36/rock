@@ -7,7 +7,7 @@ pub(crate) mod entity;
 pub(crate) use entity::EntityPlugin;
 
 pub(crate) mod farcaster;
-pub(crate) use farcaster::FcPlugin;
+pub(crate) use farcaster::FarcasterPlugin;
 
 pub(crate) mod input;
 pub(crate) use input::InputPlugin;
@@ -61,7 +61,7 @@ impl Yielder {
         "#;
         let yielder_fn: mlua::Function = lua
             .load(yielder_script)
-            .set_name("engine/yielder")
+            .set_name("runtime/yielder")
             .eval()
             .wrap_err("Failed to create `yielder_script`")?;
 

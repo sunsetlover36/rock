@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+// ---- Responses
 #[derive(Debug, Clone, Serialize)]
 pub struct WebhookPayload {
     pub created_at: u64,
@@ -56,7 +57,7 @@ pub struct CastCreatedData {
     pub parent_hash: String,
     pub parent_url: Option<String>,
     pub root_parent_url: Option<String>,
-    pub parent_author: ParentAuthor,
+    pub parent_author: Author,
     pub text: String,
     pub timestamp: String,
     pub embeds: Vec<serde_json::Value>,
@@ -73,7 +74,7 @@ pub struct CastCreatedData {
 pub type Fid = u64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParentAuthor {
+pub struct Author {
     pub fid: Fid,
 }
 
@@ -121,6 +122,9 @@ pub struct User {
     #[serde(default)]
     pub experimental: Option<Experimental>,
 
+    #[serde(default)]
+    pub viewer_context: Option<ViewerContext>,
+
     pub score: f64,
 }
 
@@ -140,6 +144,9 @@ pub struct UserDehydrated {
 
     #[serde(default)]
     pub custody_address: Option<String>,
+
+    #[serde(default)]
+    pub score: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,7 +170,17 @@ pub struct Profile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bio {
     pub text: String,
+
+    #[serde(default)]
+    pub mentioned_profiles: Vec<UserDehydrated>,
+
+    #[serde(default)]
+    pub mentioned_profiles_ranges: Vec<Range>,
+
+    #[serde(default)]
     pub mentioned_channels: Vec<ChannelDehydrated>,
+
+    #[serde(default)]
     pub mentioned_channels_ranges: Vec<Range>,
 }
 
@@ -173,6 +190,9 @@ pub struct ChannelDehydrated {
     pub id: String,
     pub name: String,
     pub image_url: String,
+
+    #[serde(default)]
+    pub viewer_context: Option<ChannelViewerContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +200,9 @@ pub struct Location {
     pub latitude: f64,
     pub longitude: f64,
     pub address: Address,
+
+    #[serde(default)]
+    pub radius: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,3 +252,84 @@ pub struct Experimental {
     pub neynar_user_score: f64,
     pub deprecation_notice: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatedCast {
+    pub hash: String,
+    pub author: Author,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViewerContext {
+    pub following: bool,
+    pub followed_by: bool,
+    pub blocking: bool,
+    pub blocked_by: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelViewerContext {
+    pub following: bool,
+    pub role: String,
+}
+
+// -- Send cast response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendCastResponse {
+    pub success: bool,
+    pub cast: CreatedCast,
+}
+// --
+
+// -- Get user by username response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetUserByUsernameResponse {
+    pub user: User,
+}
+// --
+
+// -- Get users by FIDs response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetUsersByFidsResponse {
+    pub users: Vec<User>,
+}
+// --
+// ----
+
+// ---- Requests
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendCastParams {
+    pub signer_uuid: String,
+    pub text: String,
+    pub parent: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetUserByUsernameParams {
+    pub username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetUsersByFidsParams {
+    pub fids: Vec<Fid>,
+}
+
+// -- Strange Neynar API format for FIDs -> "1, 2, 3"
+#[derive(Debug, Clone, Serialize)]
+pub struct GetUsersByFidsRawQuery {
+    pub fids: String,
+}
+impl From<&GetUsersByFidsParams> for GetUsersByFidsRawQuery {
+    fn from(params: &GetUsersByFidsParams) -> Self {
+        Self {
+            fids: params
+                .fids
+                .iter()
+                .map(|fid| fid.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        }
+    }
+}
+// ----

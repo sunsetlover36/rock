@@ -8,7 +8,8 @@ use color_eyre::eyre::Result;
 #[derive(Debug, Default)]
 pub struct ServerConfig {
     pub gamemode_name: String,
-    pub max_players: u32,
+    pub max_players: Option<u32>,
+    pub farcaster_key: Option<String>,
 }
 impl ServerConfig {
     pub fn filename() -> &'static str {
@@ -31,7 +32,8 @@ impl ServerConfig {
 
                 match key.trim() {
                     "gamemode name" => config.gamemode_name = value.to_string(),
-                    "max players" => config.max_players = value.parse()?,
+                    "max players" => config.max_players = Some(value.parse()?),
+                    "farcaster key" => config.farcaster_key = Some(value.to_string()),
                     _ => {}
                 }
             }

@@ -20,14 +20,14 @@ use rx::SyncRx;
 
 #[derive(Debug, Clone, Copy, EnumString, Display, AsRefStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
-pub enum MemoryOp {
+pub(crate) enum MemoryOp {
     Fetch,
     Recall,
     Store,
     Delete,
 }
 
-pub struct MemoryPlugin {
+pub(crate) struct MemoryPlugin {
     pub meta_db: Arc<MetaDb>,
 }
 impl GameModePlugin for MemoryPlugin {
@@ -63,24 +63,25 @@ impl GameModePlugin for MemoryPlugin {
     fn create_scene_api(&self, lua: &Lua) -> mlua::Result<Option<Table>> {
         let plugin_name = self.name().to_string();
         let name_in_uppercase = plugin_name.to_uppercase();
+
         let table = lua.create_table()?;
+        let yielder = Yielder::get(&lua)?;
 
         let global_memory = lua.globals().get::<Table>(plugin_name)?;
         let mt = lua.create_table()?;
         mt.set("__index", global_memory)?;
         table.set_metatable(Some(mt))?;
 
-        let yielder_fn = Yielder::get(&lua)?;
         let recall_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Recall);
-        let recall_fn = yielder_fn.call::<Function>(recall_op)?;
+        let recall_fn = yielder.call::<Function>(recall_op)?;
         table.set("recall", recall_fn)?;
 
         let fetch_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Fetch);
-        let fetch_fn = yielder_fn.call::<Function>(fetch_op)?;
+        let fetch_fn = yielder.call::<Function>(fetch_op)?;
         table.set("fetch", fetch_fn)?;
 
         let store_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Store);
-        let store_fn = yielder_fn.call::<Function>(store_op)?;
+        let store_fn = yielder.call::<Function>(store_op)?;
         table.set("store", store_fn)?;
 
         Ok(Some(table))
@@ -99,8 +100,8 @@ impl GameModePlugin for MemoryPlugin {
             .0
             .clone();
 
-        let op =
-            MemoryOp::from_str(op).wrap_err_with(|| format!("Unknown memory plugin op: {}", op))?;
+        let op = MemoryOp::from_str(op)
+            .wrap_err_with(|| format!("{plugin_name}: unknown plugin op `{op}`"))?;
         match op {
             MemoryOp::Recall => {
                 let key: String = args
