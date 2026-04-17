@@ -6,7 +6,7 @@ use axum::{
     http::{Request, StatusCode},
     middleware::{self, Next},
     response::Response,
-    routing::{any, get, post},
+    routing::{any, post},
 };
 use color_eyre::eyre;
 use shared::ImpromptuRequest;
