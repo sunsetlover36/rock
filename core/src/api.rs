@@ -1,5 +1,3 @@
-use std::{collections::HashMap, net::SocketAddr};
-
 use axum::{
     Json, Router,
     extract::{ConnectInfo, Query, State, WebSocketUpgrade},
@@ -9,8 +7,10 @@ use axum::{
     routing::{any, post},
 };
 use color_eyre::eyre;
-use shared::{ImpromptuRequest, farcaster::WebhookPayload};
+use shared::{ImpromptuRequest, SocketConnectionQuery, farcaster::WebhookPayload};
+use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use tower_http::services::ServeDir;
 
 use crate::{
     runtime::{RuntimeCallback, SystemCallback},
@@ -59,6 +59,7 @@ impl Api {
                 post(Api::process_impromptu).route_layer(middleware::from_fn(localhost_only)),
             )
             .route("/farcaster-webhook", post(Api::process_webhook))
+            .nest_service("/assets", ServeDir::new("./assets"))
             .with_state(state);
 
         Self { app }
@@ -67,7 +68,7 @@ impl Api {
     async fn handle_ws(
         ws: WebSocketUpgrade,
         State(state): State<AppState>,
-        Query(query): Query<HashMap<String, serde_json::Value>>,
+        Query(query): Query<SocketConnectionQuery>,
     ) -> Response {
         ws.on_upgrade(async move |socket| {
             if let Err(err) = SocketAdapter::new(SocketAdapterParams {
@@ -105,9 +106,9 @@ impl Api {
     ) -> Result<(), StatusCode> {
         state
             .runtime_callback_tx
-            .send_async(RuntimeCallback::System(SystemCallback::Webhook(
+            .send_async(RuntimeCallback::System(SystemCallback::Webhook(Box::new(
                 payload.event,
-            )))
+            ))))
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

@@ -160,8 +160,8 @@ async fn main() -> Result<()> {
             .await?;
         }
         cli::Command::Genesis { name } => {
-            let gamemodes_dir = Path::new("./gamemodes");
-            fs::create_dir_all(gamemodes_dir)?;
+            fs::create_dir("./gamemodes")?;
+            fs::create_dir("./assets")?;
 
             let sample_gamemode = r#"on.world.awake()
   :each(function ()

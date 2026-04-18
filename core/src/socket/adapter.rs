@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-
 use axum::extract::ws::{Message, WebSocket};
 use color_eyre::eyre;
 use futures_util::{
     SinkExt, StreamExt,
     stream::{SplitSink, SplitStream},
 };
-use shared::{IncomingRequest, OutgoingPacket, SystemPacket};
+use shared::{IncomingRequest, OutgoingPacket, SocketConnectionQuery, SystemPacket};
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
@@ -22,14 +20,14 @@ pub struct SocketAdapterParams {
     pub socket: WebSocket,
     pub session: Session,
     pub runtime_callback_tx: flume::Sender<RuntimeCallback>,
-    pub query: HashMap<String, serde_json::Value>,
+    pub query: SocketConnectionQuery,
 }
 pub struct SocketAdapter {
     ws_tx: SplitSink<WebSocket, Message>,
     ws_rs: SplitStream<WebSocket>,
     session: Session,
     runtime_callback_tx: flume::Sender<RuntimeCallback>,
-    query: HashMap<String, serde_json::Value>,
+    query: SocketConnectionQuery,
 }
 impl SocketAdapter {
     pub fn new(params: SocketAdapterParams) -> Self {

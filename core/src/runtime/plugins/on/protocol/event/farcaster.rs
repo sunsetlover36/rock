@@ -7,7 +7,7 @@ pub(crate) enum FarcasterEventKey {
 }
 
 pub(crate) enum FarcasterEventData {
-    Webhook(WebhookEvent),
+    Webhook(Box<WebhookEvent>),
 }
 impl FarcasterEventData {
     pub fn key(&self) -> FarcasterEventKey {

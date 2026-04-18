@@ -1,9 +1,6 @@
-use shared::{IncomingRequest, PlayerKey, farcaster::WebhookEvent};
+use shared::{IncomingRequest, PlayerKey, SocketConnectionQuery, farcaster::WebhookEvent};
 
-use crate::{
-    envelope::ClientEnvelope,
-    socket::{adapter::SocketConnectionQuery, protocol::ServerMessage},
-};
+use crate::{envelope::ClientEnvelope, socket::protocol::ServerMessage};
 
 pub type ClientRequest = ClientEnvelope<IncomingRequest>;
 
@@ -25,7 +22,7 @@ pub enum SystemCallback {
         name: Option<String>,
         code: String,
     },
-    Webhook(WebhookEvent),
+    Webhook(Box<WebhookEvent>),
 }
 
 pub enum RuntimeCallback {
@@ -35,7 +32,6 @@ pub enum RuntimeCallback {
 
 pub enum RuntimeCommand {
     Reload,
-    Shutdown,
 }
 pub enum RuntimeExit {
     Reload,

@@ -36,3 +36,4 @@ thiserror = "2.0.18"
 rustc-hash = "2.1.1"
 notify-debouncer-full = "0.7.0"
 reqwest = { version = "0.13", features = ["json", "query"] }
+tower-http = { version = "0.6", features = ["fs"] }

@@ -1,7 +1,7 @@
-use std::{collections::HashMap, rc::Rc};
+use std::rc::Rc;
 
 use mlua::{IntoLuaMulti, LuaSerdeExt};
-use shared::InputData;
+use shared::{InputData, SocketConnectionQuery};
 
 use crate::runtime::{
     network_replicator::protocol::RoomId, plugins::player::PlayerHandle, room_id_to_name,
@@ -20,7 +20,7 @@ pub(crate) enum PlayerEventKey {
 pub(crate) enum PlayerEventData {
     Online {
         player: PlayerHandle,
-        connection_params: HashMap<String, serde_json::Value>,
+        connection_params: SocketConnectionQuery,
     },
     Offline {
         player: PlayerHandle,

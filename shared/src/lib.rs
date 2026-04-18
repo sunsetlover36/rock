@@ -173,4 +173,6 @@ pub struct ImpromptuRequest {
     pub name: Option<String>,
     pub code: String,
 }
+
+pub type SocketConnectionQuery = HashMap<String, serde_json::Value>;
 // --
