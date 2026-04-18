@@ -765,6 +765,7 @@ impl NetworkReplicator {
         let world_data =
             get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
         let world = &world_data.0;
+        let entities_view = world.view::<(Option<&Blueprint>, Option<&Position>)>();
 
         let mut field_registry =
             get_app_data_mut::<FieldRegistry>(lua).wrap_err("App data is not initialized")?;
@@ -774,8 +775,7 @@ impl NetworkReplicator {
         let mut policies_to_remove: HashSet<PolicyId> = HashSet::new();
         for (&room_id, entities) in room_to_entities {
             for &entity in entities.iter() {
-                let mut query = world.query_one::<(Option<&Blueprint>, Option<&Position>)>(entity);
-                let Ok((blueprint_comp, pos_comp)) = query.get() else {
+                let Some((blueprint_comp, pos_comp)) = entities_view.get(entity) else {
                     continue;
                 };
 
@@ -827,11 +827,11 @@ impl NetworkReplicator {
                                     room_id,
                                     RadialArea { position, radius },
                                     anchor.entity,
-                                    &world,
+                                    world,
                                 )
                             }),
                             SpatialFilter::Area(area) => {
-                                self.visible_to_anchor(room_id, area, anchor.entity, &world)
+                                self.visible_to_anchor(room_id, area, anchor.entity, world)
                             }
                         };
                         let known = known_entities
@@ -876,7 +876,7 @@ impl NetworkReplicator {
                                 &entity_custom_data,
                                 policy.fields_mask,
                                 &field_registry,
-                                &world,
+                                world,
                             )?;
 
                             known_entities.entry(pk).or_default().insert(entity);
