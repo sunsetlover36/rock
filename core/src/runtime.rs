@@ -254,11 +254,15 @@ impl Runtime {
     // Trusted input (called by the engine)
     fn on_system_callback(&self, cb: SystemCallback) {
         match cb {
-            SystemCallback::PlayerConnect { pk } => {
+            SystemCallback::PlayerConnect {
+                pk,
+                connection_params,
+            } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Online {
                         player: PlayerHandle::new(pk),
+                        connection_params,
                     }),
                 });
             }

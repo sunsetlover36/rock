@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::extract::ws::{Message, WebSocket};
 use color_eyre::eyre;
 use futures_util::{
@@ -20,12 +22,14 @@ pub struct SocketAdapterParams {
     pub socket: WebSocket,
     pub session: Session,
     pub runtime_callback_tx: flume::Sender<RuntimeCallback>,
+    pub query: HashMap<String, serde_json::Value>,
 }
 pub struct SocketAdapter {
     ws_tx: SplitSink<WebSocket, Message>,
     ws_rs: SplitStream<WebSocket>,
     session: Session,
     runtime_callback_tx: flume::Sender<RuntimeCallback>,
+    query: HashMap<String, serde_json::Value>,
 }
 impl SocketAdapter {
     pub fn new(params: SocketAdapterParams) -> Self {
@@ -35,6 +39,7 @@ impl SocketAdapter {
             ws_rs,
             session: params.session,
             runtime_callback_tx: params.runtime_callback_tx,
+            query: params.query,
         }
     }
 
@@ -53,6 +58,7 @@ impl SocketAdapter {
         self.runtime_callback_tx
             .send_async(RuntimeCallback::System(SystemCallback::PlayerConnect {
                 pk: self.session.pk,
+                connection_params: self.query.clone(),
             }))
             .await?;
 

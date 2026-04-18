@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use mlua::{IntoLuaMulti, LuaSerdeExt};
 use shared::InputData;
@@ -20,6 +20,7 @@ pub(crate) enum PlayerEventKey {
 pub(crate) enum PlayerEventData {
     Online {
         player: PlayerHandle,
+        connection_params: HashMap<String, serde_json::Value>,
     },
     Offline {
         player: PlayerHandle,
@@ -57,7 +58,10 @@ impl PlayerEventData {
 impl IntoLuaMulti for PlayerEventData {
     fn into_lua_multi(self, lua: &mlua::Lua) -> mlua::Result<mlua::MultiValue> {
         match self {
-            PlayerEventData::Online { player } => player.into_lua_multi(lua),
+            PlayerEventData::Online {
+                player,
+                connection_params,
+            } => (player, lua.to_value(&connection_params)?).into_lua_multi(lua),
             PlayerEventData::Offline { player } => player.into_lua_multi(lua),
             PlayerEventData::Input { player, name, data } => {
                 let action_table = lua.create_table()?;

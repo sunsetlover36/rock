@@ -1,6 +1,9 @@
 use shared::{IncomingRequest, PlayerKey, farcaster::WebhookEvent};
 
-use crate::{envelope::ClientEnvelope, socket::protocol::ServerMessage};
+use crate::{
+    envelope::ClientEnvelope,
+    socket::{adapter::SocketConnectionQuery, protocol::ServerMessage},
+};
 
 pub type ClientRequest = ClientEnvelope<IncomingRequest>;
 
@@ -11,9 +14,17 @@ pub trait GameModeClientApi: Send + Sync {
 }
 
 pub enum SystemCallback {
-    PlayerConnect { pk: PlayerKey },
-    PlayerDisconnect { pk: PlayerKey },
-    ImpromptuRequest { name: Option<String>, code: String },
+    PlayerConnect {
+        pk: PlayerKey,
+        connection_params: SocketConnectionQuery,
+    },
+    PlayerDisconnect {
+        pk: PlayerKey,
+    },
+    ImpromptuRequest {
+        name: Option<String>,
+        code: String,
+    },
     Webhook(WebhookEvent),
 }
 

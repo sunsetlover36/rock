@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
+use std::{collections::HashMap, net::SocketAddr};
 
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, State, WebSocketUpgrade},
+    extract::{ConnectInfo, Query, State, WebSocketUpgrade},
     http::{Request, StatusCode},
     middleware::{self, Next},
     response::Response,
@@ -64,12 +64,17 @@ impl Api {
         Self { app }
     }
 
-    async fn handle_ws(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    async fn handle_ws(
+        ws: WebSocketUpgrade,
+        State(state): State<AppState>,
+        Query(query): Query<HashMap<String, serde_json::Value>>,
+    ) -> Response {
         ws.on_upgrade(async move |socket| {
             if let Err(err) = SocketAdapter::new(SocketAdapterParams {
                 socket,
                 session: state.session_registrar.register(),
                 runtime_callback_tx: state.runtime_callback_tx.clone(),
+                query,
             })
             .activate()
             .await
