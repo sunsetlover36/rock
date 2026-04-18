@@ -17,6 +17,7 @@ Documentation for gamemode scripters. Everything you need to build multiplayer w
   - [timer → Timers](#timer)
   - [layer → Layers](#layer)
   - [room → Rooms](#room)
+  - [fc → Farcaster](#fc)
 - [Reactive Operators](#reactive-operators)
 - [Network Replication](#network-replication)
 - [Components Reference](#components-reference)
@@ -94,7 +95,7 @@ Your Lua code is **synchronous and single-threaded**. You never deal with thread
 
 ### Plugins
 
-Every global table in your Lua environment is a **plugin**. There are 9 plugins:
+Every global table in your Lua environment is a **plugin**. There are 10 plugins:
 
 | Plugin | Purpose |
 |--------|---------|
@@ -107,6 +108,7 @@ Every global table in your Lua environment is a **plugin**. There are 9 plugins:
 | `timer` | Schedule timed events |
 | `layer` | Group resources for bulk cleanup |
 | `room` | Generate room IDs |
+| `fc` | Farcaster (users, casts, webhooks) |
 
 ### Entities
 
@@ -312,6 +314,7 @@ The event system. Every event in ROCK is listened to through `on`.
 | `on.player.exit()` | `PlayerHandle, room_name` | Player exited a room |
 | `on.player.chat()` | `PlayerHandle, message` | Player sent a chat message |
 | `on.timer.fire()` | `timer_id, data` | A timer fired (see `:named` below) |
+| `on.fc.webhook()` | `WebhookEvent` | Farcaster webhook received (see [fc](#fc)) |
 
 #### Event Builder (OnRx)
 
@@ -927,6 +930,200 @@ Returns a random unique string ID (nanoid). Use this when you need a dynamic roo
 ```lua
 local room_name = room.generate_id()
 p:room():enter(room_name)
+```
+
+---
+
+### `fc`
+
+Farcaster integration. Look up users, post casts, and react to incoming webhook events from the Farcaster network (via Neynar).
+
+> **Requires configuration.** The `fc` plugin is only available when a Neynar API key is set in `config.cfg`:
+>
+> ```
+> farcaster key is YOUR_NEYNAR_API_KEY
+> ```
+>
+> Only Neynar API keys are supported. If `farcaster key` is not configured, the `fc` global and `on.fc.*` events will not be registered.
+
+Most `fc` calls talk to a remote HTTP API and must be run inside a scene:
+
+```lua
+scene.run(function()
+  local me = fc.user("ruburi"):get()
+  print(me.username, me.fid)
+end)
+```
+
+Webhook events arrive asynchronously and are surfaced through `on.fc.webhook()` — these do **not** require a scene.
+
+#### `fc.user(identifier)`
+
+Look up a Farcaster user. The argument can be either:
+
+- a **username** string → `fc.user("ruburi")`
+- a **FID list** (table of numeric FIDs) → `fc.user({ 423406, 3 })`
+
+Returns a `UserRx` builder. Chain `:get()` inside a scene to execute the request.
+
+```lua
+scene.run(function()
+  -- by username -> returns a single User
+  local user = fc.user("ruburi"):get()
+  print("user:", user.username)
+
+  -- by fids -> returns an array of Users
+  local users = fc.user({ 423406, 3 }):get()
+  print(users[1].username)
+end)
+```
+
+**UserRx**
+
+| Method | Args | Returns | Description |
+|--------|------|---------|-------------|
+| `:get()` | -- | `User` or `User[]` | Execute the lookup (scene-only). Single `User` when called with a username, array when called with a FID list |
+
+The returned `User` table matches the Neynar user shape. Commonly used fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `fid` | `number` | Farcaster ID |
+| `username` | `string` | Handle (no `@`) |
+| `display_name` | `string` | Display name |
+| `pfp_url` | `string` | Profile picture URL |
+| `custody_address` | `string` | Custody address |
+| `registered_at` | `string` | ISO timestamp |
+| `profile` | `table` | `{ bio = { text, mentioned_profiles, ... }, location?, banner? }` |
+| `follower_count` | `number` | Follower count |
+| `following_count` | `number` | Following count |
+| `verifications` | `string[]` | Verified addresses |
+| `verified_addresses` | `table` | `{ eth_addresses, sol_addresses, primary = { eth_address?, sol_address? } }` |
+| `auth_addresses` | `table[]` | `[{ address, app }]` |
+| `verified_accounts` | `table[]` | `[{ platform, username }]` |
+| `url` | `string` | Profile URL |
+| `score` | `number` | Neynar score |
+| `pro` | `table?` | `{ status, subscribed_at, expires_at }` when present |
+| `viewer_context` | `table?` | `{ following, followed_by, blocking, blocked_by }` when present |
+
+Some nested payloads (e.g. `app` on a webhook, `mentioned_profiles` inside a bio) use a **dehydrated** user shape with a subset of fields — `fid` is always present, the rest (`username`, `display_name`, `pfp_url`, `custody_address`, `score`) may be `nil`.
+
+#### `fc.cast(signer_uuid)`
+
+Start composing a cast. `signer_uuid` is the UUID of the Neynar signer authorized to post on behalf of a user. Returns a `CastRx` builder. Chain fields, then `:send()` inside a scene to publish.
+
+```lua
+scene.run(function()
+  local cast = fc.cast(SIGNER_UUID)
+    :text("Roger.")
+    :reply_to(parent_hash)   -- optional
+    :send()
+
+  print("sent:", cast.hash)
+end)
+```
+
+**CastRx**
+
+| Method | Args | Returns | Description |
+|--------|------|---------|-------------|
+| `:text(s)` | `string` | self | Set the cast body |
+| `:reply_to(hash)` | `string` | self | Make this cast a reply to another cast (by hash). Omit for a top-level cast |
+| `:send()` | -- | `CreatedCast` | Publish the cast (scene-only) |
+
+`:send()` returns the created cast:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hash` | `string` | Hash of the new cast |
+| `author` | `{ fid }` | Author reference |
+| `text` | `string` | Final cast text |
+
+> Note: `SIGNER_UUID` is not provided by the engine — set it yourself (e.g. as a Lua global or via `memory`) with the signer UUID from your Neynar app.
+
+#### `on.fc.webhook()`
+
+Fires when the engine receives an inbound Farcaster webhook. The handler receives a single `WebhookEvent`:
+
+```lua
+on.fc.webhook()
+  :where(function(event) return event.type == "cast.created" end)
+  :select(function(event) return event.data end)
+  :each(function(cast)
+    print(string.format("new mention. hash: %s. text: %s", cast.hash, cast.text))
+
+    scene.run(function()
+      local reply = fc.cast(SIGNER_UUID)
+        :text("Roger.")
+        :reply_to(cast.hash)
+        :send()
+      print("sent a response:", reply.hash)
+    end)
+  end)
+```
+
+**WebhookEvent**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` | Event discriminator, e.g. `"cast.created"` |
+| `data` | `table` | Event-specific payload (shape depends on `type`) |
+
+> Currently `"cast.created"` is the only supported event type. More event types may be added later.
+
+**`cast.created` data**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `object` | `string` | Always `"cast"` |
+| `hash` | `string` | Cast hash |
+| `author` | `User` | Full user record of the caster |
+| `app` | `UserDehydrated` | App that created the cast |
+| `thread_hash` | `string` | Root of the thread |
+| `parent_hash` | `string` | Parent cast hash (if reply) |
+| `parent_url` | `string?` | Parent URL (channel casts) |
+| `root_parent_url` | `string?` | Root parent URL |
+| `parent_author` | `{ fid }` | Parent author reference |
+| `text` | `string` | Cast body |
+| `timestamp` | `string` | ISO timestamp |
+| `embeds` | `any[]` | Embed payloads |
+| `channel` | `any?` | Channel data if posted in a channel |
+| `reactions` | `table` | `{ likes_count, recasts_count, likes, recasts }` |
+| `replies` | `table` | `{ count }` |
+| `mentioned_profiles` | `User[]` | Users mentioned in the text |
+| `mentioned_profiles_ranges` | `table[]` | `[{ start, end }]` character ranges for each mention |
+| `mentioned_channels` | `ChannelDehydrated[]` | Channels mentioned |
+| `mentioned_channels_ranges` | `table[]` | Character ranges for channel mentions |
+| `event_timestamp` | `string` | ISO timestamp of the event |
+
+Use standard reactive operators (`:where`, `:select`, `:throttle`, `:take`, …) to filter and transform webhook events like any other event.
+
+#### End-to-end Example
+
+```lua
+-- at startup, resolve a user
+on.world.awake():each(function()
+  scene.run(function()
+    local user = fc.user("ruburi"):get()
+    print("user:", user.username)
+  end)
+end)
+
+-- reply whenever someone mentions the bot
+on.fc.webhook()
+  :where(function(event) return event.type == "cast.created" end)
+  :select(function(event) return event.data end)
+  :each(function(cast)
+    print(string.format("new mention. hash: %s. text: %s", cast.hash, cast.text))
+
+    scene.run(function()
+      local reply = fc.cast(SIGNER_UUID)
+        :text("Roger.")
+        :reply_to(cast.hash)
+        :send()
+      print("sent a response:", reply.hash)
+    end)
+  end)
 ```
 
 ---
