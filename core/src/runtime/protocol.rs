@@ -32,6 +32,7 @@ pub enum RuntimeCallback {
 
 pub enum RuntimeCommand {
     Reload,
+    Shutdown,
 }
 pub enum RuntimeExit {
     Reload,
