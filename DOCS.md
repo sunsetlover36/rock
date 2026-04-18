@@ -24,6 +24,7 @@ Documentation for gamemode scripters. Everything you need to build multiplayer w
 - [WebSocket Protocol](#websocket-protocol)
 - [Geodes](#geodes)
 - [Impromptu (Live Coding)](#impromptu-live-coding)
+- [Static Assets](#static-assets)
 
 ---
 
@@ -44,6 +45,7 @@ server/
   gamemodes/
     my_gamemode.lua   -- your gamemode script
   geodes/             -- plugin packages (optional)
+  assets/             -- static files served at /assets/* (optional)
   db/
     db.sqlite         -- persistent storage (auto-created)
 ```
@@ -515,7 +517,23 @@ entity.query()
 | `:at(area)` | `{ position, radius }` | self | Filter by spatial area |
 | `:blueprint(bp)` | `EntityBlueprint` | self | Filter by blueprint |
 | `:count()` | -- | `number` | Count matching entities |
+| `:first()` | -- | `EntityHandle` or `nil` | Return the first matching entity, or `nil` if none |
 | `:each(fn)` | `function(EntityHandle)` | -- | Iterate over matches |
+
+**`:first()` vs `:each()`.** Use `:first()` when you expect at most one result and want to skip the closure:
+
+```lua
+-- instead of this
+entity.query():owned_by(pid):blueprint(player_bp):each(function(ent)
+  ent:position({ x = 0, y = 0 })
+end)
+
+-- do this
+local ent = entity.query():owned_by(pid):blueprint(player_bp):first()
+if ent then
+  ent:position({ x = 0, y = 0 })
+end
+```
 
 ---
 
@@ -563,6 +581,26 @@ player.broadcast()
 | `:signal([name])` | `SignalRx` | Create a signal targeted to this player |
 | `:room()` | `PlayerRoom` | Access room management |
 | `:vision()` | `PlayerVision` | Access vision/anchor management |
+| `:connection_params()` | `table` | Query params from the WebSocket connection URL |
+
+**Connection params.** When a client connects via `ws://host:3000/ws?room=0xabc&name=Bob`, the query string is captured at handshake time and exposed as a Lua table:
+
+```lua
+on.player.online():each(function(p)
+  local params = p:connection_params()
+  local room_hash = params.room     -- "0xabc"
+  local display_name = params.name  -- "Bob"
+
+  if not room_hash then
+    p:kick()
+    return
+  end
+
+  p:room():enter(room_hash)
+end)
+```
+
+All values are strings (or `nil` if the param is absent). Use `tonumber()` to coerce numeric params yourself.
 
 #### PlayerRoom
 
@@ -1405,3 +1443,28 @@ curl -X POST http://localhost:3000/impromptu \
 ```
 
 This fires `on.world.impromptu()` events and executes the code within the running game loop. Useful for debugging and live development.
+
+---
+
+## Static Assets
+
+Everything under `server/assets/` is served over HTTP at `/assets/*`. This is where you drop textures, sounds, or any other static files the client needs to render your world.
+
+```
+server/assets/
+  packs/
+    basic/
+      textures/
+        frutiger_tile.png
+        lamp_small.png
+      music/
+        loony_tunes.js
+```
+
+Fetched with:
+
+```
+http://localhost:3000/assets/packs/basic/textures/lamp_small.png
+```
+
+No configuration needed. Drop a file into `server/assets/`, it's live on the next request.
