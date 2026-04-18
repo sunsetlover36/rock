@@ -67,6 +67,30 @@ impl QueryRx {
 
         blueprint_check && ownership_check && name_check && room_check && pos_check
     }
+
+    fn get_matching_entities(&self, lua: &mlua::Lua) -> mlua::Result<Vec<(hecs::Entity, u64)>> {
+        let mut entities = Vec::new();
+
+        let world = get_app_data::<app_data::World>(lua)?;
+        for (entity, blueprint, name, owned_by, room, position) in world
+            .0
+            .query::<(
+                hecs::Entity,
+                &Blueprint,
+                Option<&Name>,
+                Option<&OwnedBy>,
+                Option<&Room>,
+                Option<&Position>,
+            )>()
+            .iter()
+        {
+            if self.matches(blueprint, name, owned_by, room, position) {
+                entities.push((entity, blueprint.0));
+            }
+        }
+
+        Ok(entities)
+    }
 }
 
 impl HasPipeline for QueryRx {
@@ -118,50 +142,21 @@ impl UserData for QueryRx {
         });
 
         methods.add_method("count", |lua, this, _: ()| {
-            let world = get_app_data::<app_data::World>(lua)?;
-            let mut count: usize = 0;
+            Ok(this.get_matching_entities(lua)?.len())
+        });
 
-            for (blueprint, name, owned_by, room, position) in world
-                .0
-                .query::<(
-                    &Blueprint,
-                    Option<&Name>,
-                    Option<&OwnedBy>,
-                    Option<&Room>,
-                    Option<&Position>,
-                )>()
-                .iter()
-            {
-                if this.matches(blueprint, name, owned_by, room, position) {
-                    count += 1;
-                }
-            }
-
-            Ok(count)
+        methods.add_method("first", |lua, this, _: ()| {
+            Ok(this
+                .get_matching_entities(lua)?
+                .first()
+                .map(|e| EntityHandle {
+                    entity: e.0,
+                    blueprint_id: e.1,
+                }))
         });
 
         methods.add_method("each", |lua, this, handle: mlua::Function| {
-            let mut entities = Vec::new();
-            {
-                let world = get_app_data::<app_data::World>(lua)?;
-
-                for (entity, blueprint, name, owned_by, room, position) in world
-                    .0
-                    .query::<(
-                        hecs::Entity,
-                        &Blueprint,
-                        Option<&Name>,
-                        Option<&OwnedBy>,
-                        Option<&Room>,
-                        Option<&Position>,
-                    )>()
-                    .iter()
-                {
-                    if this.matches(blueprint, name, owned_by, room, position) {
-                        entities.push((entity, blueprint.0));
-                    }
-                }
-            };
+            let entities = this.get_matching_entities(lua)?;
 
             let mut rx_sentry = RxSentry::new(this.pipeline.clone());
             for entity in entities {
