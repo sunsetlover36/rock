@@ -1,12 +1,15 @@
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{ConnectInfo, Query, State, WebSocketUpgrade},
-    http::{Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
     middleware::{self, Next},
     response::Response,
     routing::{any, post},
 };
 use color_eyre::eyre;
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::Sha512;
 use shared::{ImpromptuRequest, SocketConnectionQuery, farcaster::WebhookPayload};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -19,6 +22,8 @@ use crate::{
         session_registry::SessionRegistrar,
     },
 };
+
+type HmacSha512 = Hmac<Sha512>;
 
 async fn localhost_only(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -36,11 +41,13 @@ async fn localhost_only(
 struct AppState {
     session_registrar: SessionRegistrar,
     runtime_callback_tx: flume::Sender<RuntimeCallback>,
+    webhook_secret: Option<String>,
 }
 
 pub struct ApiParams {
     pub session_registrar: SessionRegistrar,
     pub runtime_callback_tx: flume::Sender<RuntimeCallback>,
+    pub webhook_secret: Option<String>,
 }
 pub struct Api {
     app: Router,
@@ -50,18 +57,24 @@ impl Api {
         let state = AppState {
             session_registrar: params.session_registrar,
             runtime_callback_tx: params.runtime_callback_tx.clone(),
+            webhook_secret: params.webhook_secret.clone(),
         };
 
-        let app = Router::new()
-            .route("/", any(Api::handle_ws))
-            .route(
-                "/impromptu",
-                post(Api::process_impromptu).route_layer(middleware::from_fn(localhost_only)),
-            )
-            .route("/farcaster-webhook", post(Api::process_webhook))
-            .nest_service("/assets", ServeDir::new("./assets"))
-            .with_state(state);
+        let app = {
+            let mut app = Router::new()
+                .route("/", any(Api::handle_ws))
+                .route(
+                    "/impromptu",
+                    post(Api::process_impromptu).route_layer(middleware::from_fn(localhost_only)),
+                )
+                .nest_service("/assets", ServeDir::new("./assets"));
 
+            if params.webhook_secret.is_some() {
+                app = app.route("/farcaster-webhook", post(Api::process_webhook));
+            }
+
+            app.with_state(state)
+        };
         Self { app }
     }
 
@@ -101,9 +114,30 @@ impl Api {
     }
 
     async fn process_webhook(
+        headers: HeaderMap,
         State(state): State<AppState>,
-        Json(payload): Json<WebhookPayload>,
+        body: Bytes,
     ) -> Result<(), StatusCode> {
+        let sig = headers
+            .get("X-Neynar-Signature")
+            .ok_or(StatusCode::UNAUTHORIZED)?
+            .to_str()
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
+        let sig_bytes = hex::decode(sig).map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+        let secret = state
+            .webhook_secret
+            .as_deref()
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        let mut mac =
+            HmacSha512::new_from_slice(secret.as_bytes()).map_err(|_| StatusCode::UNAUTHORIZED)?;
+        mac.update(&body);
+        mac.verify_slice(&sig_bytes)
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+        let payload: WebhookPayload =
+            serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
         state
             .runtime_callback_tx
             .send_async(RuntimeCallback::System(SystemCallback::Webhook(Box::new(

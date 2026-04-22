@@ -54,7 +54,7 @@ server/
 
 `config.cfg` uses a human-readable `key is value` syntax:
 
-```
+```cfg
 gamemode name is my_gamemode
 max players is 32
 ```
@@ -978,11 +978,19 @@ Farcaster integration. Look up users, post casts, and react to incoming webhook 
 
 > **Requires configuration.** The `fc` plugin is only available when a Neynar API key is set in `config.cfg`:
 >
-> ```
+> ```cfg
 > farcaster key is YOUR_NEYNAR_API_KEY
 > ```
 >
 > Only Neynar API keys are supported. If `farcaster key` is not configured, the `fc` global and `on.fc.*` events will not be registered.
+>
+> **Webhook support.** `on.fc.*` events are powered by webhooks, so you also need to provide a webhook secret in `config.cfg`:
+>
+> ```cfg
+> webhook secret is NEYNAR_WEBHOOK_SECRET
+> ```
+>
+> If no webhook secret is configured, the `/farcaster-webhook` route will not be available.
 
 Most `fc` calls talk to a remote HTTP API and must be run inside a scene:
 

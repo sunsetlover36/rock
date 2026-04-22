@@ -59,8 +59,12 @@ async fn main() -> Result<()> {
                 flume::bounded::<RuntimeCallback>(1024);
             let (runtime_cmd_tx, runtime_cmd_rx) = flume::bounded::<RuntimeCommand>(32);
 
+            // Load config
+            let config = ServerConfig::new()?;
+
             // Hot reload watcher
-            let _watcher_thread = spawn_reload_watcher(runtime_cmd_tx);
+            let _watcher_thread =
+                spawn_reload_watcher(config.gamemode_name.clone(), runtime_cmd_tx);
             thread::spawn(move || {
                 fn should_reload_runtime(cmd_rx: &flume::Receiver<RuntimeCommand>) -> bool {
                     match cmd_rx.recv() {
@@ -73,18 +77,6 @@ async fn main() -> Result<()> {
                 }
 
                 loop {
-                    let config = match ServerConfig::new() {
-                        Ok(c) => c,
-                        Err(err) => {
-                            eprintln!("[HRM] Failed to read config: {err:?}");
-
-                            if !should_reload_runtime(&runtime_cmd_rx) {
-                                break;
-                            }
-                            continue;
-                        }
-                    };
-
                     // Meta database
                     let meta_db = match tokio_handle.block_on(MetaDb::new(MetaDbConfig {
                         mode_id: config.gamemode_name.clone(),
@@ -110,7 +102,7 @@ async fn main() -> Result<()> {
                     };
 
                     let runtime_params = RuntimeParams {
-                        name: config.gamemode_name,
+                        name: config.gamemode_name.clone(),
                         client_api: Arc::new(GameModeDefaultClientApi {
                             ws_session_sender: session_sender.clone(),
                         }),
@@ -155,6 +147,7 @@ async fn main() -> Result<()> {
             Api::new(ApiParams {
                 session_registrar,
                 runtime_callback_tx: runtime_callback_tx.clone(),
+                webhook_secret: config.webhook_secret,
             })
             .listen(std::env::var("PORT").ok().and_then(|p| p.parse().ok()))
             .await?;
