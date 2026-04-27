@@ -24,7 +24,7 @@ pub(super) fn spawn_reload_watcher(
                 Ok(events) => {
                     let should_reload = events.iter().any(|event| {
                         let path_matches = event.paths.iter().any(|path| {
-                            path.file_name()
+                            path.file_stem()
                                 .and_then(|name| name.to_str())
                                 .is_some_and(|name| name == gamemode_name)
                         });
