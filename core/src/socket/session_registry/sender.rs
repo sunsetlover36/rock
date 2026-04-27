@@ -17,8 +17,8 @@ pub struct SessionSender {
     pub(super) tokio_handle: tokio::runtime::Handle,
 }
 impl SessionSender {
-    fn get_endpoint(&self, pk: &PlayerKey) -> Option<mpsc::Sender<SessionCommand>> {
-        self.inner.sessions.get(pk).map(|e| e.value().clone())
+    fn get_endpoint(&self, pk: PlayerKey) -> Option<mpsc::Sender<SessionCommand>> {
+        self.inner.sessions.get(&pk).map(|e| e.value().tx.clone())
     }
 
     pub fn send_message(&self, message: ServerMessage) {
@@ -27,13 +27,13 @@ impl SessionSender {
                 let _ = self.inner.broadcast_hub.send(message.payload);
             }
             EnvelopeRecipient::Single(pk) => {
-                if let Some(tx) = self.get_endpoint(&pk) {
+                if let Some(tx) = self.get_endpoint(pk) {
                     let _ = tx.try_send(SessionCommand::Data(message.payload));
                 }
             }
             EnvelopeRecipient::List(pks) => {
                 for pk in pks {
-                    if let Some(tx) = self.get_endpoint(&pk) {
+                    if let Some(tx) = self.get_endpoint(pk) {
                         let _ = tx.try_send(SessionCommand::Data(message.payload.clone()));
                     }
                 }
@@ -45,7 +45,7 @@ impl SessionSender {
                         continue;
                     }
 
-                    let tx = entry.value().clone();
+                    let tx = entry.value().tx.clone();
                     let _ = tx.try_send(SessionCommand::Data(message.payload.clone()));
                 }
             }
@@ -59,7 +59,7 @@ impl SessionSender {
         match command.recipient {
             EnvelopeRecipient::Single(pk) => {
                 let tx = self
-                    .get_endpoint(&pk)
+                    .get_endpoint(pk)
                     .ok_or(SessionSendError::NoSuchSession)?;
                 let payload = SessionCommand::Control(command.payload);
 
@@ -82,10 +82,16 @@ impl SessionSender {
         }
     }
 
-    pub fn has_session(&self, pk: &PlayerKey) -> bool {
-        self.inner.sessions.contains_key(pk)
+    pub fn has_session(&self, pk: PlayerKey) -> bool {
+        self.inner.sessions.contains_key(&pk)
     }
     pub fn player_keys(&self) -> Vec<PlayerKey> {
         self.inner.sessions.iter().map(|e| *e.key()).collect()
+    }
+    pub fn get_identity(&self, pk: PlayerKey) -> Option<String> {
+        self.inner
+            .sessions
+            .get(&pk)
+            .and_then(|s| s.identity.clone())
     }
 }

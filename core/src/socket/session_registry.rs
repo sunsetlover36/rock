@@ -10,7 +10,7 @@ use crate::{player_pool::PlayerPool, socket::session_registry::protocol::Session
 
 pub mod protocol;
 pub mod registrar;
-pub use registrar::{Session, SessionRegistrar};
+pub use registrar::SessionRegistrar;
 pub mod sender;
 pub use sender::SessionSender;
 

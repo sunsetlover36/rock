@@ -8,13 +8,13 @@ pub trait GameModeClientApi: Send + Sync {
     fn has(&self, pk: PlayerKey) -> bool;
     fn list(&self) -> Vec<PlayerKey>;
     fn send(&self, message: ServerMessage);
+    fn identity(&self, pk: PlayerKey) -> Option<String>;
 }
 
 pub enum SystemCallback {
     PlayerConnect {
         pk: PlayerKey,
         connection_params: SocketConnectionQuery,
-        identity: Option<String>,
     },
     PlayerDisconnect {
         pk: PlayerKey,

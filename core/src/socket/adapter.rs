@@ -12,24 +12,22 @@ use crate::{
     runtime::{RuntimeCallback, SystemCallback},
     socket::{
         protocol::SocketCommand,
-        session_registry::{Session, protocol::SessionCommand},
+        session_registry::protocol::{PlayerConnection, SessionCommand},
     },
 };
 
 pub struct SocketAdapterParams {
     pub socket: WebSocket,
-    pub session: Session,
+    pub session: PlayerConnection,
     pub runtime_callback_tx: flume::Sender<RuntimeCallback>,
     pub query: SocketConnectionQuery,
-    pub identity: Option<String>,
 }
 pub struct SocketAdapter {
     ws_tx: SplitSink<WebSocket, Message>,
     ws_rs: SplitStream<WebSocket>,
-    session: Session,
+    session: PlayerConnection,
     runtime_callback_tx: flume::Sender<RuntimeCallback>,
     query: SocketConnectionQuery,
-    identity: Option<String>,
 }
 impl SocketAdapter {
     pub fn new(params: SocketAdapterParams) -> Self {
@@ -40,7 +38,6 @@ impl SocketAdapter {
             session: params.session,
             runtime_callback_tx: params.runtime_callback_tx,
             query: params.query,
-            identity: params.identity,
         }
     }
 
@@ -60,7 +57,6 @@ impl SocketAdapter {
             .send_async(RuntimeCallback::System(SystemCallback::PlayerConnect {
                 pk: self.session.pk,
                 connection_params: self.query.clone(),
-                identity: self.identity.clone(),
             }))
             .await?;
 

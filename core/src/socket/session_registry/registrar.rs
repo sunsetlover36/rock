@@ -1,41 +1,24 @@
 use std::sync::Arc;
 
-use shared::{OutgoingPacket, PlayerKey};
-use tokio::sync::{broadcast, mpsc};
+use shared::PlayerKey;
+use tokio::sync::mpsc;
 
-use crate::socket::session_registry::protocol::{SessionCommand, SessionRegistryState};
-
-pub struct Session {
-    pub pk: PlayerKey,
-    pub session_rx: mpsc::Receiver<SessionCommand>,
-    pub broadcast_rx: broadcast::Receiver<OutgoingPacket>,
-    registrar: SessionRegistrar,
-}
-impl Drop for Session {
-    fn drop(&mut self) {
-        self.registrar.unregister(&self.pk);
-    }
-}
+use super::protocol::{PlayerConnection, Session, SessionCommand, SessionRegistryState};
 
 #[derive(Clone)]
 pub struct SessionRegistrar {
     pub(super) inner: Arc<SessionRegistryState>,
 }
 impl SessionRegistrar {
-    pub fn register(&self) -> Session {
+    pub fn register(&self, identity: Option<String>) -> PlayerConnection {
         let pk = {
             let mut pool = self.inner.player_pool.lock();
             pool.claim()
         };
         let (tx, rx) = mpsc::channel::<SessionCommand>(self.inner.session_channel_buffer);
 
-        self.inner.sessions.insert(pk, tx);
-        Session {
-            pk,
-            session_rx: rx,
-            broadcast_rx: self.inner.broadcast_hub.subscribe(),
-            registrar: self.clone(),
-        }
+        self.inner.sessions.insert(pk, Session { identity, tx });
+        PlayerConnection::new(pk, rx, self.inner.broadcast_hub.subscribe(), self.clone())
     }
     pub fn unregister(&self, pk: &PlayerKey) {
         self.inner.sessions.remove(pk);

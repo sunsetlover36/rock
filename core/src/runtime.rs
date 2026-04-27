@@ -257,14 +257,12 @@ impl Runtime {
             SystemCallback::PlayerConnect {
                 pk,
                 connection_params,
-                identity,
             } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Online {
                         player: PlayerHandle::new(pk),
                         connection_params,
-                        identity,
                     }),
                 });
             }

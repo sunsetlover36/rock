@@ -96,10 +96,9 @@ impl Api {
         ws.on_upgrade(async move |socket| {
             if let Err(err) = SocketAdapter::new(SocketAdapterParams {
                 socket,
-                session: state.session_registrar.register(),
+                session: state.session_registrar.register(identity),
                 runtime_callback_tx: state.runtime_callback_tx.clone(),
                 query,
-                identity,
             })
             .activate()
             .await

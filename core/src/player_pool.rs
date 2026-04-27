@@ -7,18 +7,10 @@ pub struct Slot {
     pub occupied: bool,
 }
 
+#[derive(Default)]
 pub struct PlayerPool {
     slots: Vec<Slot>,
     free: BinaryHeap<Reverse<u32>>,
-}
-
-impl Default for PlayerPool {
-    fn default() -> Self {
-        Self {
-            slots: Vec::new(),
-            free: BinaryHeap::new(),
-        }
-    }
 }
 impl PlayerPool {
     pub fn new() -> Self {
