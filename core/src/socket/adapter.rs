@@ -21,6 +21,7 @@ pub struct SocketAdapterParams {
     pub session: Session,
     pub runtime_callback_tx: flume::Sender<RuntimeCallback>,
     pub query: SocketConnectionQuery,
+    pub identity: Option<String>,
 }
 pub struct SocketAdapter {
     ws_tx: SplitSink<WebSocket, Message>,
@@ -28,6 +29,7 @@ pub struct SocketAdapter {
     session: Session,
     runtime_callback_tx: flume::Sender<RuntimeCallback>,
     query: SocketConnectionQuery,
+    identity: Option<String>,
 }
 impl SocketAdapter {
     pub fn new(params: SocketAdapterParams) -> Self {
@@ -38,6 +40,7 @@ impl SocketAdapter {
             session: params.session,
             runtime_callback_tx: params.runtime_callback_tx,
             query: params.query,
+            identity: params.identity,
         }
     }
 
@@ -57,6 +60,7 @@ impl SocketAdapter {
             .send_async(RuntimeCallback::System(SystemCallback::PlayerConnect {
                 pk: self.session.pk,
                 connection_params: self.query.clone(),
+                identity: self.identity.clone(),
             }))
             .await?;
 

@@ -21,6 +21,7 @@ pub(crate) enum PlayerEventData {
     Online {
         player: PlayerHandle,
         connection_params: SocketConnectionQuery,
+        identity: Option<String>,
     },
     Offline {
         player: PlayerHandle,
@@ -61,7 +62,8 @@ impl IntoLuaMulti for PlayerEventData {
             PlayerEventData::Online {
                 player,
                 connection_params,
-            } => (player, lua.to_value(&connection_params)?).into_lua_multi(lua),
+                identity,
+            } => (player, lua.to_value(&connection_params)?, identity).into_lua_multi(lua),
             PlayerEventData::Offline { player } => player.into_lua_multi(lua),
             PlayerEventData::Input { player, name, data } => {
                 let action_table = lua.create_table()?;

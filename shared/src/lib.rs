@@ -100,7 +100,19 @@ pub struct EntityData {
     pub custom: serde_json::Map<String, serde_json::Value>,
 }
 
-// -- Communication -> session_registry.rs, [actor] server_message.rs, [commit router] ws_router.rs, client_protocol.rs
+// -- Communication -> auth.rs, session_registry.rs, [actor] server_message.rs, [commit router] ws_router.rs, client_protocol.rs
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TicketClaims {
+    pub aud: String,
+    pub exp: usize,
+    pub sub: String,
+}
+impl TicketClaims {
+    pub fn fid(&self) -> Option<u64> {
+        self.sub.strip_prefix("fid:")?.parse().ok()
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SignalPacket {
     pub name: Option<String>,

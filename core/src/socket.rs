@@ -1,3 +1,4 @@
-pub mod adapter;
-pub mod protocol;
-pub mod session_registry;
+pub(crate) mod adapter;
+pub(crate) mod auth;
+pub(crate) mod protocol;
+pub(crate) mod session_registry;

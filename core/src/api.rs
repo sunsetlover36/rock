@@ -4,7 +4,7 @@ use axum::{
     extract::{ConnectInfo, Query, State, WebSocketUpgrade},
     http::{HeaderMap, Request, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{any, post},
 };
 use color_eyre::eyre;
@@ -19,6 +19,7 @@ use crate::{
     runtime::{RuntimeCallback, SystemCallback},
     socket::{
         adapter::{SocketAdapter, SocketAdapterParams},
+        auth::{VerifyTicketError, verify_ticket},
         session_registry::SessionRegistrar,
     },
 };
@@ -81,14 +82,24 @@ impl Api {
     async fn handle_ws(
         ws: WebSocketUpgrade,
         State(state): State<AppState>,
-        Query(query): Query<SocketConnectionQuery>,
+        Query(mut query): Query<SocketConnectionQuery>,
     ) -> Response {
+        let token = query
+            .remove("token")
+            .and_then(|v| v.as_str().map(str::to_owned));
+        let identity = match verify_ticket(token.as_deref()) {
+            Ok(claims) => Some(claims.sub),
+            Err(VerifyTicketError::Disabled) => None,
+            Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
+        };
+
         ws.on_upgrade(async move |socket| {
             if let Err(err) = SocketAdapter::new(SocketAdapterParams {
                 socket,
                 session: state.session_registrar.register(),
                 runtime_callback_tx: state.runtime_callback_tx.clone(),
                 query,
+                identity,
             })
             .activate()
             .await
@@ -150,7 +161,7 @@ impl Api {
     }
 
     pub async fn listen(self, port: Option<u16>) -> eyre::Result<()> {
-        let listener = TcpListener::bind(format!("localhost:{}", port.unwrap_or(3000)))
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", port.unwrap_or(3000)))
             .await
             .unwrap();
         axum::serve(listener, self.app).await?;

@@ -14,6 +14,7 @@ pub enum SystemCallback {
     PlayerConnect {
         pk: PlayerKey,
         connection_params: SocketConnectionQuery,
+        identity: Option<String>,
     },
     PlayerDisconnect {
         pk: PlayerKey,
