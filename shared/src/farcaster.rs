@@ -54,9 +54,16 @@ pub struct CastCreatedData {
     pub author: User,
     pub app: UserDehydrated,
     pub thread_hash: String,
-    pub parent_hash: String,
+
+    #[serde(default)]
+    pub parent_hash: Option<String>,
+
+    #[serde(default)]
     pub parent_url: Option<String>,
+
+    #[serde(default)]
     pub root_parent_url: Option<String>,
+
     pub parent_author: Author,
     pub text: String,
     pub timestamp: String,
@@ -75,7 +82,8 @@ pub type Fid = u64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Author {
-    pub fid: Fid,
+    #[serde(default)]
+    pub fid: Option<Fid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
