@@ -16,6 +16,6 @@ target
 .env
 
 # Gamemodes folder and config.cfg (not related to the engine)
-core/server
+server/
 
 .DS_Store

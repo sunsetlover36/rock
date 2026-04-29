@@ -2525,7 +2525,7 @@ dependencies = [
 
 [[package]]
 name = "rock"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2549,12 +2549,12 @@ dependencies = [
  "parking_lot",
  "rayon",
  "reqwest",
+ "rock-wire",
  "rustc-hash",
  "serde",
  "serde_json",
  "serde_repr",
  "sha2 0.11.0",
- "shared",
  "slotmap",
  "smallvec",
  "sqlx",
@@ -2563,6 +2563,18 @@ dependencies = [
  "tokio",
  "tower-http",
  "walkdir",
+]
+
+[[package]]
+name = "rock-wire"
+version = "0.1.0"
+source = "git+https://github.com/sunsetlover36/rock-wire?tag=v0.1.0#3d227dfb3fcd8a37219322b0f798c5badfd112c7"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "strum",
 ]
 
 [[package]]
@@ -2900,17 +2912,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
-]
-
-[[package]]
-name = "shared"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "serde_repr",
- "strum",
 ]
 
 [[package]]
