@@ -149,7 +149,10 @@ async fn main() -> Result<()> {
                 runtime_callback_tx: runtime_callback_tx.clone(),
                 webhook_secret: config.webhook_secret,
             })
-            .listen(std::env::var("PORT").ok().and_then(|p| p.parse().ok()))
+            .listen(
+                std::env::var("HOST").ok(),
+                std::env::var("PORT").ok().and_then(|p| p.parse().ok()),
+            )
             .await?;
         }
         cli::Command::Genesis { name } => {

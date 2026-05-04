@@ -9,8 +9,8 @@ use axum::{
 };
 use color_eyre::eyre;
 use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha512;
 use rock_wire::{ImpromptuRequest, SocketConnectionQuery, farcaster::WebhookPayload};
+use sha2::Sha512;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
@@ -159,10 +159,14 @@ impl Api {
         Ok(())
     }
 
-    pub async fn listen(self, port: Option<u16>) -> eyre::Result<()> {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", port.unwrap_or(3000)))
-            .await
-            .unwrap();
+    pub async fn listen(self, host: Option<String>, port: Option<u16>) -> eyre::Result<()> {
+        let listener = TcpListener::bind(format!(
+            "{}:{}",
+            host.unwrap_or("127.0.0.1".to_string()),
+            port.unwrap_or(3000)
+        ))
+        .await
+        .unwrap();
         axum::serve(listener, self.app).await?;
 
         Ok(())
