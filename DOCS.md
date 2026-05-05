@@ -48,7 +48,7 @@ db/
 
 ### Configuration
 
-#### `config.toml`:
+#### `config.toml`
 
 ```toml
 [gamemode]
