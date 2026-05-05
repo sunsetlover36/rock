@@ -1,45 +1,76 @@
 use color_eyre::eyre;
-use std::{
-    fs::File,
-    io::{self, BufRead},
-};
+use serde::{Deserialize, Serialize};
+use strum::EnumString;
 
-#[derive(Debug, Default)]
-pub struct ServerConfig {
-    pub gamemode_name: String,
-    pub max_players: Option<u32>,
-    pub farcaster_key: Option<String>,
-    pub webhook_secret: Option<String>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Config {
+    pub gamemode: GamemodeConfig,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthConfig>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub farcaster: Option<FarcasterConfig>,
 }
-impl ServerConfig {
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct GamemodeConfig {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, EnumString, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub(crate) enum AuthKind {
+    Ticket,
+    Farcaster,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct AuthConfig {
+    pub providers: Vec<AuthKind>,
+    pub ticket: Option<TicketAuthConfig>,
+    pub farcaster: Option<FarcasterAuthConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TicketAuthConfig {
+    pub secret_env: String,
+    pub audience: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FarcasterAuthConfig {
+    pub issuer: String,
+    pub audience: String,
+    pub jwks_url: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct FarcasterConfig {
+    pub webhook_env: Option<String>,
+    pub api_key: Option<String>,
+}
+
+impl Config {
     pub fn filename() -> &'static str {
-        "config.cfg"
+        "config.toml"
     }
 
     pub fn new() -> eyre::Result<Self> {
-        let file = File::open(ServerConfig::filename())?;
-        let reader = io::BufReader::new(file);
-
-        let mut config = ServerConfig::default();
-        for line in reader.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            if let Some((key, value)) = line.split_once(" is ") {
-                let value = value.trim();
-
-                match key.trim() {
-                    "gamemode name" => config.gamemode_name = value.to_string(),
-                    "max players" => config.max_players = Some(value.parse()?),
-                    "farcaster key" => config.farcaster_key = Some(value.to_string()),
-                    "webhook secret" => config.webhook_secret = Some(value.to_string()),
-                    _ => {}
-                }
-            }
-        }
-
+        let raw = std::fs::read_to_string(Config::filename())?;
+        let config = toml::from_str(&raw)?;
         Ok(config)
+    }
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            gamemode: GamemodeConfig {
+                name: "grandlarc".to_owned(),
+            },
+            auth: Some(AuthConfig::default()),
+            farcaster: Some(FarcasterConfig::default()),
+        }
     }
 }

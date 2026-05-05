@@ -3,8 +3,8 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "rock")]
 #[command(author = "Luther Blissett")]
-#[command(version = "0.2.8")]
-#[command(about = "ROCK runtime", long_about = None)]
+#[command(version = "0.2.9")]
+#[command(about = "ROCK server runtime", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,

@@ -8,7 +8,7 @@ use crate::{
     api::{Api, ApiParams},
     cli::Cli,
     clients::FarcasterApi,
-    config::ServerConfig,
+    config::Config,
     meta_db::{MetaDb, MetaDbConfig},
     player_pool::PlayerPool,
     router::CommitRouter,
@@ -16,7 +16,10 @@ use crate::{
         Runtime, RuntimeCallback, RuntimeCommand, RuntimeExit, RuntimeParams,
         default_client_api::GameModeDefaultClientApi,
     },
-    socket::session_registry::{SessionRegistry, SessionRegistryParams},
+    socket::{
+        auth::FarcasterVerifier,
+        session_registry::{SessionRegistry, SessionRegistryParams},
+    },
     watcher::spawn_reload_watcher,
 };
 
@@ -60,11 +63,14 @@ async fn main() -> Result<()> {
             let (runtime_cmd_tx, runtime_cmd_rx) = flume::bounded::<RuntimeCommand>(32);
 
             // Load config
-            let config = ServerConfig::new()?;
+            let config = Config::new()?;
+            let runtime_config = config.clone();
+            let api_config = config.clone();
 
             // Hot reload watcher
             let _watcher_thread =
-                spawn_reload_watcher(config.gamemode_name.clone(), runtime_cmd_tx);
+                spawn_reload_watcher(runtime_config.gamemode.name.clone(), runtime_cmd_tx);
+
             thread::spawn(move || {
                 fn should_reload_runtime(cmd_rx: &flume::Receiver<RuntimeCommand>) -> bool {
                     match cmd_rx.recv() {
@@ -79,7 +85,7 @@ async fn main() -> Result<()> {
                 loop {
                     // Meta database
                     let meta_db = match tokio_handle.block_on(MetaDb::new(MetaDbConfig {
-                        mode_id: config.gamemode_name.clone(),
+                        mode_id: runtime_config.gamemode.name.clone(),
                         default_ttl: Duration::from_secs(30),
                     })) {
                         Ok(db) => db,
@@ -89,7 +95,11 @@ async fn main() -> Result<()> {
                         }
                     };
 
-                    let fc_api = if let Some(key) = &config.farcaster_key {
+                    let fc_api = if let Some(key) = runtime_config
+                        .farcaster
+                        .as_ref()
+                        .and_then(|f| f.api_key.as_ref())
+                    {
                         match FarcasterApi::new(key) {
                             Ok(api) => Some(api),
                             Err(err) => {
@@ -102,7 +112,7 @@ async fn main() -> Result<()> {
                     };
 
                     let runtime_params = RuntimeParams {
-                        name: config.gamemode_name.clone(),
+                        name: runtime_config.gamemode.name.clone(),
                         client_api: Arc::new(GameModeDefaultClientApi {
                             ws_session_sender: session_sender.clone(),
                         }),
@@ -144,10 +154,17 @@ async fn main() -> Result<()> {
             });
 
             // Axum API
+            let fc_verifier =
+                if let Some(c) = api_config.auth.as_ref().and_then(|c| c.farcaster.as_ref()) {
+                    Some(FarcasterVerifier::new(c).await?)
+                } else {
+                    None
+                };
             Api::new(ApiParams {
                 session_registrar,
                 runtime_callback_tx: runtime_callback_tx.clone(),
-                webhook_secret: config.webhook_secret,
+                config: api_config,
+                fc_verifier,
             })
             .listen(
                 std::env::var("HOST").ok(),
@@ -156,35 +173,27 @@ async fn main() -> Result<()> {
             .await?;
         }
         cli::Command::Genesis { name } => {
-            fs::create_dir("./gamemodes")?;
-            fs::create_dir("./assets")?;
+            fs::create_dir_all("./gamemodes")?;
+            fs::create_dir_all("./assets")?;
 
             let sample_gamemode = r#"on.world.awake()
   :each(function ()
     print("Hello, World!")
-  end)"#;
+  end)
+"#;
             fs::write(format!("./gamemodes/{}.lua", name.clone()), sample_gamemode)?;
 
-            let config_path = format!("./{}", ServerConfig::filename());
-            let config = Path::new(&config_path);
-            if !config.exists() {
-                fs::write(config, format!("gamemode name is {}", name.clone()))?;
+            let config_path = Path::new(Config::filename());
+            let mut config: Config = if config_path.exists() {
+                let content = fs::read_to_string(config_path)?;
+                toml::from_str(&content)?
             } else {
-                let content = fs::read_to_string(config)?;
-                let new_content = content
-                    .lines()
-                    .map(|line| {
-                        if line.starts_with("gamemode name is ") {
-                            format!("gamemode name is {}", name)
-                        } else {
-                            line.to_string()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                Config::default()
+            };
 
-                fs::write(config, new_content)?;
-            }
+            config.gamemode.name = name.clone();
+            let content = toml::to_string_pretty(&config)?;
+            fs::write(config_path, content)?;
 
             println!(
                 "Bootstrapped gamemodes/{}.lua! Use `rock ignite` to start the runtime.",

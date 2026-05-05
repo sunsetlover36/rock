@@ -1,30 +1,41 @@
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use rock_wire::TicketClaims;
+use crate::config::{AuthConfig, AuthKind};
 
-#[derive(Debug)]
-pub(crate) enum VerifyTicketError {
-    Disabled,
-    Missing,
-    Invalid(jsonwebtoken::errors::Error),
-}
+mod farcaster;
+pub(crate) use farcaster::FarcasterVerifier;
 
-pub(crate) fn verify_ticket(token: Option<&str>) -> Result<TicketClaims, VerifyTicketError> {
-    let secret = std::env::var("TICKET_SECRET").map_err(|_| VerifyTicketError::Disabled)?;
-    let token = token.ok_or(VerifyTicketError::Missing)?;
-    let aud = std::env::var("TICKET_AUDIENCE").unwrap_or_else(|_| "rock".to_string());
+mod ticket;
+use ticket::verify_ticket;
 
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.set_audience(&[aud]);
+mod protocol;
+pub(crate) use protocol::AuthError;
 
-    validation.required_spec_claims.insert("aud".to_string());
-    validation.required_spec_claims.insert("exp".to_string());
-    validation.required_spec_claims.insert("sub".to_string());
+pub(crate) fn verify_auth(
+    config: &AuthConfig,
+    fc_verifier: Option<&FarcasterVerifier>,
+    auth: AuthKind,
+    token: &str,
+) -> Result<String, AuthError> {
+    if config.providers.is_empty() {
+        return Err(AuthError::Disabled);
+    }
 
-    let data = decode::<TicketClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
-    .map_err(VerifyTicketError::Invalid)?;
-    Ok(data.claims)
+    if config.providers.contains(&auth) {
+        match auth {
+            AuthKind::Ticket => {
+                let ticket_config = config
+                    .ticket
+                    .as_ref()
+                    .ok_or(AuthError::MissingConfig(auth))?;
+                let claims = verify_ticket(ticket_config, token)?;
+                Ok(claims.sub)
+            }
+            AuthKind::Farcaster => {
+                let fc_verifier = fc_verifier.ok_or(AuthError::MissingConfig(auth))?;
+                let claims = fc_verifier.verify(token)?;
+                Ok(claims.sub)
+            }
+        }
+    } else {
+        Err(AuthError::UnavailableProvider)
+    }
 }

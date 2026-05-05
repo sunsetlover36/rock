@@ -11,15 +11,16 @@ use color_eyre::eyre;
 use hmac::{Hmac, KeyInit, Mac};
 use rock_wire::{ImpromptuRequest, SocketConnectionQuery, farcaster::WebhookPayload};
 use sha2::Sha512;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 
 use crate::{
+    config::{AuthKind, Config},
     runtime::{RuntimeCallback, SystemCallback},
     socket::{
         adapter::{SocketAdapter, SocketAdapterParams},
-        auth::{VerifyTicketError, verify_ticket},
+        auth::{AuthError, FarcasterVerifier, verify_auth},
         session_registry::SessionRegistrar,
     },
 };
@@ -42,13 +43,15 @@ async fn localhost_only(
 struct AppState {
     session_registrar: SessionRegistrar,
     runtime_callback_tx: flume::Sender<RuntimeCallback>,
-    webhook_secret: Option<String>,
+    config: Arc<Config>,
+    fc_verifier: Option<Arc<FarcasterVerifier>>,
 }
 
 pub struct ApiParams {
     pub session_registrar: SessionRegistrar,
     pub runtime_callback_tx: flume::Sender<RuntimeCallback>,
-    pub webhook_secret: Option<String>,
+    pub config: Config,
+    pub fc_verifier: Option<FarcasterVerifier>,
 }
 pub struct Api {
     app: Router,
@@ -58,24 +61,19 @@ impl Api {
         let state = AppState {
             session_registrar: params.session_registrar,
             runtime_callback_tx: params.runtime_callback_tx.clone(),
-            webhook_secret: params.webhook_secret.clone(),
+            config: Arc::new(params.config),
+            fc_verifier: params.fc_verifier.map(Arc::new),
         };
 
-        let app = {
-            let mut app = Router::new()
-                .route("/", any(Api::handle_ws))
-                .route(
-                    "/impromptu",
-                    post(Api::process_impromptu).route_layer(middleware::from_fn(localhost_only)),
-                )
-                .nest_service("/assets", ServeDir::new("./assets"));
-
-            if params.webhook_secret.is_some() {
-                app = app.route("/farcaster-webhook", post(Api::process_webhook));
-            }
-
-            app.with_state(state)
-        };
+        let app = Router::new()
+            .route("/", any(Api::handle_ws))
+            .route(
+                "/impromptu",
+                post(Api::process_impromptu).route_layer(middleware::from_fn(localhost_only)),
+            )
+            .route("/farcaster-webhook", post(Api::process_webhook))
+            .nest_service("/assets", ServeDir::new("./assets"))
+            .with_state(state);
         Self { app }
     }
 
@@ -84,13 +82,33 @@ impl Api {
         State(state): State<AppState>,
         Query(mut query): Query<SocketConnectionQuery>,
     ) -> Response {
+        let auth = match query
+            .remove("auth")
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .map(|v| v.parse::<AuthKind>())
+            .transpose()
+        {
+            Ok(auth) => auth,
+            Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
+        };
+
         let token = query
             .remove("token")
             .and_then(|v| v.as_str().map(str::to_owned));
-        let identity = match verify_ticket(token.as_deref()) {
-            Ok(claims) => Some(claims.sub),
-            Err(VerifyTicketError::Disabled) => None,
-            Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
+
+        let identity = match (&state.config.auth, auth, token.as_deref()) {
+            (None, None, None) => None,
+            (None, Some(_), _) | (None, _, Some(_)) => None,
+            (Some(_), None, None) | (Some(_), Some(_), None) | (Some(_), None, Some(_)) => {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
+            (Some(auth_config), Some(auth), Some(token)) => {
+                match verify_auth(auth_config, state.fc_verifier.as_deref(), auth, token) {
+                    Ok(sub) => Some(sub),
+                    Err(AuthError::Disabled) => None,
+                    Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
+                }
+            }
         };
 
         ws.on_upgrade(async move |socket| {
@@ -135,13 +153,17 @@ impl Api {
             .map_err(|_| StatusCode::UNAUTHORIZED)?;
         let sig_bytes = hex::decode(sig).map_err(|_| StatusCode::UNAUTHORIZED)?;
 
-        let secret = state
-            .webhook_secret
-            .as_deref()
+        let webhook_env = state
+            .config
+            .farcaster
+            .as_ref()
+            .and_then(|f| f.webhook_env.as_ref())
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        let webhook_secret =
+            std::env::var(webhook_env).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-        let mut mac =
-            HmacSha512::new_from_slice(secret.as_bytes()).map_err(|_| StatusCode::UNAUTHORIZED)?;
+        let mut mac = HmacSha512::new_from_slice(webhook_secret.as_bytes())
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
         mac.update(&body);
         mac.verify_slice(&sig_bytes)
             .map_err(|_| StatusCode::UNAUTHORIZED)?;

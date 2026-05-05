@@ -1,6 +1,8 @@
-# ROCK Engine → Scripting Guide
+# ROCK Server Runtime → Scripting Guide
 
-Documentation for gamemode scripters. Everything you need to build multiplayer worlds with Lua.
+**ROCK is a server runtime for Lua-scripted multiplayer worlds.**
+
+Documentation for world scripters. Everything you need to build multiplayer worlds with ROCK.
 
 ## Table of Contents
 
@@ -30,36 +32,59 @@ Documentation for gamemode scripters. Everything you need to build multiplayer w
 
 ## Getting Started
 
-### Prerequisites
-
-- Rust toolchain (edition 2024)
-- The `rock` binary (built from this repo via `cargo build --release`)
-
 ### Project Structure
 
-A ROCK server lives in a `server/` directory:
+A ROCK server consists of:
 
 ```
-server/
-  config.cfg          -- server configuration
-  gamemodes/
-    my_gamemode.lua   -- your gamemode script
-  geodes/             -- plugin packages (optional)
-  assets/             -- static files served at /assets/* (optional)
-  db/
-    db.sqlite         -- persistent storage (auto-created)
+config.toml         -- server configuration
+gamemodes/
+  my_gamemode.lua   -- your gamemode script
+geodes/             -- plugin packages (optional)
+assets/             -- static files served at /assets/* (optional)
+db/
+  db.sqlite         -- persistent storage (auto-created)
 ```
 
 ### Configuration
 
-`config.cfg` uses a human-readable `key is value` syntax:
+#### `config.toml`:
 
-```cfg
-gamemode name is my_gamemode
-max players is 32
+```toml
+[gamemode]
+# Gamemode file without .lua extension.
+name = "farcaster"
+
+[auth]
+# Optional. Enables auth providers and requires authenticated sessions.
+providers = ["ticket", "farcaster"]
+
+[auth.ticket]
+# Env var that stores the HS256 secret.
+secret_env = "TICKET_SECRET"
+audience = "rock"
+
+[auth.farcaster]
+issuer = "https://auth.farcaster.xyz"
+# Your miniapp / site domain.
+audience = "YOUR_DOMAIN"
+jwks_url = "https://auth.farcaster.xyz/.well-known/jwks.json"
+
+[farcaster]
+# Env var that stores the Neynar webhook secret.
+webhook_env = "NEYNAR_WEBHOOK_SECRET"
+# Neynar API key.
+api_key = "YOUR_NEYNAR_API_KEY"
 ```
 
-The `gamemode name` tells the engine which `.lua` file to load from `gamemodes/`.
+#### Environment variables
+```env
+HOST=127.0.0.1
+PORT=3000
+```
+
+* `HOST`: address to bind the server (default: `127.0.0.1`)
+* `PORT`: port to listen on (default: `3000`)
 
 ### CLI
 
@@ -71,13 +96,13 @@ rock ignite
 rock genesis my_gamemode
 ```
 
-`rock genesis` creates the gamemode Lua file in `gamemodes/` and, if `config.cfg` doesn't exist yet, creates it with the gamemode name already set.
+`rock genesis` creates the gamemode Lua file in `gamemodes/` and, if `config.toml` doesn't exist yet, creates it with the gamemode name already set.
 
-`rock ignite` starts the server on `127.0.0.1:3000`. Clients connect via WebSocket at `ws://localhost:3000/ws`.
+`rock ignite` starts the server on `127.0.0.1:3000`. Clients connect via WebSocket at `ws://127.0.0.1:3000`.
 
 ### Hot Reload
 
-The engine watches `config.cfg` and all `.lua` files in `gamemodes/`. Save a file and the runtime reloads automatically → no restart needed.
+The engine watches an active gamemode file in `gamemodes/`. Save a file and the runtime reloads automatically → no restart needed.
 
 ---
 
@@ -197,7 +222,7 @@ Let's build a simple multiplayer world where players move on a grid.
 rock genesis my_world
 ```
 
-This creates `server/gamemodes/my_world.lua` and sets up `config.cfg` pointing to it (if it doesn't already exist).
+This creates `gamemodes/my_world.lua` and sets up `config.toml` pointing to it (if it doesn't already exist).
 
 ### Step 2: Register input
 
@@ -293,7 +318,7 @@ on.player.input()
 rock ignite
 ```
 
-Connect a client to `ws://localhost:3000/ws`. You now have a multiplayer world with player movement and automatic state replication.
+Connect a client to `ws://127.0.0.1:3000`. You now have a multiplayer world with player movement and automatic state replication.
 
 ---
 
@@ -558,7 +583,7 @@ Returns a table of all connected players as `PlayerHandle`s.
 
 #### `player.broadcast()`
 
-Create a broadcast signal (to all or a subset of players). Returns `BroadcastRx`.
+Create a broadcast signal (to all or a subset of players).
 
 ```lua
 -- signal to everyone
@@ -582,8 +607,9 @@ player.broadcast()
 | `:room()` | `PlayerRoom` | Access room management |
 | `:vision()` | `PlayerVision` | Access vision/anchor management |
 | `:connection_params()` | `table` | Query params from the WebSocket connection URL |
+| `:who()` | `string?` | Auth identity, e.g. `fc:423406`, or `nil` for anon sessions |
 
-**Connection params.** When a client connects via `ws://host:3000/ws?room=0xabc&name=Bob`, the query string is captured at handshake time and exposed as a Lua table:
+**Connection params.** When a client connects via `ws://host:port/?room=0xabc&name=Bob`, the query string is captured at handshake time and exposed as a Lua table:
 
 ```lua
 on.player.online():each(function(p)
@@ -803,7 +829,7 @@ end)
 
 #### `scene.create()`
 
-Create a reusable scene builder. Returns `SceneRx`.
+Create a reusable scene builder.
 
 ```lua
 -- create and register a named scene
@@ -836,7 +862,7 @@ Schedule one-shot, repeating, or cron-based timers. Timers fire as events throug
 
 #### `timer.create()`
 
-Create a new timer builder. Returns `TimerRx`.
+Create a new `TimerRx` builder.
 
 ```lua
 -- one-shot (3 seconds)
@@ -976,23 +1002,23 @@ p:room():enter(room_name)
 
 Farcaster integration. Look up users, post casts, and react to incoming webhook events from the Farcaster network (via Neynar).
 
-> **Requires configuration.** The `fc` plugin is only available when a Neynar API key is set in `config.cfg`:
+> **Requires configuration.** The `fc` plugin is only available when a Neynar API key is set in `config.toml`:
 >
-> ```cfg
-> farcaster key is YOUR_NEYNAR_API_KEY
+> ```toml
+> [farcaster]
+> api_key = "YOUR_NEYNAR_API_KEY"
 > ```
 >
-> Only Neynar API keys are supported. If `farcaster key` is not configured, the `fc` global and `on.fc.*` events will not be registered.
+> Only Neynar API keys are supported. If `api_key` is not configured, the `fc` plugin will not be registered.
 >
-> **Webhook support.** `on.fc.*` events are powered by webhooks, so you also need to provide a webhook secret in `config.cfg`:
+> **Webhook support.** `on.fc.*` events are powered by webhooks, so you need to provide the name of the env var containing a webhook secret in `config.toml`:
 >
-> ```cfg
-> webhook secret is NEYNAR_WEBHOOK_SECRET
+> ```toml
+> [farcaster]
+> webhook_env = "FARCASTER_WEBHOOK_SECRET"
 > ```
->
-> If no webhook secret is configured, the `/farcaster-webhook` route will not be available.
 
-Most `fc` calls talk to a remote HTTP API and must be run inside a scene:
+`fc` calls talk to a remote HTTP API and must be run inside a scene:
 
 ```lua
 scene.run(function()
@@ -1038,19 +1064,14 @@ The returned `User` table matches the Neynar user shape. Commonly used fields:
 | `username` | `string` | Handle (no `@`) |
 | `display_name` | `string` | Display name |
 | `pfp_url` | `string` | Profile picture URL |
-| `custody_address` | `string` | Custody address |
 | `registered_at` | `string` | ISO timestamp |
 | `profile` | `table` | `{ bio = { text, mentioned_profiles, ... }, location?, banner? }` |
 | `follower_count` | `number` | Follower count |
 | `following_count` | `number` | Following count |
-| `verifications` | `string[]` | Verified addresses |
 | `verified_addresses` | `table` | `{ eth_addresses, sol_addresses, primary = { eth_address?, sol_address? } }` |
-| `auth_addresses` | `table[]` | `[{ address, app }]` |
-| `verified_accounts` | `table[]` | `[{ platform, username }]` |
 | `url` | `string` | Profile URL |
 | `score` | `number` | Neynar score |
 | `pro` | `table?` | `{ status, subscribed_at, expires_at }` when present |
-| `viewer_context` | `table?` | `{ following, followed_by, blocking, blocked_by }` when present |
 
 Some nested payloads (e.g. `app` on a webhook, `mentioned_profiles` inside a bio) use a **dehydrated** user shape with a subset of fields — `fid` is always present, the rest (`username`, `display_name`, `pfp_url`, `custody_address`, `score`) may be `nil`.
 
@@ -1380,7 +1401,7 @@ Custom fields are replicated to clients alongside components when included in sy
 
 ## WebSocket Protocol
 
-For client developers. The server communicates via JSON over WebSocket on `ws://localhost:3000/ws`.
+The server communicates via JSON over WebSocket on `ws://127.0.0.1:3000`. Query params passed at connection time are available via `p:connection_params()`.
 
 ### Client to Server
 
@@ -1420,14 +1441,24 @@ For client developers. The server communicates via JSON over WebSocket on `ws://
 { "t": "system", "d": "PlayerKicked" }
 ```
 
+### Authentication
+
+You can connect to protected worlds with:
+```txt
+ws://127.0.0.1:3000/?auth=ticket&token=...
+ws://127.0.0.1:3000/?auth=farcaster&token=...
+```
+
+Omit both for anon sessions. Tickets use JWT (HS256). Farcaster Quick Auth uses RS256.
+
 ---
 
 ## Geodes
 
-Geodes are modular plugin packages. Place them in `server/geodes/`:
+Geodes are modular plugin packages. Place them in `geodes/`:
 
 ```
-server/geodes/
+geodes/
   my_geode/
     geode.toml          -- manifest
     glyphs/             -- globals, utilities (loaded first)
@@ -1445,7 +1476,7 @@ Geodes are loaded before the gamemode script. Use them to share reusable code ac
 The engine exposes a `POST /impromptu` endpoint for injecting Lua code at runtime:
 
 ```bash
-curl -X POST http://localhost:3000/impromptu \
+curl -X POST http://127.0.0.1:3000/impromptu \
   -H "Content-Type: application/json" \
   -d '{"code": "print(\"hello from live code\")", "name": "test"}'
 ```
@@ -1456,10 +1487,10 @@ This fires `on.world.impromptu()` events and executes the code within the runnin
 
 ## Static Assets
 
-Everything under `server/assets/` is served over HTTP at `/assets/*`. This is where you drop textures, sounds, or any other static files the client needs to render your world.
+Everything under `assets/` is served over HTTP at `/assets/*`. This is where you drop textures, sounds, or any other static files the client needs to render your world.
 
 ```
-server/assets/
+assets/
   packs/
     basic/
       textures/
@@ -1472,7 +1503,7 @@ server/assets/
 Fetched with:
 
 ```
-http://localhost:3000/assets/packs/basic/textures/lamp_small.png
+http://127.0.0.1:3000/assets/packs/basic/textures/lamp_small.png
 ```
 
-No configuration needed. Drop a file into `server/assets/`, it's live on the next request.
+No configuration needed. Drop a file into `assets/`, it's live on the next request.
