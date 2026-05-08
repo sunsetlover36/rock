@@ -129,12 +129,11 @@ impl CoreSentry {
     pub fn process(&mut self) -> Result<(), CoreSentryError> {
         let now = Instant::now();
 
-        if let Some(throttle) = self.pipeline.throttle {
-            if let Some(last_call_at) = self.last_call_at {
-                if now.duration_since(last_call_at) < throttle {
-                    return Err(CoreSentryError::Throttled);
-                }
-            }
+        if let Some(throttle) = self.pipeline.throttle
+            && let Some(last_call_at) = self.last_call_at
+            && now.duration_since(last_call_at) < throttle
+        {
+            return Err(CoreSentryError::Throttled);
         }
 
         // If there's any cycle behavior (takes or skips), then we need to process it and make a decision
