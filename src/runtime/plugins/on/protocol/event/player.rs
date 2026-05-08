@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use mlua::{IntoLuaMulti, LuaSerdeExt};
-use rock_wire::{InputData, SocketConnectionQuery};
+use rock_wire::{InputData, SignalData, SocketConnectionQuery};
 
 use crate::runtime::{
     network_replicator::protocol::RoomId, plugins::player::PlayerHandle, room_id_to_name,
@@ -14,7 +14,7 @@ pub(crate) enum PlayerEventKey {
     Input,
     Enter,
     Exit,
-    Chat,
+    Signal,
 }
 
 pub(crate) enum PlayerEventData {
@@ -38,9 +38,9 @@ pub(crate) enum PlayerEventData {
         player: PlayerHandle,
         room: RoomId,
     },
-    Chat {
+    Signal {
         player: PlayerHandle,
-        text: String,
+        signal: SignalData,
     },
 }
 impl PlayerEventData {
@@ -51,7 +51,7 @@ impl PlayerEventData {
             PlayerEventData::Input { .. } => PlayerEventKey::Input,
             PlayerEventData::Enter { .. } => PlayerEventKey::Enter,
             PlayerEventData::Exit { .. } => PlayerEventKey::Exit,
-            PlayerEventData::Chat { .. } => PlayerEventKey::Chat,
+            PlayerEventData::Signal { .. } => PlayerEventKey::Signal,
         }
     }
 }
@@ -75,7 +75,9 @@ impl IntoLuaMulti for PlayerEventData {
             PlayerEventData::Exit { player, room } => {
                 (player, room_id_to_name(lua, room)?).into_lua_multi(lua)
             }
-            PlayerEventData::Chat { player, text } => (player, text).into_lua_multi(lua),
+            PlayerEventData::Signal { player, signal } => {
+                (player, lua.to_value(&signal)?).into_lua_multi(lua)
+            }
         }
     }
 }

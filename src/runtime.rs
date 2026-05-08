@@ -240,10 +240,10 @@ impl Runtime {
                     }),
                 });
             }
-            IncomingRequest::Chat(text) => {
+            IncomingRequest::Signal(signal) => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
-                    data: GameModeEventData::Player(PlayerEventData::Chat { player, text }),
+                    data: GameModeEventData::Player(PlayerEventData::Signal { player, signal }),
                 });
             }
         }
