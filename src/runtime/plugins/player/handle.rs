@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     envelope::EnvelopeRecipient,
-    runtime::{app_data, plugins::player::room::PlayerRoom, utils::get_app_data},
+    runtime::{app_data, plugins::player::presence::PlayerPresence, utils::get_app_data},
     socket::protocol::ServerMessage,
 };
 
@@ -44,7 +44,9 @@ impl UserData for PlayerHandle {
             Ok(SignalRx::new(SignalScope::Player(this.pk), name))
         });
 
-        methods.add_method("room", |_, this, _: ()| Ok(PlayerRoom::new(this.pk)));
+        methods.add_method("presence", |_, this, _: ()| {
+            Ok(PlayerPresence::new(this.pk))
+        });
 
         methods.add_method("vision", |_, this, _: ()| Ok(PlayerVision::new(this.pk)));
     }

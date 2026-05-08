@@ -3,15 +3,15 @@ use rock_wire::PlayerKey;
 
 use crate::runtime::{app_data, get_app_data, room_str_to_id};
 
-pub(super) struct PlayerRoom {
+pub(super) struct PlayerPresence {
     pk: PlayerKey,
 }
-impl PlayerRoom {
+impl PlayerPresence {
     pub fn new(pk: PlayerKey) -> Self {
         Self { pk }
     }
 }
-impl UserData for PlayerRoom {
+impl UserData for PlayerPresence {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("enter", |lua, this, name: String| {
             get_app_data::<app_data::NetworkReplicator>(lua)?

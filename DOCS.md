@@ -200,15 +200,22 @@ world:clear()
 
 ### Rooms
 
-Rooms are spatial groups for network replication. Players and entities exist in rooms. A player only receives updates for entities in rooms they've joined:
+Rooms are spatial replication spaces. Entities exist in rooms, and players receive updates through vision anchors attached to entities inside those rooms:
 
 ```lua
--- player joins a room
-p:room():enter("lobby")
-
--- entity lives in a room
-zombie:spawn():room("lobby")
+player:vision():attach(camera)
+camera:room("lobby")
 ```
+
+### Presence
+Presence is a lightweight membership system for lobbies, chat channels, matchmaking, or social grouping. It does not affect spatial replication.
+
+```lua
+player:presence():enter("lobby")
+player:presence():exit("lobby")
+```
+
+Presence is a pretty small module for now. It tracks membership and emits enter/exit events. Most gameplay replication should be modeled through entity rooms and vision anchors.
 
 ---
 
@@ -274,8 +281,7 @@ on.player.online():each(function(p)
     :position({ x = 5, y = 5 })
     :room("world")
 
-  -- player joins the room and attaches vision to their entity
-  p:room():enter("world")
+  -- attach player's vision to their entity
   p:vision():attach(ent)
 
   -- send the player their identity
@@ -493,7 +499,7 @@ ent:position({ x = 20, y = 10 }):rotation(90)
 
 | Method | Args | Returns | Description |
 |--------|------|---------|-------------|
-| `:room([name])` | optional `string` | room_id (get) or self (set) | Get/set room |
+| `:room([name])` | `string?` | room_id (get) or self (set) | Get/set room |
 | `:custom([value])` | table, function, or nil | table (get) or self (set) | Get/set/update custom data |
 | `:despawn()` | -- | -- | Remove entity from the world |
 | `:exists()` | -- | `boolean` | Check if entity still exists |
@@ -604,7 +610,7 @@ player.broadcast()
 | `:id()` | `number` | The player's ID (slot index) |
 | `:kick()` | -- | Disconnect the player |
 | `:signal([name])` | `SignalRx` | Create a signal targeted to this player |
-| `:room()` | `PlayerRoom` | Access room management |
+| `:presence()` | `PlayerPresence` | Access presence management |
 | `:vision()` | `PlayerVision` | Access vision/anchor management |
 | `:connection_params()` | `table` | Query params from the WebSocket connection URL |
 | `:who()` | `string?` | Auth identity, e.g. `fc:423406`, or `nil` for anon sessions |
@@ -621,19 +627,17 @@ on.player.online():each(function(p)
     p:kick()
     return
   end
-
-  p:room():enter(room_hash)
 end)
 ```
 
 All values are strings (or `nil` if the param is absent). Use `tonumber()` to coerce numeric params yourself.
 
-#### PlayerRoom
+#### PlayerPresence
 
 | Method | Args | Description |
 |--------|------|-------------|
-| `:enter(name)` | `string` | Join a room |
-| `:exit([name])` | optional `string` | Leave a room (or all rooms if no name) |
+| `:enter(name)` | `string` | Enter a presence group |
+| `:exit([name])` | `string?` | Exit a presence group, or all groups if no name is provided |
 
 #### PlayerVision
 
@@ -642,7 +646,7 @@ Vision determines what a player can "see" for network replication. You attach th
 | Method | Args | Description |
 |--------|------|-------------|
 | `:attach(ent)` | `EntityHandle` | Attach vision to an entity |
-| `:detach([ent])` | optional `EntityHandle` | Detach from an entity (or all if no arg) |
+| `:detach([ent])` | `EntityHandle?` | Detach from an entity (or all if no arg) |
 
 #### SignalRx
 
@@ -663,7 +667,7 @@ p:signal("Identity"):data({ pid = p:id() }):send()
 
 | Method | Args | Returns | Description |
 |--------|------|---------|-------------|
-| `:signal([name])` | optional `string` | `SignalRx` | Create a signal to all players |
+| `:signal([name])` | `string?` | `SignalRx` | Create a signal to all players |
 
 ---
 
@@ -985,15 +989,15 @@ layer.clear("combat")
 
 ### `room`
 
-Utility for room ID generation.
+Utility for working with rooms.
 
 #### `room.generate_id()`
 
-Returns a random unique string ID (nanoid). Use this when you need a dynamic room name:
+Returns a random unique room ID. Useful for temporary spaces:
 
 ```lua
-local room_name = room.generate_id()
-p:room():enter(room_name)
+local room_id = room.generate_id()
+entity:room(room_id)
 ```
 
 ---
@@ -1268,9 +1272,14 @@ The engine automatically sends entity state to connected clients. You control *w
 ### How It Works
 
 1. Entities exist in **rooms**
-2. Players join rooms via `p:room():enter("world")`
-3. Players attach **vision anchors** to entities via `p:vision():attach(ent)`
+2. Players see through **vision anchors** attached to entities
+3. A player receives updates for entities visible to their anchors
 4. The engine builds per-player snapshots each tick, sending only what's relevant
+
+```lua
+local player_ent = player_bp:spawn():room("world")
+p:vision():attach(player_ent)
+```
 
 ### Defining Policies
 
