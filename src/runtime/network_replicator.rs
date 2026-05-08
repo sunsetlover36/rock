@@ -1,7 +1,7 @@
 use color_eyre::eyre;
 use mlua::{IntoLuaMulti, LuaSerdeExt};
-use rustc_hash::FxHashMap;
 use rock_wire::{EntityData, OutgoingPacket, PlayerKey, WorldSnapshot, components::RadialArea};
+use rustc_hash::FxHashMap;
 use slotmap::SlotMap;
 use smallvec::smallvec;
 use std::{
@@ -58,7 +58,8 @@ struct NetworkReplicatorInner {
     player_anchors: FxHashMap<PlayerKey, HashSet<hecs::Entity>>,
     room_to_anchors: FxHashMap<RoomId, HashSet<PlayerAnchor>>,
 
-    known_entities: FxHashMap<PlayerKey, HashSet<hecs::Entity>>,
+    entity_anchors: FxHashMap<hecs::Entity, HashSet<PlayerAnchor>>,
+    anchor_visibility: FxHashMap<PlayerAnchor, HashSet<hecs::Entity>>,
     known_memory: FxHashMap<PlayerKey, HashSet<String>>,
 
     despawn_candidates: FxHashMap<hecs::Entity, RoomId>,
@@ -88,7 +89,8 @@ impl NetworkReplicator {
                 room_to_players: FxHashMap::default(),
                 player_anchors: FxHashMap::default(),
                 room_to_anchors: FxHashMap::default(),
-                known_entities: FxHashMap::default(),
+                entity_anchors: FxHashMap::default(),
+                anchor_visibility: FxHashMap::default(),
                 known_memory: FxHashMap::default(),
                 despawn_candidates: FxHashMap::default(),
                 room_to_entities: FxHashMap::default(),
@@ -543,8 +545,6 @@ impl NetworkReplicator {
             }
         }
 
-        inner.known_entities.remove(&pk);
-
         Ok(())
     }
 
@@ -693,7 +693,8 @@ impl NetworkReplicator {
         let mut inner_guard = self.inner.borrow_mut();
         let NetworkReplicatorInner {
             updated_entities,
-            known_entities,
+            entity_anchors,
+            anchor_visibility,
             despawn_candidates,
             ..
         } = &mut *inner_guard;
@@ -703,46 +704,34 @@ impl NetworkReplicator {
 
         for &entity in despawn_candidates.keys() {
             updated_entities.remove(&entity);
-        }
-        for (&pk, entities) in known_entities {
-            entities.retain(|e| {
-                despawn_candidates.get(e).is_none_or(|_| {
-                    snapshots
-                        .entry(pk)
-                        .or_insert_with(|| base_snapshot.clone())
-                        .despawn
-                        .push(e.id());
 
-                    false
-                })
-            });
+            if let Some(anchors) = entity_anchors.remove(&entity) {
+                let entity_id = entity.id();
+                for anchor in &anchors {
+                    let snapshot = snapshots
+                        .entry(anchor.pk)
+                        .or_insert_with(|| base_snapshot.clone());
+                    if !snapshot.despawn.contains(&entity_id) {
+                        snapshot.despawn.push(entity_id);
+                    }
+
+                    let empty = if let Some(entities) = anchor_visibility.get_mut(anchor) {
+                        entities.remove(&entity);
+                        entities.is_empty()
+                    } else {
+                        false
+                    };
+                    if empty {
+                        anchor_visibility.remove(anchor);
+                    }
+                }
+            }
         }
         drop(inner_guard);
 
         for &entity in despawn_candidates.keys() {
             self.revoke_policies_by_target(&ReplicationTarget::Entity(entity));
         }
-    }
-    fn remove_despawned_anchors(&self, lua: &mlua::Lua) -> eyre::Result<()> {
-        let mut inner_guard = self.inner.borrow_mut();
-        let NetworkReplicatorInner {
-            player_anchors,
-            room_to_anchors,
-            ..
-        } = &mut *inner_guard;
-
-        let world_data =
-            get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
-        let world = &world_data.0;
-
-        for anchors in room_to_anchors.values_mut() {
-            anchors.retain(|anchor| world.contains(anchor.entity));
-        }
-        for anchors in player_anchors.values_mut() {
-            anchors.retain(|&anchor| world.contains(anchor));
-        }
-
-        Ok(())
     }
     fn process_entities(
         &self,
@@ -756,8 +745,10 @@ impl NetworkReplicator {
             policies,
             by_target,
             sentries,
+            player_anchors,
             room_to_anchors,
-            known_entities,
+            entity_anchors,
+            anchor_visibility,
             room_to_entities,
             ..
         } = &mut *inner_guard;
@@ -807,19 +798,43 @@ impl NetworkReplicator {
                     .entry(ReplicationTarget::Entity(entity))
                     .or_default();
 
+                let entity_attached_anchors = entity_anchors.entry(entity).or_default();
+                let current_room_anchors = room_to_anchors.entry(room_id).or_default();
+
                 let mut spawn_for: HashMap<PolicyId, HashSet<PlayerKey>> = HashMap::new();
                 let mut update_for: HashMap<PolicyId, HashSet<PlayerKey>> = HashMap::new();
                 let mut despawn_for: HashMap<PlayerKey, bool> = HashMap::new();
+
+                entity_attached_anchors.retain(|anchor| {
+                    let same_room = world
+                        .get::<&Room>(anchor.entity)
+                        .is_ok_and(|room| room.0 == room_id);
+                    let alive = world.contains(anchor.entity);
+                    let attached = same_room && alive;
+
+                    if !attached {
+                        despawn_for.insert(anchor.pk, true);
+
+                        if let Some(visibility) = anchor_visibility.get_mut(anchor) {
+                            visibility.remove(&entity);
+                        }
+                    }
+                    if !alive {
+                        current_room_anchors.remove(anchor);
+                        if let Some(anchors) = player_anchors.get_mut(&anchor.pk) {
+                            anchors.remove(&anchor.entity);
+                        }
+                    }
+
+                    attached
+                });
 
                 for &policy_id in &policy_ids {
                     let Some(policy) = policies.get(policy_id) else {
                         continue;
                     };
 
-                    let Some(anchors) = room_to_anchors.get(&room_id) else {
-                        continue;
-                    };
-                    for anchor in anchors {
+                    for anchor in current_room_anchors.iter() {
                         let visible = match policy.spatial {
                             SpatialFilter::Global => true,
                             SpatialFilter::Radius(radius) => position.is_some_and(|position| {
@@ -834,8 +849,8 @@ impl NetworkReplicator {
                                 self.visible_to_anchor(room_id, area, anchor.entity, world)
                             }
                         };
-                        let known = known_entities
-                            .get(&anchor.pk)
+                        let known = anchor_visibility
+                            .get(anchor)
                             .is_some_and(|entities| entities.contains(&entity));
                         let needs_update = known && dirty_components.is_some();
 
@@ -844,11 +859,23 @@ impl NetworkReplicator {
 
                             if !known {
                                 spawn_for.entry(policy_id).or_default().insert(anchor.pk);
+
+                                // Attach anchor to entity
+                                entity_attached_anchors.insert(anchor.clone());
+                                anchor_visibility
+                                    .entry(anchor.clone())
+                                    .or_default()
+                                    .insert(entity);
                             } else if needs_update {
                                 update_for.entry(policy_id).or_default().insert(anchor.pk);
                             }
-                        } else if known && despawn_for.contains_key(&anchor.pk) {
-                            despawn_for.insert(anchor.pk, true);
+                        } else if known {
+                            despawn_for.entry(anchor.pk).or_insert(true);
+
+                            entity_attached_anchors.remove(anchor);
+                            if let Some(visibility) = anchor_visibility.get_mut(anchor) {
+                                visibility.remove(&entity);
+                            }
                         }
                     }
                 }
@@ -878,8 +905,6 @@ impl NetworkReplicator {
                                 &field_registry,
                                 world,
                             )?;
-
-                            known_entities.entry(pk).or_default().insert(entity);
                         }
                     }
 
@@ -948,14 +973,16 @@ impl NetworkReplicator {
                         continue;
                     }
 
+                    let still_attached =
+                        entity_attached_anchors.iter().any(|anchor| anchor.pk == pk);
+                    if still_attached {
+                        continue;
+                    }
+
                     let snapshot = snapshots.entry(pk).or_insert_with(|| base_snapshot.clone());
                     if !snapshot.despawn.contains(&entity_id) {
                         snapshot.despawn.push(entity_id);
                     }
-
-                    known_entities.entry(pk).and_modify(|entities| {
-                        entities.remove(&entity);
-                    });
                 }
             }
         }
@@ -1133,7 +1160,6 @@ impl NetworkReplicator {
         }
 
         // Build snapshots
-        self.remove_despawned_anchors(lua)?;
         let snapshots = self.build_snapshots(lua, tick)?;
 
         // Cleanup
