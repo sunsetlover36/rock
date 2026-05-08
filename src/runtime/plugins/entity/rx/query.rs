@@ -69,27 +69,60 @@ impl QueryRx {
     }
 
     fn get_matching_entities(&self, lua: &mlua::Lua) -> mlua::Result<Vec<(hecs::Entity, u64)>> {
-        let mut entities = Vec::new();
+        let entities = {
+            let mut entities = Vec::new();
 
-        let world = get_app_data::<app_data::World>(lua)?;
-        for (entity, blueprint, name, owned_by, room, position) in world
-            .0
-            .query::<(
-                hecs::Entity,
-                &Blueprint,
-                Option<&Name>,
-                Option<&OwnedBy>,
-                Option<&Room>,
-                Option<&Position>,
-            )>()
-            .iter()
-        {
-            if self.matches(blueprint, name, owned_by, room, position) {
-                entities.push((entity, blueprint.0));
+            let world = get_app_data::<app_data::World>(lua)?;
+            for (entity, blueprint, name, owned_by, room, position) in world
+                .0
+                .query::<(
+                    hecs::Entity,
+                    &Blueprint,
+                    Option<&Name>,
+                    Option<&OwnedBy>,
+                    Option<&Room>,
+                    Option<&Position>,
+                )>()
+                .iter()
+            {
+                if self.matches(blueprint, name, owned_by, room, position) {
+                    entities.push((entity, blueprint.0));
+                }
+            }
+
+            entities
+        };
+
+        let mut processed_entities = Vec::new();
+        let mut rx_sentry = RxSentry::new(self.pipeline.clone());
+        for entity in entities {
+            let args = EntityHandle {
+                entity: entity.0,
+                blueprint_id: entity.1,
+            }
+            .into_lua_multi(lua)?;
+
+            match rx_sentry.process(args) {
+                Ok(Some(_)) => {
+                    processed_entities.push(entity);
+                }
+
+                Ok(None)
+                | Err(RxSentryError::Core(CoreSentryError::Skipping))
+                | Err(RxSentryError::Core(CoreSentryError::Throttled)) => {
+                    continue;
+                }
+
+                Err(RxSentryError::Core(CoreSentryError::LimitReached(_))) => {
+                    break;
+                }
+                Err(RxSentryError::Op(err)) => {
+                    return Err(err);
+                }
             }
         }
 
-        Ok(entities)
+        Ok(processed_entities)
     }
 }
 
@@ -156,34 +189,14 @@ impl UserData for QueryRx {
         });
 
         methods.add_method("each", |lua, this, handle: mlua::Function| {
-            let entities = this.get_matching_entities(lua)?;
-
-            let mut rx_sentry = RxSentry::new(this.pipeline.clone());
-            for entity in entities {
+            for entity in this.get_matching_entities(lua)? {
                 let args = EntityHandle {
                     entity: entity.0,
                     blueprint_id: entity.1,
                 }
                 .into_lua_multi(lua)?;
 
-                match rx_sentry.process(args) {
-                    Ok(Some(args)) => {
-                        handle.call::<()>(args)?;
-                    }
-
-                    Ok(None)
-                    | Err(RxSentryError::Core(CoreSentryError::Skipping))
-                    | Err(RxSentryError::Core(CoreSentryError::Throttled)) => {
-                        continue;
-                    }
-
-                    Err(RxSentryError::Core(CoreSentryError::LimitReached(_))) => {
-                        break;
-                    }
-                    Err(RxSentryError::Op(err)) => {
-                        return Err(err);
-                    }
-                }
+                handle.call::<()>(args)?;
             }
 
             Ok(())
