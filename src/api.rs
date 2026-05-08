@@ -96,18 +96,22 @@ impl Api {
             .remove("token")
             .and_then(|v| v.as_str().map(str::to_owned));
 
-        let identity = match (&state.config.auth, auth, token.as_deref()) {
-            (None, None, None) => None,
-            (None, Some(_), _) | (None, _, Some(_)) => None,
-            (Some(_), None, None) | (Some(_), Some(_), None) | (Some(_), None, Some(_)) => {
-                return StatusCode::UNAUTHORIZED.into_response();
-            }
+        let auth_config = state
+            .config
+            .auth
+            .as_ref()
+            .filter(|c| !c.providers.is_empty());
+        let identity = match (auth_config, auth, token.as_deref()) {
+            (None, _, _) => None,
             (Some(auth_config), Some(auth), Some(token)) => {
                 match verify_auth(auth_config, state.fc_verifier.as_deref(), auth, token) {
                     Ok(sub) => Some(sub),
                     Err(AuthError::Disabled) => None,
                     Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
                 }
+            }
+            (Some(_), _, _) => {
+                return StatusCode::UNAUTHORIZED.into_response();
             }
         };
 

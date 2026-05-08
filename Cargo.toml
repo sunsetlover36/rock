@@ -6,7 +6,7 @@ version = "0.2.9"
 edition = "2024"
 
 [dependencies]
-rock-wire = { git = "https://github.com/sunsetlover36/rock-wire", tag = "v0.1.1" }
+rock-wire = { git = "https://github.com/sunsetlover36/rock-wire", tag = "v0.1.2" }
 axum = { version = "0.8.7", features = ["ws", "query"] } 
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
