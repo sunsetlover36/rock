@@ -200,12 +200,17 @@ impl NetworkReplicator {
     pub fn get_players_in_room(&self, room_id: RoomId) -> Vec<PlayerKey> {
         self.inner
             .borrow()
-            .room_to_players
+            .room_to_anchors
             .get(&room_id)
-            .cloned()
+            .map(|anchors| {
+                anchors
+                    .iter()
+                    .map(|anchor| anchor.pk)
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect()
+            })
             .unwrap_or_default()
-            .into_iter()
-            .collect()
     }
     pub fn get_players_in_area(
         &self,
