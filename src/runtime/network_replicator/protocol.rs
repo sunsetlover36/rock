@@ -1,5 +1,8 @@
-use rock_wire::components::RadialArea;
+use mlua::{FromLua, LuaSerdeExt};
+use rock_wire::components::Position;
+use serde::Deserialize;
 use slotmap::new_key_type;
+use strum::{AsRefStr, EnumIter};
 
 use crate::{
     runtime::plugins::entity::{BlueprintId, components::ComponentData},
@@ -10,11 +13,48 @@ new_key_type! {
     pub(crate) struct PolicyId;
 }
 
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash, Deserialize, EnumIter, AsRefStr)]
+pub(crate) enum AreaShape {
+    Circle,
+    Square,
+    Diamond,
+}
+impl FromLua for AreaShape {
+    fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
+        lua.from_value(value)
+    }
+}
+
+#[derive(Clone, Debug, Copy, Deserialize)]
+pub struct Area {
+    pub position: Position,
+    pub radius: f32,
+    pub shape: AreaShape,
+}
+impl Area {
+    pub fn contains(&self, position: Position) -> bool {
+        let dx = (self.position.x - position.x).abs();
+        let dy = (self.position.y - position.y).abs();
+
+        match self.shape {
+            AreaShape::Circle => dx * dx + dy * dy <= self.radius * self.radius,
+            AreaShape::Square => dx.max(dy) <= self.radius,
+            AreaShape::Diamond => dx + dy <= self.radius,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RadialArea {
+    pub radius: f32,
+    pub shape: AreaShape,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SpatialFilter {
     Global,
-    Radius(f32),
-    Area(RadialArea),
+    Radius(RadialArea),
+    Area(Area),
 }
 
 pub(crate) type RoomId = u64;

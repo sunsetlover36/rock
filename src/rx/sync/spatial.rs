@@ -1,10 +1,9 @@
 use mlua::{LuaSerdeExt, UserData, UserDataMethods};
-use rock_wire::components::RadialArea;
 
 use crate::{
     runtime::{
         EyreResultExt, app_data, get_app_data,
-        network_replicator::protocol::{PolicyFieldUpdate, SpatialFilter},
+        network_replicator::protocol::{Area, PolicyFieldUpdate, SpatialFilter},
     },
     rx::sync::{HasPolicy, PolicyHandle},
 };
@@ -24,7 +23,7 @@ where
     });
 
     methods.add_method("area", |lua, this, area: mlua::Value| {
-        let area: RadialArea = lua.from_value(area)?;
+        let area: Area = lua.from_value(area)?;
         let mut next = this.clone();
         next.policy_mut().spatial = SpatialFilter::Area(area);
         Ok(next)
@@ -50,7 +49,7 @@ where
     });
 
     methods.add_method("area", |lua, this, area: mlua::Table| {
-        let area: RadialArea = lua.from_value(mlua::Value::Table(area))?;
+        let area: Area = lua.from_value(mlua::Value::Table(area))?;
         get_app_data::<app_data::NetworkReplicator>(lua)?
             .0
             .update_policy(

@@ -3,7 +3,9 @@ use mlua::{UserData, UserDataMethods};
 use crate::{
     runtime::{
         EyreResultExt, app_data, get_app_data,
-        network_replicator::protocol::{PolicyFieldUpdate, ReplicationTarget, SpatialFilter},
+        network_replicator::protocol::{
+            AreaShape, PolicyFieldUpdate, RadialArea, ReplicationTarget, SpatialFilter,
+        },
     },
     rx::sync::{HasPolicy, PolicyHandle},
 };
@@ -13,7 +15,9 @@ where
     T: UserData + HasPolicy + Clone + 'static,
     M: UserDataMethods<T>,
 {
-    methods.add_method("radius", |_, this, radius: f32| {
+    methods.add_method("radius", |_, this, (radius, shape): (f32, Option<AreaShape>)| {
+        let shape = shape.unwrap_or(AreaShape::Circle);
+
         match this.policy().target {
             ReplicationTarget::Blueprint(_) | ReplicationTarget::Entity(_) => {}
             _ => {
@@ -24,7 +28,7 @@ where
         }
 
         let mut next = this.clone();
-        next.policy_mut().spatial = SpatialFilter::Radius(radius);
+        next.policy_mut().spatial = SpatialFilter::Radius(RadialArea { radius, shape });
         Ok(next)
     });
 }
@@ -34,13 +38,13 @@ where
     T: UserData + PolicyHandle,
     M: UserDataMethods<T>,
 {
-    methods.add_method("radius", |lua, this, radius: f32| {
+    methods.add_method("radius", |lua, this, (radius, shape): (f32, AreaShape)| {
         get_app_data::<app_data::NetworkReplicator>(lua)?
             .0
             .update_policy(
                 this.policy_id(),
                 PolicyFieldUpdate::Spatial {
-                    filter: SpatialFilter::Radius(radius),
+                    filter: SpatialFilter::Radius(RadialArea { radius, shape }),
                 },
             )
             .wrap_eyre_err()?;

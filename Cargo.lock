@@ -2568,8 +2568,8 @@ dependencies = [
 
 [[package]]
 name = "rock-wire"
-version = "0.1.2"
-source = "git+https://github.com/sunsetlover36/rock-wire?tag=v0.1.2#379b6ca2db934b09bdc9eb26d98b352c9d12da1f"
+version = "0.1.3"
+source = "git+https://github.com/sunsetlover36/rock-wire?tag=v0.1.3#fe9eee448e26584324a064a348fdba09e5e4888b"
 dependencies = [
  "chrono",
  "serde",

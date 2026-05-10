@@ -1,9 +1,13 @@
 use mlua::{LuaSerdeExt, UserData};
-use rock_wire::{OutgoingPacket, PlayerKey, SignalPacket, components::RadialArea};
+use rock_wire::{OutgoingPacket, PlayerKey, SignalPacket};
 
 use crate::{
     envelope::{EnvelopeRecipient, ServerEnvelope},
-    runtime::{app_data, get_app_data, network_replicator::protocol::RoomId, room_str_to_id},
+    runtime::{
+        app_data, get_app_data,
+        network_replicator::protocol::{Area, RoomId},
+        room_str_to_id,
+    },
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -17,7 +21,7 @@ pub(in crate::runtime::plugins::player) struct SignalRx {
     scope: SignalScope,
     name: Option<String>,
     data: Option<serde_json::Map<String, serde_json::Value>>,
-    area: Option<RadialArea>,
+    area: Option<Area>,
     room: Option<RoomId>,
 }
 impl SignalRx {
@@ -46,7 +50,7 @@ impl UserData for SignalRx {
                 ));
             }
 
-            let area: RadialArea = lua.from_value(mlua::Value::Table(area))?;
+            let area: Area = lua.from_value(mlua::Value::Table(area))?;
             let mut next = this.clone();
             next.area = Some(area);
             Ok(next)
@@ -68,9 +72,7 @@ impl UserData for SignalRx {
             let client_api_data = get_app_data::<app_data::ClientApi>(lua)?;
             let client_api = &client_api_data.0;
 
-            let data = this.data.clone().ok_or_else(|| {
-                mlua::Error::runtime("Failed to send a signal: no data to send was provided")
-            })?;
+            let data = this.data.clone().unwrap_or_else(serde_json::Map::new);
             let payload = OutgoingPacket::Signal(SignalPacket {
                 name: this.name.clone(),
                 data,

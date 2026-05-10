@@ -1,10 +1,10 @@
 use mlua::{IntoLuaMulti, LuaSerdeExt, UserData};
-use rock_wire::{PlayerId, components::RadialArea};
+use rock_wire::PlayerId;
 
 use crate::{
     runtime::{
         app_data,
-        network_replicator::protocol::RoomId,
+        network_replicator::protocol::{Area, RoomId},
         plugins::entity::{
             BlueprintId, EntityBlueprint,
             components::{Blueprint, Name, OwnedBy, Position, Room},
@@ -25,7 +25,7 @@ pub(in crate::runtime::plugins::entity) struct QueryRx {
     owned_by: Option<PlayerId>,
     named: Option<String>,
     in_room: Option<RoomId>,
-    area: Option<RadialArea>,
+    area: Option<Area>,
     blueprint_id: Option<BlueprintId>,
     pipeline: RxPipeline,
 }
@@ -59,9 +59,7 @@ impl QueryRx {
         };
 
         let pos_check = match position {
-            Some(position) => self.area.map_or(true, |area| {
-                area.position.distance_squared(&position.0) <= area.radius * area.radius
-            }),
+            Some(position) => self.area.map_or(true, |area| area.contains(position.0)),
             None => self.area.is_none(),
         };
 
@@ -159,7 +157,7 @@ impl UserData for QueryRx {
         });
 
         methods.add_method("at", |lua, this, area: mlua::Value| {
-            let area: RadialArea = lua.from_value(area)?;
+            let area: Area = lua.from_value(area)?;
 
             let mut next = this.clone();
             next.area = Some(area);

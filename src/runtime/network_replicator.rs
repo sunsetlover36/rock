@@ -1,6 +1,6 @@
 use color_eyre::eyre;
 use mlua::{IntoLuaMulti, LuaSerdeExt};
-use rock_wire::{EntityData, OutgoingPacket, PlayerKey, WorldSnapshot, components::RadialArea};
+use rock_wire::{EntityData, OutgoingPacket, PlayerKey, WorldSnapshot};
 use rustc_hash::FxHashMap;
 use slotmap::SlotMap;
 use smallvec::smallvec;
@@ -184,7 +184,7 @@ impl NetworkReplicator {
         &self,
         world: &hecs::World,
         room_id: RoomId,
-        area: RadialArea,
+        area: Area,
     ) -> Vec<PlayerAnchor> {
         let inner = self.inner.borrow();
         if let Some(anchors) = inner.room_to_anchors.get(&room_id) {
@@ -216,7 +216,7 @@ impl NetworkReplicator {
         &self,
         world: &hecs::World,
         room_id: RoomId,
-        area: RadialArea,
+        area: Area,
     ) -> Vec<PlayerKey> {
         self.get_anchors_in_area(world, room_id, area)
             .iter()
@@ -338,7 +338,7 @@ impl NetworkReplicator {
         if let Some(policy) = policies.get_mut(updated_id) {
             match field {
                 PolicyFieldUpdate::Spatial { filter } => {
-                    if matches!(filter, SpatialFilter::Radius(_)) {
+                    if matches!(filter, SpatialFilter::Radius { .. }) {
                         match policy.target {
                             ReplicationTarget::Blueprint(_) | ReplicationTarget::Entity(_) => {}
                             _ => {
@@ -464,14 +464,13 @@ impl NetworkReplicator {
     fn visible_to_anchor(
         &self,
         room_id: RoomId,
-        area: RadialArea,
+        area: Area,
         anchor: hecs::Entity,
         world: &hecs::World,
     ) -> bool {
         let mut query = world.query_one::<(&Room, &Position)>(anchor);
         if let Ok((room_comp, pos_comp)) = query.get() {
-            pos_comp.0.distance_squared(&area.position) <= area.radius * area.radius
-                && room_comp.0 == room_id
+            room_comp.0 == room_id && area.contains(pos_comp.0)
         } else {
             false
         }
@@ -842,10 +841,14 @@ impl NetworkReplicator {
                     for anchor in current_room_anchors.iter() {
                         let visible = match policy.spatial {
                             SpatialFilter::Global => true,
-                            SpatialFilter::Radius(radius) => position.is_some_and(|position| {
+                            SpatialFilter::Radius(area) => position.is_some_and(|position| {
                                 self.visible_to_anchor(
                                     room_id,
-                                    RadialArea { position, radius },
+                                    Area {
+                                        position,
+                                        radius: area.radius,
+                                        shape: area.shape,
+                                    },
                                     anchor.entity,
                                     world,
                                 )
@@ -1059,7 +1062,7 @@ impl NetworkReplicator {
 
                     let affected = match policy.spatial {
                         SpatialFilter::Global => true,
-                        SpatialFilter::Radius(_) => {
+                        SpatialFilter::Radius { .. } => {
                             // Ignore a memory node policy with a radius-based spatial filter (this is normally unreachable, but anyway)
                             false
                         }
