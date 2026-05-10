@@ -1,7 +1,7 @@
 use std::{fs, path::Path, sync::Arc, thread, time::Duration};
 
 use clap::Parser;
-use color_eyre::eyre::Result;
+use color_eyre::eyre;
 use tokio::runtime::Handle;
 
 use crate::{
@@ -38,7 +38,14 @@ mod utils;
 mod watcher;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(err) = run().await {
+        eprintln!("{err}");
+        std::process::exit(1)
+    }
+}
+
+async fn run() -> eyre::Result<()> {
     let cli = Cli::parse();
     match &cli.command {
         cli::Command::Ignite => {
@@ -90,7 +97,7 @@ async fn main() -> Result<()> {
                     })) {
                         Ok(db) => db,
                         Err(err) => {
-                            eprintln!("Failed to initialize MetaDb: {err:?}");
+                            eprintln!("Failed to initialize MetaDb: {err}");
                             break;
                         }
                     };
@@ -103,7 +110,7 @@ async fn main() -> Result<()> {
                         match FarcasterApi::new(key) {
                             Ok(api) => Some(api),
                             Err(err) => {
-                                eprintln!("Failed to initialize Farcaster API: {err:?}");
+                                eprintln!("Failed to initialize Farcaster API: {err}");
                                 break;
                             }
                         }
@@ -126,7 +133,7 @@ async fn main() -> Result<()> {
                     let mut runtime = match Runtime::new(runtime_params) {
                         Ok(r) => r,
                         Err(err) => {
-                            eprintln!("[HRM] Failed to boot up a new runtime: {err:?}");
+                            eprintln!("[HRM] Failed to boot up a new runtime: {err}");
 
                             if !should_reload_runtime(&runtime_cmd_rx) {
                                 break;
@@ -143,7 +150,7 @@ async fn main() -> Result<()> {
                             break;
                         }
                         Err(err) => {
-                            eprintln!("[HRM] Runtime crashed: {err:?}");
+                            eprintln!("[HRM] Runtime crashed: {err}");
 
                             if !should_reload_runtime(&runtime_cmd_rx) {
                                 break;
@@ -177,10 +184,10 @@ async fn main() -> Result<()> {
             fs::create_dir_all("./assets")?;
 
             let sample_gamemode = r#"on.world.awake()
-  :each(function ()
+    :each(function ()
     print("Hello, World!")
-  end)
-"#;
+    end)
+    "#;
             fs::write(format!("./gamemodes/{}.lua", name.clone()), sample_gamemode)?;
 
             let config_path = Path::new(Config::filename());

@@ -186,14 +186,16 @@ impl Api {
     }
 
     pub async fn listen(self, host: Option<String>, port: Option<u16>) -> eyre::Result<()> {
-        let listener = TcpListener::bind(format!(
-            "{}:{}",
-            host.unwrap_or("127.0.0.1".to_string()),
-            port.unwrap_or(3000)
-        ))
-        .await
-        .unwrap();
-        axum::serve(listener, self.app).await?;
+        let host = host.unwrap_or_else(|| "127.0.0.1".to_string());
+        let port = port.unwrap_or(3000);
+        let addr = format!("{host}:{port}");
+
+        let listener = TcpListener::bind(&addr)
+            .await
+            .map_err(|err| eyre::eyre!("Failed to bind {addr}: {err}"))?;
+        axum::serve(listener, self.app)
+            .await
+            .map_err(|err| eyre::eyre!("Server error: {err}"))?;
 
         Ok(())
     }

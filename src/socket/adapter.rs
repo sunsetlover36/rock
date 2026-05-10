@@ -5,6 +5,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
 };
 use rock_wire::{IncomingRequest, OutgoingPacket, SocketConnectionQuery, SystemPacket};
+use serde::Serialize;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
@@ -52,6 +53,17 @@ impl SocketAdapter {
         Ok(())
     }
 
+    async fn send(&mut self, data: &impl Serialize) {
+        match serde_json::to_string(data) {
+            Ok(json) => {
+                let _ = self.ws_tx.send(Message::Text(json.into())).await;
+            }
+            Err(err) => {
+                eprintln!("Failed to serialize a session packet: {err}");
+            }
+        }
+    }
+
     pub async fn activate(mut self) -> eyre::Result<()> {
         self.runtime_callback_tx
             .send_async(RuntimeCallback::System(SystemCallback::PlayerConnect {
@@ -67,18 +79,13 @@ impl SocketAdapter {
                 Some(command) = self.session.session_rx.recv() => {
                     match command {
                         SessionCommand::Data(packet) => {
-                            // TODO: Need an util for JSON convertation and send
-                            let json = serde_json::to_string(&packet).unwrap();
-                            let _ = self.ws_tx.send(Message::Text(json.into())).await;
+                            self.send(&packet).await;
                         },
                         SessionCommand::Control(command) => {
                             match command {
                                 SocketCommand::Kick => {
                                     let p = OutgoingPacket::System(SystemPacket::PlayerKicked);
-                                    let json = serde_json::to_string(&p).unwrap();
-
-                                    // best-effort UX
-                                    let _ = self.ws_tx.send(Message::Text(json.into())).await;
+                                    self.send(&p).await;
 
                                     // force disconnect
                                     let _ = self.ws_tx.send(Message::Close(None)).await;
@@ -92,8 +99,7 @@ impl SocketAdapter {
                 res = self.session.broadcast_rx.recv() => {
                     match res {
                         Ok(p) => {
-                            let json = serde_json::to_string(&p).unwrap();
-                            let _ = self.ws_tx.send(Message::Text(json.into())).await;
+                            self.send(&p).await;
                         }
                         Err(RecvError::Lagged(_)) => {}
                         Err(RecvError::Closed) => {

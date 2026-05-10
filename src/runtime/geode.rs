@@ -69,10 +69,14 @@ pub fn scan_geodes() -> eyre::Result<Vec<Geode>> {
         .filter(|p| p.join("geode.toml").exists())
         .collect();
 
-    let mut geodes: Vec<Geode> = geode_roots
+    let geodes: eyre::Result<Vec<Geode>> = geode_roots
         .par_iter()
-        .map(|root| {
-            let name = root.file_name().unwrap().to_string_lossy().to_string();
+        .map(|root| -> eyre::Result<Geode> {
+            let name = root
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| eyre::eyre!("Invalid geode path: {}", root.display()))?
+                .to_owned();
 
             let glyphs = load_scripts_from_dir(&root.join("glyphs"));
             let blueprints = load_scripts_from_dir(&root.join("blueprints"));
@@ -95,15 +99,16 @@ pub fn scan_geodes() -> eyre::Result<Vec<Geode>> {
                 }
             }
 
-            Geode {
+            Ok(Geode {
                 name,
                 glyphs,
                 blueprints,
                 systems,
                 assets,
-            }
+            })
         })
         .collect();
+    let mut geodes = geodes?;
 
     geodes.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(geodes)

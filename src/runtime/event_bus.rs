@@ -118,10 +118,10 @@ impl EventBus {
                         &key
                     );
 
-                    if let Ok(result) = result {
-                        if result.unwrap_or(false) {
-                            return Ok(());
-                        }
+                    if let Ok(result) = result
+                        && result.unwrap_or(false)
+                    {
+                        return Ok(());
                     }
                 }
             }
