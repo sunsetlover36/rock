@@ -21,7 +21,7 @@ use crate::runtime::{
         OnPluginLazy,
         on::protocol::{EntityEventData, EventScope, GameModeEvent, GameModeEventData},
     },
-    room_str_to_id,
+    room_id_to_name, room_str_to_id,
     utils::{get_app_data, get_app_data_mut},
 };
 
@@ -34,9 +34,9 @@ impl EntityHandle {
     fn get_custom(&self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
         let customs = get_app_data::<app_data::EntityCustoms>(lua)?;
         if let Some(custom) = customs.0.get(&self.entity) {
-            return Ok(mlua::Value::Table(custom.clone()));
+            Ok(mlua::Value::Table(custom.clone()))
         } else {
-            return Ok(mlua::Value::Nil);
+            Ok(mlua::Value::Nil)
         }
     }
     fn set_custom(&self, lua: &mlua::Lua, table: mlua::Table) -> mlua::Result<()> {
@@ -138,7 +138,9 @@ impl UserData for EntityHandle {
                 }
                 None => {
                     if let Ok(room_comp) = world.get::<&Room>(this.entity) {
-                        Ok(mlua::Value::Integer(room_comp.0 as i64))
+                        room_id_to_name(lua, room_comp.0)
+                            .and_then(|name| lua.create_string(&name))
+                            .map(mlua::Value::String)
                     } else {
                         Ok(mlua::Value::Nil)
                     }
@@ -149,21 +151,17 @@ impl UserData for EntityHandle {
         methods.add_method("custom", |lua, this, value: mlua::Value| match value {
             mlua::Value::Table(table) => {
                 this.set_custom(lua, table)?;
-                return Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?));
+                Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?))
             }
             mlua::Value::Function(f) => {
                 let custom = this.get_custom(lua)?;
                 this.set_custom(lua, f.call::<mlua::Table>(custom)?)?;
-                return Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?));
+                Ok(mlua::Value::UserData(lua.create_userdata(this.clone())?))
             }
-            mlua::Value::Nil => {
-                return this.get_custom(lua);
-            }
-            _ => {
-                return Err(mlua::Error::runtime(
-                    "entity.custom: got an unknown value type",
-                ));
-            }
+            mlua::Value::Nil => this.get_custom(lua),
+            _ => Err(mlua::Error::runtime(
+                "entity.custom: got an unknown value type",
+            )),
         });
 
         methods.add_method("despawn", |lua, this, _: ()| {
