@@ -33,6 +33,9 @@ pub(crate) use scene::ScenePlugin;
 pub(crate) mod timer;
 pub(crate) use timer::TimerPlugin;
 
+pub(crate) mod constants;
+pub(crate) use constants::ConstantsPlugin;
+
 pub(crate) mod protocol;
 use protocol::*;
 

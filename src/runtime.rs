@@ -10,12 +10,7 @@ use mlua::Lua;
 use rock_wire::{ImpromptuRequest, IncomingRequest};
 use smallvec::smallvec;
 
-use crate::{
-    clients::FarcasterApi,
-    meta_db::MetaDb,
-    router::CommitRouter,
-    runtime::{network_replicator::FieldRegistry, plugins::on::protocol::FarcasterEventData},
-};
+use crate::{clients::FarcasterApi, meta_db::MetaDb, router::CommitRouter};
 
 pub mod default_client_api;
 pub(crate) mod event_bus;
@@ -23,11 +18,14 @@ pub(crate) use event_bus::EventBus;
 
 pub(crate) mod plugins;
 use plugins::{
-    EntityPlugin, FarcasterPlugin, InputPlugin, LayerPlugin, MemoryPlugin, OnPlugin, PlayerPlugin,
-    PluginComposer, RoomPlugin, ScenePlugin, TimerPlugin,
+    ConstantsPlugin, EntityPlugin, FarcasterPlugin, InputPlugin, LayerPlugin, MemoryPlugin,
+    OnPlugin, PlayerPlugin, PluginComposer, RoomPlugin, ScenePlugin, TimerPlugin,
     on::{
         event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
-        protocol::{EventScope, GameModeEvent, GameModeEventData, PlayerEventData, WorldEventData},
+        protocol::{
+            EventScope, FarcasterEventData, GameModeEvent, GameModeEventData, PlayerEventData,
+            WorldEventData,
+        },
     },
     player::PlayerHandle,
     protocol::GameModePlugin,
@@ -38,7 +36,7 @@ pub(crate) mod app_data;
 use app_data::{BlueprintRegistry, ExecutionContext, InputEventRegistry, LayerRegistry};
 
 pub(crate) mod network_replicator;
-use network_replicator::NetworkReplicator;
+use network_replicator::{FieldRegistry, NetworkReplicator};
 
 mod geode;
 use geode::{inject_geodes, scan_geodes};
@@ -117,6 +115,7 @@ impl Runtime {
 
         let mut plugin_composer = PluginComposer::new(&lua)?;
         let mut plugins: Vec<Box<dyn GameModePlugin>> = vec![
+            Box::new(ConstantsPlugin {}),
             Box::new(InputPlugin {}),
             Box::new(OnPlugin {
                 descriptors: GLOBAL_EVENT_DESCRIPTORS,

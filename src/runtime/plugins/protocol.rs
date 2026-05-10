@@ -35,4 +35,7 @@ pub enum PluginName {
     Room,
     Scene,
     Timer,
+
+    #[strum(serialize = "Const")]
+    Constants,
 }
