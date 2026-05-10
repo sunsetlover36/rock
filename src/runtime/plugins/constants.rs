@@ -59,7 +59,7 @@ impl GameModePlugin for ConstantsPlugin {
             InputSource::Stick.as_ref(),
             self.create_keys_table::<ControllerStick>(lua)?,
         )?;
-        table.set("InputBindings", keys_table)?;
+        table.set("Input", keys_table)?;
 
         Ok(Some(table))
     }
