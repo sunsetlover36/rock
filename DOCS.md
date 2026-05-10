@@ -20,6 +20,7 @@ Documentation for world scripters. Everything you need to build multiplayer worl
   - [layer → Layers](#layer)
   - [room → Rooms](#room)
   - [fc → Farcaster](#fc)
+  - [Const -> Constants](#const)
 - [Reactive Operators](#reactive-operators)
 - [Network Replication](#network-replication)
 - [Components Reference](#components-reference)
@@ -122,7 +123,7 @@ Your Lua code is **synchronous and single-threaded**. You never deal with thread
 
 ### Plugins
 
-Every global table in your Lua environment is a **plugin**. There are 10 plugins:
+Every global table in your Lua environment is a **plugin**. There are 11 plugins:
 
 | Plugin | Purpose |
 |--------|---------|
@@ -136,6 +137,7 @@ Every global table in your Lua environment is a **plugin**. There are 10 plugins
 | `layer` | Group resources for bulk cleanup |
 | `room` | Generate room IDs |
 | `fc` | Farcaster (users, casts, webhooks) |
+| `Const` | Engine constants |
 
 ### Entities
 
@@ -234,25 +236,25 @@ This creates `gamemodes/my_world.lua` and sets up `config.toml` pointing to it (
 ### Step 2: Register input
 
 ```lua
-local keyboard = input.bindings.keyboard
-local controller = input.bindings.controller
-local stick = input.bindings.stick
+local Keyboard = Const.Input.Keyboard
+local Controller = Const.Input.Controller
+local Stick = Const.Input.Stick
 
-input.new():vector()
+input.vector()
   :defaults({
     keyboard = {
-      up = { keyboard.KeyW, keyboard.ArrowUp },
-      down = { keyboard.KeyS, keyboard.ArrowDown },
-      left = { keyboard.KeyA, keyboard.ArrowLeft },
-      right = { keyboard.KeyD, keyboard.ArrowRight },
+      up = { Keyboard.KeyW, Keyboard.ArrowUp },
+      down = { Keyboard.KeyS, Keyboard.ArrowDown },
+      left = { Keyboard.KeyA, Keyboard.ArrowLeft },
+      right = { Keyboard.KeyD, Keyboard.ArrowRight },
     },
     controller = {
-      up = { controller.DPadUp },
-      down = { controller.DPadDown },
-      left = { controller.DPadLeft },
-      right = { controller.DPadRight },
+      up = { Controller.DPadUp },
+      down = { Controller.DPadDown },
+      left = { Controller.DPadLeft },
+      right = { Controller.DPadRight },
     },
-    stick = stick.LeftStick,
+    stick = Stick.LeftStick,
   })
   :register("Move")
 ```
@@ -345,9 +347,28 @@ The event system. Every event in ROCK is listened to through `on`.
 | `on.player.input()` | `PlayerHandle, InputAction` | Player sent input (see `:bind_action` below) |
 | `on.player.enter()` | `PlayerHandle, room_name` | Player entered a room |
 | `on.player.exit()` | `PlayerHandle, room_name` | Player exited a room |
-| `on.player.chat()` | `PlayerHandle, message` | Player sent a chat message |
+| `on.player.signal()` | `PlayerHandle, PlayerSignal` | Player sent a custom signal |
 | `on.timer.fire()` | `timer_id, data` | A timer fired (see `:named` below) |
 | `on.fc.webhook()` | `WebhookEvent` | Farcaster webhook received (see [fc](#fc)) |
+
+#### PlayerSignal
+
+`on.player.signal()` receives custom client signals.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Signal name |
+| `data` | `any` | JSON-compatible payload sent by the client |
+
+Example:
+
+```lua
+on.player.signal()
+  :where(function(_, s) return s.name == "Attack" end)
+  :each(function(p, s)
+    print("use spell", s.data.use_spell)
+  end)
+```
 
 #### Event Builder (OnRx)
 
@@ -528,7 +549,7 @@ Query entities with filters. Returns a `QueryRx`.
 ```lua
 -- count entities near a point
 local n = entity.query()
-  :at({ position = { x = 0, y = 0 }, radius = 50 })
+  :at({ position = { x = 0, y = 0 }, radius = 50, shape = Const.AreaShape.Circle })
   :count()
 
 -- iterate over a player's entities
@@ -545,7 +566,7 @@ entity.query()
 | `:owned_by(pid)` | `PlayerId` | self | Filter by owner |
 | `:named(s)` | `string` | self | Filter by name |
 | `:in_room(s)` | `string` | self | Filter by room name |
-| `:at(area)` | `{ position, radius }` | self | Filter by spatial area |
+| `:at(area)` | `{ position, radius, shape }` | self | Filter by spatial area |
 | `:blueprint(bp)` | `EntityBlueprint` | self | Filter by blueprint |
 | `:count()` | -- | `number` | Count matching entities |
 | `:first()` | -- | `EntityHandle` or `nil` | Return the first matching entity, or `nil` if none |
@@ -673,49 +694,65 @@ p:signal("Identity"):data({ pid = p:id() }):send()
 
 ### `input`
 
-Register input actions that clients can send. Inputs have a **kind** (vector, button, or axis) and **default key bindings**.
+Register input actions that clients can send. Inputs have a **kind**: `vector`, `axis`, `button`.
 
-#### `input.new()`
+Use:
 
-Creates a new input builder. Returns `InputRx`.
+- `input.vector()`
+- `input.axis()`
+- `input.button()`
 
+Each returns an `InputRx` builder. Key, mouse, controller and stick constants live in the [`Const`](#const) plugin.
+
+---
+
+#### Vector input
 ```lua
-local keyboard = input.bindings.keyboard
-local controller = input.bindings.controller
-local stick = input.bindings.stick
+local Keyboard = Const.Input.Keyboard
+local Controller = Const.Input.Controller
+local Stick = Const.Input.Stick
 
--- vector input (WASD movement)
-input.new():vector()
+input.vector()
   :defaults({
     keyboard = {
-      up = { keyboard.KeyW, keyboard.ArrowUp },
-      down = { keyboard.KeyS, keyboard.ArrowDown },
-      left = { keyboard.KeyA, keyboard.ArrowLeft },
-      right = { keyboard.KeyD, keyboard.ArrowRight },
+      up = { Keyboard.KeyW, Keyboard.ArrowUp },
+      down = { Keyboard.KeyS, Keyboard.ArrowDown },
+      left = { Keyboard.KeyA, Keyboard.ArrowLeft },
+      right = { Keyboard.KeyD, Keyboard.ArrowRight },
     },
     controller = {
-      up = { controller.DPadUp },
-      down = { controller.DPadDown },
-      left = { controller.DPadLeft },
-      right = { controller.DPadRight },
+      up = { Controller.DPadUp },
+      down = { Controller.DPadDown },
+      left = { Controller.DPadLeft },
+      right = { Controller.DPadRight },
     },
-    stick = stick.LeftStick,
+    stick = Stick.LeftStick,
   })
   :register("Move")
+```
 
--- button input
-input.new():button()
+#### Button input
+```lua
+local Keyboard = Const.Input.Keyboard
+local Controller = Const.Input.Controller
+
+input.button()
   :defaults({
-    keyboard = { keyboard.KeyE },
-    controller = { controller.ButtonA },
+    keyboard = { Keyboard.KeyE },
+    controller = { Controller.ButtonA },
   })
   :register("Use")
+```
 
--- axis input
-input.new():axis()
+#### Axis input
+```lua
+local Keyboard = Const.Input.Keyboard
+local Stick = Const.Input.Stick
+
+input.axis()
   :defaults({
-    keyboard = { negative = { keyboard.KeyA }, positive = { keyboard.KeyD } },
-    stick = stick.LeftStick,
+    keyboard = { negative = { Keyboard.KeyA }, positive = { Keyboard.KeyD } },
+    stick = Stick.LeftStick,
   })
   :register("Strafe")
 ```
@@ -724,13 +761,13 @@ input.new():axis()
 
 | Method | Args | Returns | Description |
 |--------|------|---------|-------------|
-| `:vector()` | -- | self | Input produces `{ x, y }` (Vector2D) |
-| `:axis()` | -- | self | Input produces a float (-1.0 to 1.0) |
-| `:button()` | -- | self | Input produces a boolean (pressed/released) |
-| `:defaults(t)` | `table` | self | Set default key bindings (shape depends on kind) |
+| `:defaults(t)` | `table` | self | Set default key bindings. Shape depends on input kind |
 | `:register(name)` | `string` | -- | Register the input action by name |
 
-When a player sends input for a registered action, it fires `on.player.input()`. Use `:bind_action("Move")` to filter:
+#### Reading input
+When a player sends input for a registered action, it fires `on.player.input()`.
+
+Use `:bind_action("Move")` to filter by action:
 
 ```lua
 on.player.input()
@@ -741,30 +778,6 @@ on.player.input()
     -- data = 0.5 for axis
   end)
 ```
-
-#### Key Constants
-
-Access via `input.bindings.*`:
-
-**`input.bindings.keyboard`:**
-`KeyQ`, `KeyW`, `KeyE`, `KeyR`, `KeyT`, `KeyY`, `KeyU`, `KeyI`, `KeyO`, `KeyP`,
-`KeyA`, `KeyS`, `KeyD`, `KeyF`, `KeyG`, `KeyH`, `KeyJ`, `KeyK`, `KeyL`,
-`KeyZ`, `KeyX`, `KeyC`, `KeyV`, `KeyB`, `KeyN`, `KeyM`,
-`LeftShift`, `RightShift`, `LeftCtrl`, `RightCtrl`,
-`Space`, `Tab`, `CapsLock`, `Enter`, `Backspace`,
-`ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`
-
-**`input.bindings.mouse`:**
-`Left`, `Right`, `Middle`, `Scroll`
-
-**`input.bindings.controller`:**
-`DPadUp`, `DPadDown`, `DPadLeft`, `DPadRight`,
-`LeftStick`, `RightStick`, `LeftBumper`, `RightBumper`,
-`LeftTrigger`, `RightTrigger`,
-`ButtonY`, `ButtonA`, `ButtonX`, `ButtonB`
-
-**`input.bindings.stick`:**
-`LeftStick`, `RightStick`
 
 ---
 
@@ -1199,6 +1212,52 @@ on.fc.webhook()
 
 ---
 
+## Const
+
+The `Const` plugin exposes engine constants to Lua. Use constants instead of raw strings where possible.
+
+### Input constants
+
+**`Input.Keyboard`:**
+`KeyQ`, `KeyW`, `KeyE`, `KeyR`, `KeyT`, `KeyY`, `KeyU`, `KeyI`, `KeyO`, `KeyP`,
+`KeyA`, `KeyS`, `KeyD`, `KeyF`, `KeyG`, `KeyH`, `KeyJ`, `KeyK`, `KeyL`,
+`KeyZ`, `KeyX`, `KeyC`, `KeyV`, `KeyB`, `KeyN`, `KeyM`,
+`LeftShift`, `RightShift`, `LeftCtrl`, `RightCtrl`,
+`Space`, `Tab`, `CapsLock`, `Enter`, `Backspace`,
+`ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`
+
+**`Input.Mouse`:**
+`Left`, `Right`, `Middle`, `Scroll`
+
+**`Input.Controller`:**
+`DPadUp`, `DPadDown`, `DPadLeft`, `DPadRight`,
+`LeftStick`, `RightStick`, `LeftBumper`, `RightBumper`,
+`LeftTrigger`, `RightTrigger`,
+`ButtonY`, `ButtonA`, `ButtonX`, `ButtonB`
+
+**`Input.Stick`:**
+`LeftStick`, `RightStick`
+
+### Area shapes
+
+Use `Const.AreaShape` for spatial queries.
+```lua
+local Shape = Const.AreaShape
+{Shape.Circle, Shape.Square, Shape.Diamond}
+
+-- Example
+local obj = entity.query()
+  :in_room(room)
+  :at({
+    position = pos,
+    radius = 1,
+    shape = Const.AreaShape.Square
+  })
+  :first()
+```
+
+---
+
 ## Reactive Operators
 
 Many builders in ROCK support **reactive operators** -- chainable methods that control *when* and *how* events fire.
@@ -1388,7 +1447,7 @@ Built-in entity components and their fields:
 | SpriteChar | `:char()` | `{ char, color, bg_color, visible }` | `string, string, string?, bool` |
 | OwnedBy | `:owned_by()` | single value | `PlayerId (number)` |
 | Name | `:name()` | single value | `string` |
-| Room | `:room()` | set by name, get returns room ID | `string -> u64` |
+| Room | `:room()` | set/get room name | `string` |
 
 ### Custom Data
 
