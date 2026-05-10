@@ -1,11 +1,32 @@
 use color_eyre::eyre;
 use strum::IntoEnumIterator;
 
-use crate::runtime::network_replicator::protocol::AreaShape;
+use crate::runtime::{
+    network_replicator::protocol::AreaShape,
+    plugins::input::protocol::{
+        ControllerButton, ControllerStick, InputSource, KeyboardKey, MouseKey,
+    },
+};
 
 use super::protocol::{GameModePlugin, PluginName};
 
 pub(crate) struct ConstantsPlugin {}
+impl ConstantsPlugin {
+    fn create_keys_table<T>(&self, lua: &mlua::Lua) -> mlua::Result<mlua::Table>
+    where
+        T: IntoEnumIterator + AsRef<str> + Into<u8>,
+    {
+        let table = lua.create_table()?;
+
+        for variant in T::iter() {
+            let name = variant.as_ref().to_owned();
+            let value: u8 = variant.into();
+            table.set(name, value)?;
+        }
+
+        Ok(table)
+    }
+}
 impl GameModePlugin for ConstantsPlugin {
     fn name(&self) -> PluginName {
         PluginName::Constants
@@ -20,6 +41,25 @@ impl GameModePlugin for ConstantsPlugin {
             area_shape.set(shape, shape)?;
         }
         table.set("AreaShape", area_shape)?;
+
+        let keys_table = lua.create_table()?;
+        keys_table.set(
+            InputSource::Keyboard.as_ref(),
+            self.create_keys_table::<KeyboardKey>(lua)?,
+        )?;
+        keys_table.set(
+            InputSource::Mouse.as_ref(),
+            self.create_keys_table::<MouseKey>(lua)?,
+        )?;
+        keys_table.set(
+            InputSource::Controller.as_ref(),
+            self.create_keys_table::<ControllerButton>(lua)?,
+        )?;
+        keys_table.set(
+            InputSource::Stick.as_ref(),
+            self.create_keys_table::<ControllerStick>(lua)?,
+        )?;
+        table.set("InputBindings", keys_table)?;
 
         Ok(Some(table))
     }

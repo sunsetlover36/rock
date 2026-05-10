@@ -8,54 +8,25 @@ use crate::runtime::{app_data, utils::get_app_data_mut};
 
 #[derive(Clone)]
 pub(super) struct InputRx {
-    kind: Option<InputKind>,
+    kind: InputKind,
     bindings: Option<InputBindings>,
 }
 impl InputRx {
-    pub fn new() -> Self {
+    pub fn new(kind: InputKind) -> Self {
         Self {
-            kind: None,
+            kind,
             bindings: None,
-        }
-    }
-
-    fn change_kind(&mut self, kind: InputKind) -> mlua::Result<()> {
-        match self.kind {
-            Some(_) => Err(mlua::Error::runtime(
-                "Cannot overwrite an existing kind for the input",
-            )),
-            None => {
-                self.kind = Some(kind);
-                Ok(())
-            }
         }
     }
 }
 impl UserData for InputRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method_mut("vector", |_, this, ()| {
-            this.change_kind(InputKind::Vector2D)?;
-            Ok(this.clone())
-        });
-        methods.add_method_mut("axis", |_, this, ()| {
-            this.change_kind(InputKind::Axis)?;
-            Ok(this.clone())
-        });
-        methods.add_method_mut("button", |_, this, ()| {
-            this.change_kind(InputKind::Button)?;
-            Ok(this.clone())
-        });
-
         methods.add_method_mut("defaults", |lua, this, table: mlua::Table| {
             match this.bindings {
                 Some(_) => Err(mlua::Error::runtime("Cannot overwrite default bindings")),
                 None => {
-                    let kind = this.kind.ok_or_else(|| {
-                        mlua::Error::runtime("Cannot set default bindings without an input kind")
-                    })?;
-
                     let table = mlua::Value::Table(table);
-                    let bindings = match kind {
+                    let bindings = match this.kind {
                         InputKind::Vector2D => {
                             InputBindings::Vector2D(lua.from_value::<Vector2DBindings>(table)?)
                         }
