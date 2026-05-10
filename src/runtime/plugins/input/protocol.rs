@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
-use serde::Deserialize;
 use rock_wire::InputKind;
+use serde::Deserialize;
 use strum::{AsRefStr, EnumDiscriminants, EnumString};
 
 mod keys;
@@ -10,7 +10,7 @@ pub(crate) use keys::*;
 #[derive(Debug, Copy, Clone, EnumDiscriminants)]
 #[strum_discriminants(name(InputSource))]
 #[strum_discriminants(derive(EnumString, AsRefStr))]
-#[strum_discriminants(strum(serialize_all = "lowercase"))]
+#[strum_discriminants(strum(serialize_all = "PascalCase"))]
 pub(crate) enum InputKey {
     Keyboard(KeyboardKey),
     Mouse(MouseKey),
