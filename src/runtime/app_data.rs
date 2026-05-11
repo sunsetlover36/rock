@@ -19,14 +19,6 @@ use crate::runtime::{
     timer_manager,
 };
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum RuntimePhase {
-    Glyphs,
-    Blueprints,
-    Systems,
-    Gamemode,
-}
-
 pub struct EventListeners(pub HashMap<GameModeEventKey, Vec<GameModeListener>>);
 pub struct Scenes(pub HashMap<String, Vec<mlua::Function>>);
 pub struct ScenePlugins(pub HashMap<PluginName, mlua::Table>);

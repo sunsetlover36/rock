@@ -1530,9 +1530,7 @@ geodes/
   my_geode/
     geode.toml          -- manifest
     glyphs/             -- globals, utilities (loaded first)
-    blueprints/         -- entity templates (loaded second)
-    systems/            -- game logic (loaded third)
-    assets/             -- static files
+    systems/            -- game logic (loaded second)
 ```
 
 Geodes are loaded before the gamemode script. Use them to share reusable code across gamemodes.

@@ -39,7 +39,7 @@ pub(crate) mod network_replicator;
 use network_replicator::{FieldRegistry, NetworkReplicator};
 
 mod geode;
-use geode::{inject_geodes, scan_geodes};
+mod script;
 
 pub(crate) mod protocol;
 pub use protocol::*;
@@ -149,15 +149,8 @@ impl Runtime {
             tokio_handle: params.tokio_handle,
         });
 
-        // Geodes injection
-        inject_geodes(&lua, &scan_geodes()?)?;
-
-        // Gamemode script string
-        let gamemode_path = format!("gamemodes/{}.lua", params.name);
-        let gamemode = std::fs::read_to_string(&gamemode_path)?;
-        lua.load(&gamemode)
-            .exec()
-            .wrap_err("Script execution error")?;
+        let geodes = geode::scan_geodes()?;
+        script::boot_gamemode(&lua, &params.name, &geodes).wrap_err("Failed to boot gamemode")?;
 
         Ok(Self {
             tick: 0,

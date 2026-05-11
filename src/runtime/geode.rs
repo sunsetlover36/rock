@@ -2,13 +2,10 @@ use color_eyre::eyre::{self, Context};
 use mlua::Lua;
 use rayon::prelude::*;
 use std::{
-    collections::HashMap,
     ffi::OsStr,
     path::{Path, PathBuf},
 };
 use walkdir::WalkDir;
-
-use crate::runtime::{app_data, utils::LuaResultExt};
 
 #[derive(Debug)]
 struct ScriptAsset {
@@ -19,12 +16,35 @@ struct ScriptAsset {
 #[derive(Debug)]
 pub struct Geode {
     name: String,
+    root: PathBuf,
     glyphs: Vec<ScriptAsset>,
-    blueprints: Vec<ScriptAsset>,
     systems: Vec<ScriptAsset>,
-    assets: HashMap<String, PathBuf>,
 }
 
+fn module_name(geode_name: &str, root: &Path, path: &Path) -> mlua::Result<String> {
+    let rel = path.strip_prefix(root).map_err(mlua::Error::runtime)?;
+    let mut parts: Vec<String> = rel
+        .with_extension("")
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+
+    // glyphs/grid.lua -> grid
+    if parts.first().map(|s| s.as_str()) == Some("glyphs") {
+        parts.remove(0);
+    }
+
+    // init.lua -> geode name
+    if parts.last().map(|s| s.as_str()) == Some("init") {
+        parts.pop();
+    }
+
+    if parts.is_empty() {
+        Ok(geode_name.to_string())
+    } else {
+        Ok(format!("{}.{}", geode_name, parts.join(".")))
+    }
+}
 fn load_scripts_from_dir(path: &Path) -> Vec<ScriptAsset> {
     WalkDir::new(path)
         .into_iter()
@@ -79,32 +99,13 @@ pub fn scan_geodes() -> eyre::Result<Vec<Geode>> {
                 .to_owned();
 
             let glyphs = load_scripts_from_dir(&root.join("glyphs"));
-            let blueprints = load_scripts_from_dir(&root.join("blueprints"));
             let systems = load_scripts_from_dir(&root.join("systems"));
-
-            let mut assets = HashMap::new();
-            let assets_root = root.join("assets");
-            if assets_root.exists() {
-                for entry in WalkDir::new(&assets_root)
-                    .into_iter()
-                    .filter_map(Result::ok)
-                {
-                    if entry.file_type().is_file() {
-                        let asset_path = entry.path();
-                        if let Ok(relative_path) = asset_path.strip_prefix(&assets_root) {
-                            let key = relative_path.to_string_lossy().replace("\\", "/");
-                            assets.insert(key, asset_path.to_path_buf());
-                        }
-                    }
-                }
-            }
 
             Ok(Geode {
                 name,
+                root: root.clone(),
                 glyphs,
-                blueprints,
                 systems,
-                assets,
             })
         })
         .collect();
@@ -114,46 +115,34 @@ pub fn scan_geodes() -> eyre::Result<Vec<Geode>> {
     Ok(geodes)
 }
 
-pub fn inject_geodes(lua: &Lua, geodes: &[Geode]) -> eyre::Result<()> {
+pub fn inject_geodes(lua: &Lua, geodes: &[Geode]) -> mlua::Result<()> {
     if geodes.is_empty() {
-        lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Gamemode);
         return Ok(());
     }
 
+    let package: mlua::Table = lua.globals().get("package")?;
+    let preload: mlua::Table = package.get("preload")?;
+
     for geode in geodes {
-        lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Glyphs);
         for glyph in &geode.glyphs {
-            let path = glyph.path.to_string_lossy().to_string();
-            lua.load(&glyph.contents)
-                .set_name(&path)
-                .exec()
-                .wrap_err(&format!("Failed to load a glyph at path {}", &path))?;
+            let contents = glyph.contents.clone();
+            let chunk_name = format!("@{}", glyph.path.display());
+
+            let name = module_name(&geode.name, &geode.root, &glyph.path)?;
+            let loader = lua.create_function(move |lua, ()| {
+                lua.load(&contents)
+                    .set_name(&chunk_name)
+                    .eval::<mlua::Value>()
+            })?;
+
+            preload.set(name, loader)?;
         }
-    }
-    for geode in geodes {
-        lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Blueprints);
-        for bp in &geode.blueprints {
-            let path = bp.path.to_string_lossy().to_string();
-            lua.load(&bp.contents)
-                .set_name(&path)
-                .exec()
-                .wrap_err(&format!(
-                    "Failed to load a blueprint script at path {}",
-                    &path
-                ))?;
-        }
-    }
-    for geode in geodes {
-        lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Systems);
+
         for system in &geode.systems {
-            let path = system.path.to_string_lossy().to_string();
-            lua.load(&system.contents)
-                .set_name(&path)
-                .exec()
-                .wrap_err(&format!("Failed to load a system script at path {}", &path))?;
+            let path = system.path.to_string_lossy();
+            lua.load(&system.contents).set_name(path.as_ref()).exec()?;
         }
     }
 
-    lua.set_app_data::<app_data::RuntimePhase>(app_data::RuntimePhase::Gamemode);
     Ok(())
 }
