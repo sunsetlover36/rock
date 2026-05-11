@@ -104,7 +104,7 @@ impl UserData for EntityBlueprint {
         });
 
         methods.add_method("from", |lua, this, name: String| {
-            let has_customs = this.customs.as_ref().map_or(false, |v| v.is_empty());
+            let has_customs = this.customs.as_ref().is_none_or(|v| v.is_empty());
             if !this.components.is_empty() || has_customs {
                 return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint already contains components or custom data", name)));
             }
@@ -117,9 +117,9 @@ impl UserData for EntityBlueprint {
                 this.components = blueprint.components;
                 this.customs = blueprint.customs;
 
-                return Ok(this);
+                Ok(this)
             } else {
-                return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint not found", name)));
+                Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint not found", name)))
             }
         });
         methods.add_method(
@@ -140,22 +140,15 @@ impl UserData for EntityBlueprint {
         );
 
         methods.add_method_mut("spawn", |lua, this, _: ()| {
-            let runtime_phase = get_app_data::<app_data::RuntimePhase>(lua)?;
-            if *runtime_phase == app_data::RuntimePhase::Blueprints {
-                return Err(mlua::Error::runtime(
-                    "Access denied: cannot spawn during blueprint loading phase",
-                ));
-            }
-
             let mut builder = hecs::EntityBuilder::new();
             // TODO: repeated code
             for component in this.components.values() {
                 match component {
                     ComponentData::Position(c) => {
-                        builder.add(c.clone());
+                        builder.add(*c);
                     }
                     ComponentData::Rotation(c) => {
-                        builder.add(c.clone());
+                        builder.add(*c);
                     }
                     ComponentData::Control(c) => {
                         builder.add(c.clone());
