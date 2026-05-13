@@ -1525,7 +1525,7 @@ Omit both for anon sessions. Tickets use JWT (HS256). Farcaster Quick Auth uses 
 
 Geodes are modular plugin packages. Place them in `geodes/`:
 
-```
+```txt
 geodes/
   my_geode/
     geode.toml          -- manifest
@@ -1534,6 +1534,29 @@ geodes/
 ```
 
 Geodes are loaded before the gamemode script. Use them to share reusable code across gamemodes.
+
+### Importing geodes
+
+Glyphs can be imported from Lua with `require` using the geode name as the module prefix:
+
+For example:
+
+```txt
+geodes/
+  worldkit/
+    glyphs/
+      grid.lua
+      colors.lua
+```
+
+becomes:
+
+```lua
+local Grid = require("worldkit.grid")
+local Colors = require("worldkit.colors")
+```
+
+Systems are loaded automatically after glyphs. They are intended for event listeners, runtime hooks, and gamemode-level behavior that should be injected when the geode is loaded.
 
 ---
 
