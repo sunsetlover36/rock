@@ -19,6 +19,10 @@ impl PlayerHandle {
     pub fn new(pk: PlayerKey) -> Self {
         Self { pk }
     }
+
+    pub fn key(&self) -> PlayerKey {
+        self.pk
+    }
 }
 impl UserData for PlayerHandle {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {

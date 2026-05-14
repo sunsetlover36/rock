@@ -4,8 +4,11 @@ use reqwest::{
     header::{self, HeaderMap, HeaderName, HeaderValue},
 };
 use rock_wire::farcaster::{
-    CreatedCast, GetUserByUsernameParams, GetUserByUsernameResponse, GetUsersByFidsParams,
-    GetUsersByFidsRawQuery, GetUsersByFidsResponse, SendCastParams, SendCastResponse, User,
+    BulkFetchCastsParams, BulkFetchCastsRawQuery, BulkFetchCastsResponse, Cast,
+    CastConversationResponse, CreatedCast, GetCastConversationParams, GetCastParams,
+    GetCastResponse, GetReactionsParams, GetReactionsRawQuery, GetUserByUsernameParams,
+    GetUserByUsernameResponse, GetUsersByFidsParams, GetUsersByFidsRawQuery,
+    GetUsersByFidsResponse, ReactionsResponse, SendCastParams, SendCastResponse, User,
 };
 
 #[derive(Clone)]
@@ -31,6 +34,74 @@ impl FarcasterApi {
             client,
             base_url: "https://api.neynar.com/v2".into(),
         })
+    }
+
+    pub async fn get_cast(&self, params: &GetCastParams) -> eyre::Result<Cast> {
+        let url = format!("{}/farcaster/cast", self.base_url);
+
+        let response = self
+            .client
+            .get(url)
+            .query(params)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<GetCastResponse>()
+            .await?;
+        Ok(response.cast)
+    }
+
+    pub async fn bulk_fetch_casts(&self, params: &BulkFetchCastsParams) -> eyre::Result<Vec<Cast>> {
+        let url = format!("{}/farcaster/casts", self.base_url);
+        let query = BulkFetchCastsRawQuery::from(params);
+
+        let response = self
+            .client
+            .get(url)
+            .query(&query)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<BulkFetchCastsResponse>()
+            .await?;
+        Ok(response.result.casts)
+    }
+
+    pub async fn get_convo(
+        &self,
+        params: &GetCastConversationParams,
+    ) -> eyre::Result<CastConversationResponse> {
+        let url = format!("{}/farcaster/cast/conversation", self.base_url);
+
+        let response = self
+            .client
+            .get(url)
+            .query(params)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<CastConversationResponse>()
+            .await?;
+        Ok(response)
+    }
+
+    pub async fn get_reactions(
+        &self,
+        params: &GetReactionsParams,
+    ) -> eyre::Result<ReactionsResponse> {
+        let url = format!("{}/farcaster/reactions/cast", self.base_url);
+        let query = GetReactionsRawQuery::from(params);
+
+        let response = self
+            .client
+            .get(url)
+            .query(&query)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<ReactionsResponse>()
+            .await?;
+        Ok(response)
     }
 
     pub async fn send_cast(&self, params: &SendCastParams) -> eyre::Result<CreatedCast> {

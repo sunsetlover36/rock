@@ -1,4 +1,5 @@
 use color_eyre::eyre;
+use rock_wire::farcaster::CastSortKind;
 use strum::IntoEnumIterator;
 
 use crate::runtime::{
@@ -60,6 +61,13 @@ impl GameModePlugin for ConstantsPlugin {
             self.create_keys_table::<ControllerStick>(lua)?,
         )?;
         table.set("Input", keys_table)?;
+
+        let cast_sort_kind = lua.create_table()?;
+        for kind in CastSortKind::iter() {
+            let kind = kind.as_ref();
+            cast_sort_kind.set(kind, kind)?;
+        }
+        table.set("CastSort", cast_sort_kind)?;
 
         Ok(Some(table))
     }

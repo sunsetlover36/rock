@@ -8,6 +8,9 @@ pub(crate) mod operator;
 pub(crate) use operator::OpPipeline;
 use operator::{OpSentry, RxOp};
 
+mod cursor;
+pub(crate) use cursor::CursorRx;
+
 pub(crate) mod sync;
 
 // -- Pipeline -> stateless blueprint
