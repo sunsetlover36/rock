@@ -1,4 +1,7 @@
-use rock_wire::{IncomingRequest, PlayerKey, SocketConnectionQuery, farcaster::WebhookEvent};
+use rock_wire::{
+    IncomingRequest, PlayerKey, SocketConnectionQuery,
+    farcaster::{Fid, WebhookEvent},
+};
 
 use crate::{envelope::ClientEnvelope, socket::protocol::ServerMessage};
 
@@ -9,6 +12,7 @@ pub trait GameModeClientApi: Send + Sync {
     fn list(&self) -> Vec<PlayerKey>;
     fn send(&self, message: ServerMessage);
     fn identity(&self, pk: PlayerKey) -> Option<String>;
+    fn fid(&self, pk: PlayerKey) -> Option<Fid>;
 }
 
 pub enum SystemCallback {

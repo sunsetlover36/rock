@@ -5,10 +5,14 @@ use super::protocol::{AsyncTask, GameModePlugin, PluginName};
 use crate::runtime::{app_data, utils::get_app_data};
 
 mod manager;
-pub use manager::{SceneManager, SceneManagerMessage, SceneManagerParams};
+pub(crate) use manager::{SceneManager, SceneManagerParams};
 
 mod rx;
 use rx::SceneRx;
+
+mod ctx;
+mod protocol;
+pub(crate) use protocol::SceneManagerMessage;
 
 fn get_scene_env(lua: &Lua) -> mlua::Result<mlua::Table> {
     let env = lua.create_table()?;
@@ -33,9 +37,9 @@ fn to_coroutine(lua: &Lua, functions: &Vec<mlua::Function>) -> mlua::Result<mlua
     let iter: mlua::Function = lua
         .load(
             r#"
-            return function(funcs)
+            return function(funcs, ctx)
                 for i = 1, #funcs do
-                    funcs[i]()
+                    funcs[i](ctx)
                 end
             end
             "#,
@@ -66,7 +70,6 @@ impl GameModePlugin for ScenePlugin {
         let manager_tx = self.manager_tx.clone();
         let scene_run_fn = lua.create_function(move |lua, script: mlua::Function| {
             manager_tx
-                .clone()
                 .send(SceneManagerMessage::AddTask(to_coroutine(
                     lua,
                     &vec![script],
@@ -105,7 +108,7 @@ impl GameModePlugin for ScenePlugin {
         Ok(None)
     }
 
-    fn handle_op(&self, _: &Lua, _: &str, _: mlua::Table) -> eyre::Result<Option<AsyncTask>> {
+    fn handle_op(&self, _: &Lua, _: &str, _: mlua::Value) -> eyre::Result<Option<AsyncTask>> {
         Ok(None)
     }
 }

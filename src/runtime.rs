@@ -10,7 +10,7 @@ use mlua::Lua;
 use rock_wire::{ImpromptuRequest, IncomingRequest};
 use smallvec::smallvec;
 
-use crate::{clients::FarcasterApi, meta_db::MetaDb, router::CommitRouter};
+use crate::{clients::FarcasterApi, config::Config, meta_db::MetaDb, router::CommitRouter};
 
 pub mod default_client_api;
 pub(crate) mod event_bus;
@@ -52,7 +52,7 @@ pub use utils::*;
 
 #[derive(Clone)]
 pub struct RuntimeParams {
-    pub name: String,
+    pub config: Config,
     pub client_api: Arc<dyn GameModeClientApi>,
     pub callback_rx: flume::Receiver<RuntimeCallback>,
     pub command_rx: flume::Receiver<RuntimeCommand>,
@@ -79,6 +79,7 @@ impl Runtime {
         let client_api = params.client_api.clone();
 
         // Dependencies
+        let meta_db = Arc::new(params.meta_db);
         let event_bus = Rc::new(EventBus::new());
         let timer_manager = Rc::new(TimerManager::new(TimerManagerParams {
             tokio_handle: params.tokio_handle.clone(),
@@ -122,7 +123,7 @@ impl Runtime {
             }),
             Box::new(EntityPlugin {}),
             Box::new(MemoryPlugin {
-                meta_db: Arc::new(params.meta_db),
+                meta_db: meta_db.clone(),
             }),
             Box::new(LayerPlugin {}),
             Box::new(PlayerPlugin {}),
@@ -135,6 +136,8 @@ impl Runtime {
         if let Some(fc_api) = params.fc_api {
             plugins.push(Box::new(FarcasterPlugin {
                 fc_api: Arc::new(fc_api),
+                meta_db: meta_db.clone(),
+                config: params.config.farcaster,
             }));
         }
 
@@ -150,7 +153,8 @@ impl Runtime {
         });
 
         let geodes = geode::scan_geodes()?;
-        script::boot_gamemode(&lua, &params.name, &geodes).wrap_err("Failed to boot gamemode")?;
+        script::boot_gamemode(&lua, &params.config.gamemode.name, &geodes)
+            .wrap_err("Failed to boot gamemode")?;
 
         Ok(Self {
             tick: 0,

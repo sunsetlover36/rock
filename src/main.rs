@@ -102,24 +102,24 @@ async fn run() -> eyre::Result<()> {
                         }
                     };
 
-                    let fc_api = if let Some(key) = runtime_config
-                        .farcaster
-                        .as_ref()
-                        .and_then(|f| f.api_key.as_ref())
-                    {
-                        match FarcasterApi::new(key) {
-                            Ok(api) => Some(api),
-                            Err(err) => {
-                                eprintln!("Failed to initialize Farcaster API: {err}");
-                                break;
+                    let fc_api = if let Some(config) = runtime_config.farcaster.as_ref() {
+                        if let Some(key) = &config.api_key {
+                            match FarcasterApi::new(key, config.signers.clone()) {
+                                Ok(api) => Some(api),
+                                Err(err) => {
+                                    eprintln!("Failed to initialize Farcaster API: {err}");
+                                    break;
+                                }
                             }
+                        } else {
+                            None
                         }
                     } else {
                         None
                     };
 
                     let runtime_params = RuntimeParams {
-                        name: runtime_config.gamemode.name.clone(),
+                        config: runtime_config.clone(),
                         client_api: Arc::new(GameModeDefaultClientApi {
                             ws_session_sender: session_sender.clone(),
                         }),

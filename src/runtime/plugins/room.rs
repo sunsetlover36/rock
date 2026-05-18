@@ -26,7 +26,7 @@ impl GameModePlugin for RoomPlugin {
         &self,
         _: &mlua::Lua,
         _: &str,
-        _: mlua::Table,
+        _: mlua::Value,
     ) -> eyre::Result<Option<super::protocol::AsyncTask>> {
         Ok(None)
     }

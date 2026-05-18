@@ -7,6 +7,7 @@ use std::{
 use color_eyre::eyre;
 use dashmap::DashMap;
 use mlua::{IntoLua, Lua};
+use rock_wire::farcaster::Fid;
 use serde_json::Value as JsonValue;
 use sqlx::{
     Row,
@@ -80,6 +81,10 @@ pub struct MetaDb {
     cache: DashMap<String, MetaEntry>,
 }
 impl MetaDb {
+    pub fn farcaster_signer_key(app_fid: Fid, player_fid: Fid) -> String {
+        format!("farcaster/signers/{app_fid}/{player_fid}")
+    }
+
     pub async fn new(config: MetaDbConfig) -> Result<Self, sqlx::Error> {
         let db_dir = Path::new("./db");
         fs::create_dir_all(db_dir)?;
@@ -183,7 +188,7 @@ impl MetaDb {
         match self.cache.entry(key.to_owned()) {
             dashmap::Entry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                let changed = new_value == entry.value;
+                let changed = new_value != entry.value;
 
                 entry.updated_at = now;
                 entry.value = new_value;
@@ -289,17 +294,26 @@ impl MetaDb {
     }
 
     pub async fn update_key(&self, key: &str, value: Option<JsonValue>) -> Result<(), MetaDbError> {
+        self.validate_key(key)?;
+
+        let value_str = match &value {
+            Some(v) => serde_json::to_string(&v).map_err(MetaDbError::InvalidJson)?,
+            None => "null".to_string(),
+        };
+
         sqlx::query(
             r#"
             INSERT INTO meta_kv (mode_id, key, value)
             VALUES (?, ?, ?)
             ON CONFLICT (mode_id, key)
-            DO UPDATE SET value = excluded.value
+            DO UPDATE SET
+                value = excluded.value,
+                updated_at = unixepoch()
             "#,
         )
         .bind(self.config.mode_id.clone())
         .bind(key)
-        .bind(value.clone())
+        .bind(value_str)
         .execute(&self.pool)
         .await
         .map_err(MetaDbError::Db)?;
@@ -315,25 +329,38 @@ impl MetaDb {
         flatten_json(prefix, value.clone(), &mut kvs);
 
         let mut tx = self.pool.begin().await.map_err(MetaDbError::Db)?;
-        for (k, v) in kvs {
+
+        sqlx::query("DELETE FROM meta_kv WHERE mode_id = ? AND key LIKE ?")
+            .bind(&self.config.mode_id)
+            .bind(format!("{}%", prefix))
+            .execute(&mut *tx)
+            .await
+            .map_err(MetaDbError::Db)?;
+        for (k, v) in &kvs {
+            let value_str = serde_json::to_string(&v).map_err(MetaDbError::InvalidJson)?;
             sqlx::query(
                 r#"
                     INSERT INTO meta_kv (mode_id, key, value)
                     VALUES (?, ?, ?)
                     ON CONFLICT (mode_id, key)
-                    DO UPDATE SET value = excluded.value 
+                    DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = unixepoch() 
                 "#,
             )
-            .bind(self.config.mode_id.clone())
+            .bind(&self.config.mode_id)
             .bind(k.clone())
-            .bind(v.clone())
+            .bind(value_str)
             .execute(&mut *tx)
             .await
             .map_err(MetaDbError::Db)?;
-
-            self.update_cache(&k, Some(v));
         }
         tx.commit().await.map_err(MetaDbError::Db)?;
+
+        self.cache.retain(|key, _| !key.starts_with(prefix));
+        for (k, v) in kvs {
+            self.update_cache(&k, Some(v));
+        }
 
         Ok(())
     }

@@ -1,5 +1,4 @@
 use color_eyre::eyre;
-use mlua::{Lua, Table};
 
 use super::protocol::{AsyncTask, GameModePlugin, PluginName};
 
@@ -21,7 +20,7 @@ pub struct OnPlugin {
     pub descriptors: &'static [EventDescriptor],
 }
 impl OnPlugin {
-    pub fn create_listeners_table(&self, lua: &Lua) -> mlua::Result<Table> {
+    pub fn create_listeners_table(&self, lua: &mlua::Lua) -> mlua::Result<mlua::Table> {
         let table = lua.create_table()?;
 
         for descriptor in self.descriptors {
@@ -51,15 +50,15 @@ impl GameModePlugin for OnPlugin {
         PluginName::On
     }
 
-    fn create_global_api(&self, lua: &Lua) -> mlua::Result<Option<Table>> {
+    fn create_global_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         Ok(Some(self.create_listeners_table(lua)?))
     }
 
-    fn create_scene_api(&self, _: &Lua) -> mlua::Result<Option<Table>> {
+    fn create_scene_api(&self, _: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         Ok(None)
     }
 
-    fn handle_op(&self, _: &Lua, _: &str, _: Table) -> eyre::Result<Option<AsyncTask>> {
+    fn handle_op(&self, _: &mlua::Lua, _: &str, _: mlua::Value) -> eyre::Result<Option<AsyncTask>> {
         Ok(None)
     }
 }

@@ -1,4 +1,4 @@
-use rock_wire::PlayerKey;
+use rock_wire::{PlayerKey, farcaster::Fid};
 
 use crate::{
     runtime::GameModeClientApi,
@@ -24,5 +24,9 @@ impl GameModeClientApi for GameModeDefaultClientApi {
 
     fn identity(&self, pk: PlayerKey) -> Option<String> {
         self.ws_session_sender.get_identity(pk)
+    }
+    fn fid(&self, pk: PlayerKey) -> Option<Fid> {
+        self.identity(pk)
+            .and_then(|id| id.strip_prefix("fc:")?.parse::<Fid>().ok())
     }
 }

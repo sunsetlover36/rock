@@ -33,6 +33,9 @@ impl UserData for PlayerHandle {
                 .0
                 .identity(this.pk))
         });
+        methods.add_method("fid", |lua, this, _: ()| {
+            Ok(get_app_data::<app_data::ClientApi>(lua)?.0.fid(this.pk))
+        });
 
         methods.add_method("kick", |lua, this, _: ()| {
             get_app_data::<app_data::ClientApi>(lua)?

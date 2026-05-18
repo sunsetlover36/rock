@@ -3,10 +3,19 @@ use std::str::FromStr;
 use mlua::{LuaSerdeExt, UserData};
 use rock_wire::farcaster::{
     BulkFetchCastsParams, CastConversationOptions, CastSortKind, GetCastConversationParams,
-    GetCastParams, GetReactionsOptions, GetReactionsParams, ReactionFilter, SendCastParams,
+    GetCastParams, GetReactionsOptions, GetReactionsParams, ReactionFilter, ReactionKind,
 };
 
-use crate::{runtime::plugins::farcaster::protocol::CastIdentifier, rx::CursorRx};
+use crate::{
+    runtime::plugins::{
+        farcaster::protocol::{
+            CastIdentifier, DeleteCastOpParams, PublishReactionOpParams, SendCastOpParams,
+            WriteAsArgs, WriteAsOp,
+        },
+        player::PlayerHandle,
+    },
+    rx::CursorRx,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CastRxOpcodeKey {
@@ -15,6 +24,9 @@ pub(crate) enum CastRxOpcodeKey {
     Convo,
     Reactions,
     Send,
+    PublishReaction,
+    DeleteReaction,
+    Delete,
 }
 
 #[derive(Clone)]
@@ -24,6 +36,9 @@ pub(crate) struct CastRxOpcodes {
     pub convo: String,
     pub reactions: String,
     pub send: String,
+    pub publish_reaction: String,
+    pub delete_reaction: String,
+    pub delete: String,
 }
 impl CastRxOpcodes {
     pub fn get(&self, key: CastRxOpcodeKey) -> &str {
@@ -33,6 +48,9 @@ impl CastRxOpcodes {
             CastRxOpcodeKey::Convo => &self.convo,
             CastRxOpcodeKey::Reactions => &self.reactions,
             CastRxOpcodeKey::Send => &self.send,
+            CastRxOpcodeKey::PublishReaction => &self.publish_reaction,
+            CastRxOpcodeKey::DeleteReaction => &self.delete_reaction,
+            CastRxOpcodeKey::Delete => &self.delete,
         }
     }
 }
@@ -85,7 +103,7 @@ impl CastRx {
         }
     }
 
-    fn process_reactions(
+    fn get_reactions(
         &self,
         lua: &mlua::Lua,
         options: mlua::Value,
@@ -118,6 +136,30 @@ impl CastRx {
         let args = lua.to_value(&params)?;
         let op = self.get_op(lua, CastRxOpcodeKey::Reactions, &args)?;
         Ok(CursorRx::new(op))
+    }
+
+    async fn process_reaction(
+        &self,
+        lua: &mlua::Lua,
+        ud: mlua::AnyUserData,
+        write_args: Option<WriteAsArgs>,
+        kind: ReactionKind,
+        opcode_key: CastRxOpcodeKey,
+    ) -> mlua::Result<mlua::Value> {
+        let player = ud.borrow::<PlayerHandle>()?;
+
+        let payload = WriteAsOp {
+            pid: player.key().pack(),
+            write_args: write_args.unwrap_or_default(),
+            params: PublishReactionOpParams {
+                reaction_type: kind,
+                target: self.get_first_cast_id()?.as_str().to_owned(),
+            },
+        };
+        let args = lua.to_value(&payload)?;
+        let op = self.get_op(&lua, opcode_key, &args)?;
+
+        lua.yield_with::<mlua::Value>(op).await
     }
 }
 
@@ -181,13 +223,13 @@ impl UserData for CastRx {
 
         // -- reactions
         methods.add_method("reactions", |lua, this, options: mlua::Value| {
-            this.process_reactions(lua, options, vec![ReactionFilter::All])
+            this.get_reactions(lua, options, vec![ReactionFilter::All])
         });
         methods.add_method("likes", |lua, this, options: mlua::Value| {
-            this.process_reactions(lua, options, vec![ReactionFilter::Likes])
+            this.get_reactions(lua, options, vec![ReactionFilter::Likes])
         });
         methods.add_method("recasts", |lua, this, options: mlua::Value| {
-            this.process_reactions(lua, options, vec![ReactionFilter::Recasts])
+            this.get_reactions(lua, options, vec![ReactionFilter::Recasts])
         });
         // --
 
@@ -203,20 +245,108 @@ impl UserData for CastRx {
             Ok(next)
         });
 
-        methods.add_async_method("send", async |lua, this, signer_uuid: String| {
-            let text = this
-                .text
-                .clone()
-                .ok_or_else(|| mlua::Error::runtime("cast send: cannot send an empty cast"))?;
+        methods.add_async_method(
+            "send_as",
+            async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
+                let player = ud.borrow::<PlayerHandle>()?;
 
-            let args = lua.to_value(&SendCastParams {
-                signer_uuid,
-                text,
-                parent: this.reply_hash.clone(),
-            })?;
-            let op = this.get_op(&lua, CastRxOpcodeKey::Send, &args)?;
+                let text = this
+                    .text
+                    .clone()
+                    .ok_or_else(|| mlua::Error::runtime("cast send: cannot send an empty cast"))?;
 
-            lua.yield_with::<mlua::Value>(op).await
-        });
+                let payload = WriteAsOp {
+                    pid: player.key().pack(),
+                    write_args: write_args.unwrap_or_default(),
+                    params: SendCastOpParams {
+                        text,
+                        parent: this.reply_hash.clone(),
+                    },
+                };
+                let args = lua.to_value(&payload)?;
+                let op = this.get_op(&lua, CastRxOpcodeKey::Send, &args)?;
+
+                lua.yield_with::<mlua::Value>(op).await
+            },
+        );
+        methods.add_async_method(
+            "like_as",
+            async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
+                this.process_reaction(
+                    &lua,
+                    ud,
+                    write_args,
+                    ReactionKind::Like,
+                    CastRxOpcodeKey::PublishReaction,
+                )
+                .await
+            },
+        );
+        methods.add_async_method(
+            "unlike_as",
+            async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
+                this.process_reaction(
+                    &lua,
+                    ud,
+                    write_args,
+                    ReactionKind::Like,
+                    CastRxOpcodeKey::DeleteReaction,
+                )
+                .await
+            },
+        );
+        methods.add_async_method(
+            "recast_as",
+            async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
+                this.process_reaction(
+                    &lua,
+                    ud,
+                    write_args,
+                    ReactionKind::Recast,
+                    CastRxOpcodeKey::PublishReaction,
+                )
+                .await
+            },
+        );
+        methods.add_async_method(
+            "unrecast_as",
+            async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
+                this.process_reaction(
+                    &lua,
+                    ud,
+                    write_args,
+                    ReactionKind::Recast,
+                    CastRxOpcodeKey::DeleteReaction,
+                )
+                .await
+            },
+        );
+        methods.add_async_method(
+            "delete_as",
+            async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
+                let player = ud.borrow::<PlayerHandle>()?;
+
+                let target_hash = match this.get_first_cast_id()? {
+                    CastIdentifier::Hash(hash) => hash,
+                    _ => {
+                        return Err(mlua::Error::runtime(
+                            "cast delete: expected cast hash, got url or missing cast id",
+                        ));
+                    }
+                };
+
+                let payload = WriteAsOp {
+                    pid: player.key().pack(),
+                    write_args: write_args.unwrap_or_default(),
+                    params: DeleteCastOpParams {
+                        target_hash: target_hash.as_str().to_owned(),
+                    },
+                };
+                let args = lua.to_value(&payload)?;
+                let op = this.get_op(&lua, CastRxOpcodeKey::Delete, &args)?;
+
+                lua.yield_with::<mlua::Value>(op).await
+            },
+        );
     }
 }

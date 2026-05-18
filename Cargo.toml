@@ -6,7 +6,8 @@ version = "0.2.12"
 edition = "2024"
 
 [dependencies]
-rock-wire = { git = "https://github.com/sunsetlover36/rock-wire", tag = "v0.1.3" }
+# rock-wire = { git = "https://github.com/sunsetlover36/rock-wire", tag = "v0.1.3" }
+rock-wire = { path = "../rock-wire" }
 axum = { version = "0.8.7", features = ["ws", "query"] } 
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -43,3 +44,4 @@ sha2 = "0.11.0"
 hex = "0.4.3"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 toml = "0.9.8"
+alloy = { version = "2.0.4", features = ["signer-local", "signer-mnemonic", "eip712"] }

@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use color_eyre::eyre;
-use slotmap::{SlotMap, new_key_type};
+use slotmap::SlotMap;
 
 use crate::{
     runtime::{
@@ -11,23 +11,8 @@ use crate::{
     utils::json_to_lua,
 };
 
-new_key_type! {
-    pub struct TaskId;
-}
-
-#[derive(Debug)]
-pub enum SceneManagerMessage {
-    AddTask(mlua::RegistryKey),
-    Wake {
-        task_id: TaskId,
-        result: AsyncTaskResult,
-    },
-    Cancel(TaskId),
-    Error {
-        task_id: TaskId,
-        err: String,
-    },
-}
+use super::ctx::SceneCtx;
+use super::protocol::{SceneManagerMessage, SceneYieldOp, TaskId, YieldKind};
 
 pub struct SceneManagerParams {
     pub plugins: HashMap<PluginName, Box<dyn GameModePlugin>>,
@@ -56,7 +41,7 @@ impl SceneManager {
 
     fn add_task(&mut self, lua: &mlua::Lua, thread_rk: mlua::RegistryKey) -> eyre::Result<()> {
         let task_id = self.threads.insert(thread_rk);
-        if let Err(e) = self.advance_task(lua, task_id, ()) {
+        if let Err(e) = self.advance_task(lua, task_id, SceneCtx {}) {
             self.threads.remove(task_id);
             return Err(e);
         }
@@ -100,35 +85,26 @@ impl SceneManager {
         Ok(())
     }
 
-    fn handle_yield(
+    fn handle_plugin_yield(
         &self,
         lua: &mlua::Lua,
         task_id: TaskId,
-        yielded_val: mlua::Value,
+        op: mlua::Table,
     ) -> eyre::Result<()> {
-        let t = match yielded_val {
-            mlua::Value::Table(t) => t,
-            _ => {
-                return Err(eyre::eyre!(
-                    "handle_yield: encountered an unexpected yield output"
-                ));
-            }
-        };
-
-        let opcode: String = t
+        let opcode: String = op
             .get("opcode")
-            .wrap_err("handle_yield: cannot find `opcode` in the yield output")?;
-        let (prefix, suffix) = opcode
-            .split_once("_")
-            .ok_or_else(|| eyre::eyre!("handle_yield: invalid format for opcode ({})", opcode))?;
+            .wrap_err("handle_plugin_yield: cannot find `opcode` in the yield output")?;
+        let (prefix, suffix) = opcode.split_once("_").ok_or_else(|| {
+            eyre::eyre!(
+                "handle_plugin_yield: invalid format for opcode ({})",
+                opcode
+            )
+        })?;
 
         let plugin_name = prefix.to_lowercase().parse::<PluginName>()?;
         match self.plugins.get(&plugin_name) {
             Some(plugin) => {
-                let args: mlua::Table = t
-                    .get("args")
-                    .wrap_err("handle_yield: cannot find `args` in the yield output")?;
-
+                let args = op.get("args").unwrap_or(mlua::Value::Nil);
                 let Some(task) = plugin.handle_op(lua, suffix, args)? else {
                     return Ok(());
                 };
@@ -147,10 +123,67 @@ impl SceneManager {
                     }
                 });
             }
-            None => return Err(eyre::eyre!("handle_yield: plugin {} not found", prefix)),
+            None => {
+                return Err(eyre::eyre!(
+                    "handle_plugin_yield: plugin {} not found",
+                    prefix
+                ));
+            }
         }
 
         Ok(())
+    }
+    fn handle_scene_yield(
+        &self,
+        _: &mlua::Lua,
+        task_id: TaskId,
+        op: mlua::Table,
+    ) -> eyre::Result<()> {
+        let opcode: String = op
+            .get("opcode")
+            .wrap_err("handle_scene_yield: cannot find `opcode` in the yield output")?;
+        let scene_opcode = opcode.parse::<SceneYieldOp>()?;
+        match scene_opcode {
+            SceneYieldOp::Sleep => {
+                let seconds: u64 = op
+                    .get("args")
+                    .wrap_err("handle_scene_yield: cannot find `args` in the yield output")?;
+                let tx = self.tx.clone();
+                self.tokio_handle.spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(seconds)).await;
+                    let _ = tx.send(SceneManagerMessage::Wake {
+                        task_id,
+                        result: AsyncTaskResult::Nil,
+                    });
+                });
+            }
+        }
+
+        Ok(())
+    }
+    fn handle_yield(
+        &self,
+        lua: &mlua::Lua,
+        task_id: TaskId,
+        yielded_val: mlua::Value,
+    ) -> eyre::Result<()> {
+        let t = match yielded_val {
+            mlua::Value::Table(t) => t,
+            _ => {
+                return Err(eyre::eyre!(
+                    "handle_yield: encountered an unexpected yield output"
+                ));
+            }
+        };
+
+        let kind = match t.get::<String>("kind") {
+            Ok(kind) => kind.parse::<YieldKind>()?,
+            Err(_) => YieldKind::Plugin, // backward compatibility
+        };
+        match kind {
+            YieldKind::Scene => self.handle_scene_yield(lua, task_id, t),
+            YieldKind::Plugin => self.handle_plugin_yield(lua, task_id, t),
+        }
     }
 
     pub fn tick(&mut self, lua: &mlua::Lua) {

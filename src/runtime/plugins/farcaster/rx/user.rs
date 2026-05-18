@@ -1,10 +1,17 @@
-use mlua::UserData;
+use mlua::{LuaSerdeExt, UserData};
 use rock_wire::farcaster::Fid;
+
+use crate::runtime::plugins::{
+    farcaster::protocol::{FollowUserOpParams, WriteAsArgs, WriteAsOp},
+    player::PlayerHandle,
+};
 
 #[derive(Clone)]
 pub(crate) struct UserRxOpcodes {
     pub get_by_username: String,
     pub get_by_fids: String,
+    pub follow_user: String,
+    pub unfollow_user: String,
 }
 
 pub(crate) struct UserRxParams {
@@ -49,5 +56,63 @@ impl UserData for UserRx {
 
             lua.yield_with::<mlua::Value>(table).await
         });
+
+        methods.add_async_method(
+            "follow_as",
+            async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
+                let player = ud.borrow::<PlayerHandle>()?;
+
+                if this.fids.is_empty() {
+                    return Err(mlua::Error::runtime(
+                        "user follow: expected at least one target fid",
+                    ));
+                }
+
+                let payload = WriteAsOp {
+                    pid: player.key().pack(),
+                    write_args: write_args.unwrap_or_default(),
+                    params: FollowUserOpParams {
+                        target_fids: this.fids.clone(),
+                    },
+                };
+
+                let args = lua.to_value(&payload)?;
+
+                let op = lua.create_table()?;
+                op.set("opcode", this.opcodes.follow_user.clone())?;
+                op.set("args", args)?;
+
+                lua.yield_with::<mlua::Value>(op).await
+            },
+        );
+
+        methods.add_async_method(
+            "unfollow_as",
+            async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
+                let player = ud.borrow::<PlayerHandle>()?;
+
+                if this.fids.is_empty() {
+                    return Err(mlua::Error::runtime(
+                        "user unfollow: expected at least one target fid",
+                    ));
+                }
+
+                let payload = WriteAsOp {
+                    pid: player.key().pack(),
+                    write_args: write_args.unwrap_or_default(),
+                    params: FollowUserOpParams {
+                        target_fids: this.fids.clone(),
+                    },
+                };
+
+                let args = lua.to_value(&payload)?;
+
+                let op = lua.create_table()?;
+                op.set("opcode", this.opcodes.unfollow_user.clone())?;
+                op.set("args", args)?;
+
+                lua.yield_with::<mlua::Value>(op).await
+            },
+        );
     }
 }

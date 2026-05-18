@@ -90,11 +90,14 @@ impl GameModePlugin for MemoryPlugin {
         &self,
         lua: &mlua::Lua,
         op: &str,
-        args: mlua::Table,
+        args: mlua::Value,
     ) -> eyre::Result<Option<AsyncTask>> {
         let plugin_name = self.name();
-        let meta_db = self.meta_db.clone();
+        let mlua::Value::Table(args) = args else {
+            return Err(eyre::eyre!("{plugin_name}: unknown argument type"));
+        };
 
+        let meta_db = self.meta_db.clone();
         let replicator_tx = get_app_data::<app_data::ReplicatorMarkTx>(lua)
             .wrap_err("App data is not initialized")?
             .0

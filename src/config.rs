@@ -1,4 +1,7 @@
+use std::collections::HashMap;
+
 use color_eyre::eyre;
+use rock_wire::farcaster::Fid;
 use serde::{Deserialize, Serialize};
 use strum::EnumString;
 
@@ -29,6 +32,7 @@ pub(crate) enum AuthKind {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct AuthConfig {
     pub providers: Vec<AuthKind>,
+
     pub ticket: Option<TicketAuthConfig>,
     pub farcaster: Option<FarcasterAuthConfig>,
 }
@@ -50,6 +54,16 @@ pub(crate) struct FarcasterAuthConfig {
 pub(crate) struct FarcasterConfig {
     pub webhook_env: Option<String>,
     pub api_key: Option<String>,
+    pub default_app_fid: Option<Fid>,
+
+    #[serde(default)]
+    pub signers: HashMap<Fid, SignerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SignerConfig {
+    pub mnemonic_env: String,
+    pub derivation_path: Option<String>,
 }
 
 impl Config {
