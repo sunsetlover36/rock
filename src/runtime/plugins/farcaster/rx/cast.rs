@@ -9,8 +9,8 @@ use rock_wire::farcaster::{
 use crate::{
     runtime::plugins::{
         farcaster::protocol::{
-            CastIdentifier, DeleteCastOpParams, PublishReactionOpParams, SendCastOpParams,
-            WriteAsArgs, WriteAsOp,
+            CastGetOptions, CastIdentifier, DeleteCastOpParams, PublishReactionOpParams,
+            SendCastOpParams, WriteAsArgs, WriteAsOp,
         },
         player::PlayerHandle,
     },
@@ -65,6 +65,7 @@ pub(crate) struct CastRx {
     opcodes: CastRxOpcodes,
     text: Option<String>,
     reply_hash: Option<String>,
+    channel_id: Option<String>,
     ids: Vec<CastIdentifier>,
 }
 impl CastRx {
@@ -73,6 +74,7 @@ impl CastRx {
             opcodes: params.opcodes,
             text: None,
             reply_hash: None,
+            channel_id: None,
             ids: params.ids,
         })
     }
@@ -157,7 +159,7 @@ impl CastRx {
             },
         };
         let args = lua.to_value(&payload)?;
-        let op = self.get_op(&lua, opcode_key, &args)?;
+        let op = self.get_op(lua, opcode_key, &args)?;
 
         lua.yield_with::<mlua::Value>(op).await
     }
@@ -165,9 +167,11 @@ impl CastRx {
 
 impl UserData for CastRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_async_method("get", async |lua, this, sort_type: Option<String>| {
-            let sort_type = match sort_type {
-                Some(s) => CastSortKind::from_str(s.as_str())
+        methods.add_async_method("get", async |lua, this, options: Option<CastGetOptions>| {
+            let options = options.unwrap_or_default();
+
+            let sort_type = match &options.sort_type {
+                Some(s) => CastSortKind::from_str(s.as_ref())
                     .map_err(|_| mlua::Error::runtime("cast get: unknown sort type"))?,
                 None => CastSortKind::Recent,
             };
@@ -191,6 +195,7 @@ impl UserData for CastRx {
                 let args = lua.to_value(&GetCastParams {
                     identifier: raw_id.id,
                     id_type: raw_id.kind,
+                    viewer_fid: options.viewer_fid,
                 })?;
                 this.get_op(&lua, CastRxOpcodeKey::Get, &args)?
             };
@@ -245,6 +250,12 @@ impl UserData for CastRx {
             Ok(next)
         });
 
+        methods.add_method("channel", |_, this, id: String| {
+            let mut next = this.clone();
+            next.channel_id = Some(id);
+            Ok(next)
+        });
+
         methods.add_async_method(
             "send_as",
             async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
@@ -261,6 +272,7 @@ impl UserData for CastRx {
                     params: SendCastOpParams {
                         text,
                         parent: this.reply_hash.clone(),
+                        channel_id: this.channel_id.clone(),
                     },
                 };
                 let args = lua.to_value(&payload)?;

@@ -27,6 +27,9 @@ pub(crate) use player::PlayerPlugin;
 pub(crate) mod room;
 pub(crate) use room::RoomPlugin;
 
+pub(crate) mod rock;
+pub(crate) use rock::RockPlugin;
+
 pub(crate) mod scene;
 pub(crate) use scene::ScenePlugin;
 
@@ -35,6 +38,9 @@ pub(crate) use timer::TimerPlugin;
 
 pub(crate) mod constants;
 pub(crate) use constants::ConstantsPlugin;
+
+pub(crate) mod json;
+pub(crate) use json::JsonPlugin;
 
 pub(crate) mod protocol;
 use protocol::*;

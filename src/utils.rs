@@ -24,6 +24,8 @@ pub fn json_to_lua(lua: &Lua, value: JsonValue) -> mlua::Result<LuaValue> {
             for (i, v) in arr.into_iter().enumerate() {
                 table.set(i + 1, json_to_lua(lua, v)?)?;
             }
+
+            table.set_metatable(Some(lua.array_metatable()))?;
             LuaValue::Table(table)
         }
 

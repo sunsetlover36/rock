@@ -9,6 +9,7 @@ use crate::{
     cli::Cli,
     clients::FarcasterApi,
     config::Config,
+    crypto::Crypto,
     meta_db::{MetaDb, MetaDbConfig},
     player_pool::PlayerPool,
     router::CommitRouter,
@@ -27,6 +28,7 @@ mod api;
 mod cli;
 mod clients;
 mod config;
+mod crypto;
 mod envelope;
 mod meta_db;
 mod player_pool;
@@ -102,6 +104,20 @@ async fn run() -> eyre::Result<()> {
                         }
                     };
 
+                    let crypto = if let Some(config) = runtime_config.crypto.as_ref()
+                        && let Some(rpc_url) = &config.rpc_url
+                    {
+                        match Crypto::new(rpc_url) {
+                            Ok(crypto) => Some(crypto),
+                            Err(err) => {
+                                eprintln!("Failed to initialize Crypto module: {err}");
+                                break;
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
                     let fc_api = if let Some(config) = runtime_config.farcaster.as_ref() {
                         if let Some(key) = &config.api_key {
                             match FarcasterApi::new(key, config.signers.clone()) {
@@ -127,6 +143,7 @@ async fn run() -> eyre::Result<()> {
                         command_rx: runtime_cmd_rx.clone(),
                         commit_router: commit_router.clone(),
                         meta_db,
+                        crypto,
                         fc_api,
                         tokio_handle: tokio_handle.clone(),
                     };

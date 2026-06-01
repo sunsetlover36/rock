@@ -14,6 +14,9 @@ pub(crate) struct Config {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub farcaster: Option<FarcasterConfig>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crypto: Option<CryptoConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +69,11 @@ pub(crate) struct SignerConfig {
     pub derivation_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct CryptoConfig {
+    pub rpc_url: Option<String>,
+}
+
 impl Config {
     pub fn filename() -> &'static str {
         "config.toml"
@@ -85,6 +93,7 @@ impl Default for Config {
             },
             auth: Some(AuthConfig::default()),
             farcaster: Some(FarcasterConfig::default()),
+            crypto: Some(CryptoConfig::default()),
         }
     }
 }

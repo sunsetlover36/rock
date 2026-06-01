@@ -7,8 +7,9 @@ use rock_wire::{
     farcaster::{
         BulkFetchCastsParams, DeleteCastParams, DeleteReactionParams, Fid, FollowUserParams,
         GetCastConversationParams, GetCastParams, GetFollowingFeedParams, GetForYouFeedParams,
-        GetReactionsParams, GetUserByUsernameParams, GetUsersByFidsParams, PublishReactionParams,
-        SendCastParams, SignerResponse, SignerStatus, UnfollowUserParams,
+        GetReactionsParams, GetUserByUsernameParams, GetUserCastsParams, GetUsersByFidsParams,
+        PublishReactionParams, SearchUsersParams, SendCastParams, SignerResponse, SignerStatus,
+        UnfollowUserParams,
     },
 };
 use strum::{AsRefStr, Display, EnumString};
@@ -58,11 +59,13 @@ pub(crate) enum FarcasterOp {
     CastReactionDelete,
     UserGetByUsername,
     UserGetByFids,
+    UserSearchByUsername,
+    GetUserCasts,
     UserFollow,
     UserUnfollow,
     SignerRequest,
     SignerGet,
-    SignerStatus,
+    SignerRefresh,
     FeedForYou,
     FeedFollowing,
 }
@@ -220,6 +223,12 @@ impl GameModePlugin for FarcasterPlugin {
         let user_opcodes = UserRxOpcodes {
             get_by_username: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserGetByUsername),
             get_by_fids: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserGetByFids),
+            search_by_username: format!(
+                "{}_{}",
+                &name_in_uppercase,
+                FarcasterOp::UserSearchByUsername
+            ),
+            get_user_casts: format!("{}_{}", &name_in_uppercase, FarcasterOp::GetUserCasts),
             follow_user: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserFollow),
             unfollow_user: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserUnfollow),
         };
@@ -232,6 +241,9 @@ impl GameModePlugin for FarcasterPlugin {
             match v {
                 mlua::Value::String(s) => {
                     username = Some(s.to_string_lossy());
+                }
+                mlua::Value::Integer(fid) => {
+                    fids.push(fid as Fid);
                 }
                 mlua::Value::Table(arr) => {
                     if arr.is_empty() {
@@ -261,7 +273,7 @@ impl GameModePlugin for FarcasterPlugin {
         let signer_opcodes = SignerRxOpcodes {
             request: format!("{}_{}", &name_in_uppercase, FarcasterOp::SignerRequest),
             get: format!("{}_{}", &name_in_uppercase, FarcasterOp::SignerGet),
-            status: format!("{}_{}", &name_in_uppercase, FarcasterOp::SignerStatus),
+            refresh: format!("{}_{}", &name_in_uppercase, FarcasterOp::SignerRefresh),
         };
         let signer_fn = lua.create_function(move |_, ud: mlua::AnyUserData| {
             let player = ud.borrow::<PlayerHandle>()?;
@@ -371,6 +383,9 @@ impl GameModePlugin for FarcasterPlugin {
                         signer_uuid,
                         text: payload.params.text,
                         parent: payload.params.parent,
+                        channel_id: payload.params.channel_id,
+                        // FIXME: embeds integration
+                        embeds: None,
                     };
                     let cast = fc_api.send_cast(&params).await?;
                     Ok(AsyncTaskResult::JsonValue(serde_json::to_value(cast)?))
@@ -471,6 +486,28 @@ impl GameModePlugin for FarcasterPlugin {
                 let future = Box::pin(async move {
                     let users = fc_api.get_users_by_fids(&params).await?;
                     Ok(AsyncTaskResult::JsonValue(serde_json::to_value(users)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::UserSearchByUsername => {
+                let params: SearchUsersParams = lua.from_value(args).wrap_err(&format!(
+                    "{plugin_name}.user [search method]: incorrect args for 'SearchUsersByUsername'"
+                ))?;
+
+                let future = Box::pin(async move {
+                    let res = fc_api.search_users(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::GetUserCasts => {
+                let params: GetUserCastsParams = lua.from_value(args).wrap_err(&format!(
+                    "{plugin_name}.user [get casts method]: incorrect args for 'GetUserCastsParams'"
+                ))?;
+
+                let future = Box::pin(async move {
+                    let res = fc_api.get_user_casts(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
                 });
                 Ok(Some(future))
             }
@@ -588,7 +625,7 @@ impl GameModePlugin for FarcasterPlugin {
                 });
                 Ok(Some(future))
             }
-            FarcasterOp::SignerStatus => {
+            FarcasterOp::SignerRefresh => {
                 let SignerGetOptions {
                     app_fid,
                     player_fid,
@@ -607,12 +644,11 @@ impl GameModePlugin for FarcasterPlugin {
                     let mut stored: StoredSigner = serde_json::from_value(existing)?;
                     let signer = fc_api.lookup_signer(&stored.signer.signer_uuid).await?;
                     stored.signer = signer;
-                    let status = stored.signer.status.as_ref().to_string();
 
                     let value = serde_json::to_value(stored)?;
                     meta_db.update_key(&key, Some(value.clone())).await?;
 
-                    Ok(AsyncTaskResult::JsonValue(serde_json::json!(status)))
+                    Ok(AsyncTaskResult::JsonValue(value))
                 });
                 Ok(Some(future))
             }

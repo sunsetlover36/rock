@@ -10,7 +10,9 @@ use mlua::Lua;
 use rock_wire::{ImpromptuRequest, IncomingRequest};
 use smallvec::smallvec;
 
-use crate::{clients::FarcasterApi, config::Config, meta_db::MetaDb, router::CommitRouter};
+use crate::{
+    clients::FarcasterApi, config::Config, crypto::Crypto, meta_db::MetaDb, router::CommitRouter,
+};
 
 pub mod default_client_api;
 pub(crate) mod event_bus;
@@ -18,8 +20,9 @@ pub(crate) use event_bus::EventBus;
 
 pub(crate) mod plugins;
 use plugins::{
-    ConstantsPlugin, EntityPlugin, FarcasterPlugin, InputPlugin, LayerPlugin, MemoryPlugin,
-    OnPlugin, PlayerPlugin, PluginComposer, RoomPlugin, ScenePlugin, TimerPlugin,
+    ConstantsPlugin, EntityPlugin, FarcasterPlugin, InputPlugin, JsonPlugin, LayerPlugin,
+    MemoryPlugin, OnPlugin, PlayerPlugin, PluginComposer, RockPlugin, RoomPlugin, ScenePlugin,
+    TimerPlugin,
     on::{
         event_descriptors::GLOBAL_EVENT_DESCRIPTORS,
         protocol::{
@@ -58,6 +61,7 @@ pub struct RuntimeParams {
     pub command_rx: flume::Receiver<RuntimeCommand>,
     pub commit_router: CommitRouter,
     pub meta_db: MetaDb,
+    pub crypto: Option<Crypto>,
     pub fc_api: Option<FarcasterApi>,
     pub tokio_handle: tokio::runtime::Handle,
 }
@@ -117,6 +121,7 @@ impl Runtime {
         let mut plugin_composer = PluginComposer::new(&lua)?;
         let mut plugins: Vec<Box<dyn GameModePlugin>> = vec![
             Box::new(ConstantsPlugin {}),
+            Box::new(JsonPlugin {}),
             Box::new(InputPlugin {}),
             Box::new(OnPlugin {
                 descriptors: GLOBAL_EVENT_DESCRIPTORS,
@@ -138,6 +143,11 @@ impl Runtime {
                 fc_api: Arc::new(fc_api),
                 meta_db: meta_db.clone(),
                 config: params.config.farcaster,
+            }));
+        }
+        if let Some(crypto) = params.crypto {
+            plugins.push(Box::new(RockPlugin {
+                crypto: Arc::new(crypto),
             }));
         }
 

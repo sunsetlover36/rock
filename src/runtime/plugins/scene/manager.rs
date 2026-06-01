@@ -201,8 +201,23 @@ impl SceneManager {
                     let lua_val = match result {
                         AsyncTaskResult::JsonValue(v) => match json_to_lua(lua, v) {
                             mlua::Result::Ok(v) => v,
-                            mlua::Result::Err(_) => continue,
+                            mlua::Result::Err(err) => {
+                                eprintln!(
+                                    "scene_manager.tick: failed to convert JSON result to Lua value: {err}"
+                                );
+                                continue;
+                            }
                         },
+                        AsyncTaskResult::String(s) => match lua.create_string(&s) {
+                            mlua::Result::Ok(s) => mlua::Value::String(s),
+                            mlua::Result::Err(err) => {
+                                eprintln!(
+                                    "scene_manager.tick: failed to create Lua string result: {err}"
+                                );
+                                continue;
+                            }
+                        },
+                        AsyncTaskResult::Bool(b) => mlua::Value::Boolean(b),
                         AsyncTaskResult::Nil => mlua::Value::Nil,
                     };
 

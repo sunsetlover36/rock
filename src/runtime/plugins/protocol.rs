@@ -6,6 +6,8 @@ use strum::{AsRefStr, Display, EnumString};
 #[derive(Debug)]
 pub enum AsyncTaskResult {
     JsonValue(serde_json::Value),
+    String(String),
+    Bool(bool),
     Nil,
 }
 pub type AsyncTask = BoxFuture<'static, eyre::Result<AsyncTaskResult>>;
@@ -33,8 +35,10 @@ pub enum PluginName {
     On,
     Player,
     Room,
+    Rock,
     Scene,
     Timer,
+    Json,
 
     #[strum(serialize = "Const")]
     Constants,

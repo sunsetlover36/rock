@@ -10,7 +10,7 @@ use crate::runtime::{
 pub(crate) struct SignerRxOpcodes {
     pub request: String,
     pub get: String,
-    pub status: String,
+    pub refresh: String,
 }
 
 pub(crate) struct SignerRxParams {
@@ -98,9 +98,9 @@ impl UserData for SignerRx {
             lua.yield_with::<mlua::Value>(op).await
         });
 
-        methods.add_async_method("status", async |lua, this, args: Option<WriteAsArgs>| {
-            let args = this.args_or_default(args, "status")?;
-            let op = this.build_op(&lua, this.opcodes.status.clone(), args, "status")?;
+        methods.add_async_method("refresh", async |lua, this, args: Option<WriteAsArgs>| {
+            let args = this.args_or_default(args, "refresh")?;
+            let op = this.build_op(&lua, this.opcodes.refresh.clone(), args, "refresh")?;
             lua.yield_with::<mlua::Value>(op).await
         });
     }

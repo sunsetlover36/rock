@@ -1,15 +1,20 @@
 use mlua::{LuaSerdeExt, UserData};
 use rock_wire::farcaster::Fid;
 
-use crate::runtime::plugins::{
-    farcaster::protocol::{FollowUserOpParams, WriteAsArgs, WriteAsOp},
-    player::PlayerHandle,
+use crate::{
+    runtime::plugins::{
+        farcaster::protocol::{FollowUserOpParams, WriteAsArgs, WriteAsOp},
+        player::PlayerHandle,
+    },
+    rx::CursorRx,
 };
 
 #[derive(Clone)]
 pub(crate) struct UserRxOpcodes {
     pub get_by_username: String,
     pub get_by_fids: String,
+    pub search_by_username: String,
+    pub get_user_casts: String,
     pub follow_user: String,
     pub unfollow_user: String,
 }
@@ -55,6 +60,42 @@ impl UserData for UserRx {
             }
 
             lua.yield_with::<mlua::Value>(table).await
+        });
+
+        methods.add_async_method("search", async |lua, this, params: Option<mlua::Table>| {
+            if let Some(username) = this.username.clone() {
+                let op = lua.create_table()?;
+                op.set("opcode", this.opcodes.search_by_username.clone())?;
+
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("q", username)?;
+                op.set("args", args)?;
+
+                Ok(CursorRx::new(op))
+            } else {
+                Err(mlua::Error::runtime("user search: expected a username"))
+            }
+        });
+
+        methods.add_async_method("casts", async |lua, this, params: Option<mlua::Table>| {
+            let Some(fid) = this.fids.first().copied() else {
+                return Err(mlua::Error::runtime("user casts: expected a fid"));
+            };
+
+            if this.fids.len() > 1 {
+                return Err(mlua::Error::runtime(
+                    "user casts: expected exactly one fid, got multiple",
+                ));
+            }
+
+            let op = lua.create_table()?;
+            op.set("opcode", this.opcodes.get_user_casts.clone())?;
+
+            let args = params.unwrap_or(lua.create_table()?);
+            args.set("fid", fid)?;
+            op.set("args", args)?;
+
+            Ok(CursorRx::new(op))
         });
 
         methods.add_async_method(

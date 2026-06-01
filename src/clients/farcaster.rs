@@ -1,10 +1,6 @@
 use alloy::{
-    primitives::{Bytes, U256, address},
-    signers::{
-        Signer,
-        local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English},
-    },
-    sol,
+    primitives::{U256, address},
+    signers::Signer,
     sol_types::eip712_domain,
 };
 use color_eyre::eyre;
@@ -18,17 +14,22 @@ use rock_wire::farcaster::{
     DeleteReactionParams, Fid, FollowUserParams, FollowUserResponse, FollowingFeedResponse,
     ForYouFeedResponse, GetCastConversationParams, GetCastParams, GetCastResponse,
     GetFollowingFeedParams, GetForYouFeedParams, GetReactionsParams, GetReactionsRawQuery,
-    GetSignerStatusParams, GetUserByUsernameParams, GetUserByUsernameResponse,
+    GetSignerStatusParams, GetUserByUsernameParams, GetUserByUsernameResponse, GetUserCastsParams,
     GetUsersByFidsParams, GetUsersByFidsRawQuery, GetUsersByFidsResponse, PublishReactionParams,
-    ReactionResponse, ReactionsResponse, RegisterSignedKeyParams, SendCastParams, SendCastResponse,
+    ReactionResponse, ReactionsResponse, RegisterSignedKeyParams, SearchUsersParams,
+    SearchUsersResponse, SearchUsersResult, SendCastParams, SendCastResponse,
     SignedKeyRequestSponsor, SignerResponse, UnfollowUserParams, UnfollowUserResponse, User,
+    UserCastsResponse,
 };
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::config::SignerConfig;
+use crate::{
+    config::SignerConfig,
+    crypto::{SignedKeyRequest, parse_hex_bytes, signer_from_config},
+};
 
 #[derive(Clone)]
 pub(crate) struct RegisterSignedKeyOptions {
@@ -38,30 +39,6 @@ pub(crate) struct RegisterSignedKeyOptions {
     pub public_key: String,
     pub redirect_url: Option<String>,
     pub sponsor: Option<SignedKeyRequestSponsor>,
-}
-
-fn parse_hex_bytes(s: &str) -> eyre::Result<Bytes> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    Ok(Bytes::from(hex::decode(s)?))
-}
-
-sol! {
-    struct SignedKeyRequest {
-        uint256 requestFid;
-        bytes key;
-        uint256 deadline;
-    }
-}
-fn signer_from_config(cfg: &SignerConfig) -> eyre::Result<PrivateKeySigner> {
-    let mnemonic = std::env::var(&cfg.mnemonic_env)
-        .map_err(|_| eyre::eyre!("missing mnemonic env {}", cfg.mnemonic_env))?;
-
-    let mut builder = MnemonicBuilder::<English>::default().phrase(mnemonic.as_str());
-    if let Some(path) = &cfg.derivation_path {
-        builder = builder.derivation_path(path)?;
-    }
-
-    Ok(builder.build()?)
 }
 
 #[derive(Clone)]
@@ -283,6 +260,44 @@ impl FarcasterApi {
             .json::<GetUsersByFidsResponse>()
             .await?;
         Ok(response.users)
+    }
+
+    pub async fn search_users(
+        &self,
+        params: &SearchUsersParams,
+    ) -> eyre::Result<SearchUsersResult> {
+        let url = format!("{}/farcaster/user/search", self.base_url);
+
+        let response = self
+            .client
+            .get(url)
+            .query(params)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<SearchUsersResponse>()
+            .await?;
+
+        Ok(response.result)
+    }
+
+    pub async fn get_user_casts(
+        &self,
+        params: &GetUserCastsParams,
+    ) -> eyre::Result<UserCastsResponse> {
+        let url = format!("{}/farcaster/feed/user/casts", self.base_url);
+
+        let response = self
+            .client
+            .get(url)
+            .query(params)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<UserCastsResponse>()
+            .await?;
+
+        Ok(response)
     }
 
     pub async fn follow_user(&self, params: &FollowUserParams) -> eyre::Result<FollowUserResponse> {

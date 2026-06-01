@@ -1,7 +1,7 @@
 use mlua::{FromLua, LuaSerdeExt};
 use rock_wire::{
     PlayerId, PlayerKey,
-    farcaster::{CastIdentifierKind, Fid, ReactionKind, SignerResponse},
+    farcaster::{CastIdentifierKind, ConversationSortKind, Fid, ReactionKind, SignerResponse},
 };
 use serde::{Deserialize, Serialize};
 
@@ -155,11 +155,23 @@ pub(crate) struct SignerGetOptions {
     pub player_fid: Fid,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct CastGetOptions {
+    pub sort_type: Option<ConversationSortKind>,
+    pub viewer_fid: Option<Fid>,
+}
+impl FromLua for CastGetOptions {
+    fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
+        lua.from_value(value)
+    }
+}
+
 // -- Signed requests params
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SendCastOpParams {
     pub text: String,
     pub parent: Option<String>,
+    pub channel_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
