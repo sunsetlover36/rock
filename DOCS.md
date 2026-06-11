@@ -82,10 +82,14 @@ api_key = "YOUR_NEYNAR_API_KEY"
 ```env
 HOST=127.0.0.1
 PORT=3000
+ROCK_SESSION_COOKIE=rock_session
 ```
 
 * `HOST`: address to bind the server (default: `127.0.0.1`)
 * `PORT`: port to listen on (default: `3000`)
+* `ROCK_SESSION_COOKIE`: cookie name used for authenticated WebSocket sessions (default: `rock_session`)
+
+The engine loads environment variables from a local `.env` file on startup, then falls back to the process environment.
 
 ### CLI
 
@@ -274,7 +278,7 @@ player_bp:sync():commit()
 ### Step 4: Handle player connections
 
 ```lua
-on.player.online():each(function(p)
+on.player.online():each(function(p, params)
   local pid = p:id()
 
   -- spawn a player entity
@@ -287,17 +291,14 @@ on.player.online():each(function(p)
   p:vision():attach(ent)
 
   -- send the player their identity
-  p:signal("Identity"):data({ pid = pid }):send()
+  p:signal("Identity"):data({ pid = pid, room = params.room }):send()
 
   print(string.format("Player %d joined", pid))
 end)
 
 on.player.offline():each(function(p)
-  -- clean up: despawn all entities owned by this player
-  entity.query():owned_by(p:id()):each(function(ent)
-    ent:despawn()
-  end)
-  print(string.format("Player %d left", p:id()))
+  -- offline receives a snapshot, not a live player handle.
+  print("Player left:", p:who() or "anonymous")
 end)
 ```
 
@@ -342,8 +343,8 @@ The event system. Every event in ROCK is listened to through `on`.
 |-------|-------------|-------------|
 | `on.world.awake()` | *(none)* | Fires once when the gamemode starts |
 | `on.world.impromptu()` | *(none)* | Fires when code is injected via `/impromptu` endpoint |
-| `on.player.online()` | `PlayerHandle` | Player connected |
-| `on.player.offline()` | `PlayerHandle` | Player disconnected |
+| `on.player.online()` | `PlayerHandle, connection_params` | Player connected |
+| `on.player.offline()` | `PlayerSnapshot` | Player disconnected |
 | `on.player.input()` | `PlayerHandle, InputAction` | Player sent input (see `:bind_action` below) |
 | `on.player.enter()` | `PlayerHandle, room_name` | Player entered a room |
 | `on.player.exit()` | `PlayerHandle, room_name` | Player exited a room |
@@ -633,14 +634,13 @@ player.broadcast()
 | `:signal([name])` | `SignalRx` | Create a signal targeted to this player |
 | `:presence()` | `PlayerPresence` | Access presence management |
 | `:vision()` | `PlayerVision` | Access vision/anchor management |
-| `:connection_params()` | `table` | Query params from the WebSocket connection URL |
 | `:who()` | `string?` | Auth identity, e.g. `fc:423406`, or `nil` for anon sessions |
+| `:fid()` | `number?` | Farcaster ID parsed from `:who()`, or `nil` for anon/non-Farcaster sessions |
 
-**Connection params.** When a client connects via `ws://host:port/?room=0xabc&name=Bob`, the query string is captured at handshake time and exposed as a Lua table:
+**Connection params.** When a client connects via `ws://host:port/?room=0xabc&name=Bob`, the query string is captured at handshake time and passed as the second `on.player.online()` argument:
 
 ```lua
-on.player.online():each(function(p)
-  local params = p:connection_params()
+on.player.online():each(function(p, params)
   local room_hash = params.room     -- "0xabc"
   local display_name = params.name  -- "Bob"
 
@@ -652,6 +652,15 @@ end)
 ```
 
 All values are strings (or `nil` if the param is absent). Use `tonumber()` to coerce numeric params yourself.
+
+#### PlayerSnapshot
+
+`on.player.offline()` receives a `PlayerSnapshot` instead of a live `PlayerHandle`. By the time the offline event fires, the socket has gone away, so you can read identity data but cannot send signals, kick, edit presence, or attach vision.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `:who()` | `string?` | Auth identity, e.g. `fc:423406`, or `nil` for anon sessions |
+| `:fid()` | `number?` | Farcaster ID parsed from `:who()`, or `nil` for anon/non-Farcaster sessions |
 
 #### PlayerPresence
 
@@ -1072,6 +1081,23 @@ end)
 | Method | Args | Returns | Description |
 |--------|------|---------|-------------|
 | `:get()` | -- | `User` or `User[]` | Execute the lookup (scene-only). Single `User` when called with a username, array when called with a FID list |
+| `:search([params])` | `table?` | `CursorRx` | Search users by username query. Only valid when `fc.user()` was created with a username string |
+| `:casts([params])` | `table?` | `CursorRx` | Fetch casts for a single FID |
+| `:notifications([params])` | `table?` | `CursorRx` | Fetch notifications for a single FID |
+| `:follow_as(player, [args])` | `PlayerHandle, table?` | response | Follow one or more FIDs as the connected player (scene-only) |
+| `:unfollow_as(player, [args])` | `PlayerHandle, table?` | response | Unfollow one or more FIDs as the connected player (scene-only) |
+
+Cursor-returning methods are consumed with `:next()` inside a scene:
+
+```lua
+scene.run(function()
+  local notifications = fc.user({ 423406 })
+    :notifications({ limit = 25 })
+    :next()
+
+  print("notifications:", #notifications.notifications)
+end)
+```
 
 The returned `User` table matches the Neynar user shape. Commonly used fields:
 
@@ -1092,16 +1118,17 @@ The returned `User` table matches the Neynar user shape. Commonly used fields:
 
 Some nested payloads (e.g. `app` on a webhook, `mentioned_profiles` inside a bio) use a **dehydrated** user shape with a subset of fields — `fid` is always present, the rest (`username`, `display_name`, `pfp_url`, `custody_address`, `score`) may be `nil`.
 
-#### `fc.cast(signer_uuid)`
+#### `fc.cast(identifier)`
 
-Start composing a cast. `signer_uuid` is the UUID of the Neynar signer authorized to post on behalf of a user. Returns a `CastRx` builder. Chain fields, then `:send()` inside a scene to publish.
+Look up casts or start composing a cast. The identifier can be a hash, URL, or a table of identifiers, depending on the read method you call. With no identifier, use the returned `CastRx` as a composer. Chain fields, then call `:send_as(player)` inside a scene to publish as a connected player with an approved signer.
 
 ```lua
 scene.run(function()
-  local cast = fc.cast(SIGNER_UUID)
+  local cast = fc.cast()
     :text("Roger.")
     :reply_to(parent_hash)   -- optional
-    :send()
+    :embed_url("https://example.com")
+    :send_as(p)
 
   print("sent:", cast.hash)
 end)
@@ -1111,11 +1138,23 @@ end)
 
 | Method | Args | Returns | Description |
 |--------|------|---------|-------------|
+| `:get([options])` | `table?` | `Cast` or `Cast[]` | Fetch one or more casts (scene-only) |
+| `:convo([options])` | `table?` | `CursorRx` | Fetch a cast conversation thread |
+| `:reactions([options])` | `table?` | `CursorRx` | Fetch all reactions for a cast |
+| `:likes([options])` | `table?` | `CursorRx` | Fetch likes for a cast |
+| `:recasts([options])` | `table?` | `CursorRx` | Fetch recasts for a cast |
 | `:text(s)` | `string` | self | Set the cast body |
 | `:reply_to(hash)` | `string` | self | Make this cast a reply to another cast (by hash). Omit for a top-level cast |
-| `:send()` | -- | `CreatedCast` | Publish the cast (scene-only) |
+| `:channel(id)` | `string` | self | Post into a channel |
+| `:quote(cast_id)` | `table` | self | Attach a quoted cast embed. Counts toward the 4-embed limit |
+| `:embed_url(url)` | `string` | self | Attach a URL embed. Counts toward the 4-embed limit |
+| `:send_as(player, [args])` | `PlayerHandle, table?` | `CreatedCast` | Publish the cast as a connected player (scene-only) |
+| `:like_as(player, [args])` | `PlayerHandle, table?` | response | Like a cast as a connected player (scene-only) |
+| `:recast_as(player, [args])` | `PlayerHandle, table?` | response | Recast as a connected player (scene-only) |
+| `:unlike_as(player, [args])` | `PlayerHandle, table?` | response | Remove a like as a connected player (scene-only) |
+| `:unrecast_as(player, [args])` | `PlayerHandle, table?` | response | Remove a recast as a connected player (scene-only) |
 
-`:send()` returns the created cast:
+`:send_as()` returns the created cast:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1123,7 +1162,7 @@ end)
 | `author` | `{ fid }` | Author reference |
 | `text` | `string` | Final cast text |
 
-> Note: `SIGNER_UUID` is not provided by the engine — set it yourself (e.g. as a Lua global or via `memory`) with the signer UUID from your Neynar app.
+`args` is optional and can include `app_fid` when a server has multiple configured Farcaster apps. If omitted, ROCK uses the default app FID from config.
 
 #### `on.fc.webhook()`
 
@@ -1136,13 +1175,8 @@ on.fc.webhook()
   :each(function(cast)
     print(string.format("new mention. hash: %s. text: %s", cast.hash, cast.text))
 
-    scene.run(function()
-      local reply = fc.cast(SIGNER_UUID)
-        :text("Roger.")
-        :reply_to(cast.hash)
-        :send()
-      print("sent a response:", reply.hash)
-    end)
+    -- Webhooks are not tied to a connected player. To write back, publish from
+    -- a player-scoped handler with an approved signer using fc.cast():send_as(p).
   end)
 ```
 
@@ -1200,13 +1234,8 @@ on.fc.webhook()
   :each(function(cast)
     print(string.format("new mention. hash: %s. text: %s", cast.hash, cast.text))
 
-    scene.run(function()
-      local reply = fc.cast(SIGNER_UUID)
-        :text("Roger.")
-        :reply_to(cast.hash)
-        :send()
-      print("sent a response:", reply.hash)
-    end)
+    -- Webhooks are not tied to a connected player. To write back, publish from
+    -- a player-scoped handler with an approved signer using fc.cast():send_as(p).
   end)
 ```
 
@@ -1469,7 +1498,9 @@ Custom fields are replicated to clients alongside components when included in sy
 
 ## WebSocket Protocol
 
-The server communicates via JSON over WebSocket on `ws://127.0.0.1:3000`. Query params passed at connection time are available via `p:connection_params()`.
+The server communicates via JSON over WebSocket on `ws://127.0.0.1:3000`. Query params passed at connection time are available as the second argument to `on.player.online()`.
+
+The server sends WebSocket ping frames every 25 seconds to keep idle connections alive and detect dead sockets.
 
 ### Client to Server
 
@@ -1511,13 +1542,17 @@ The server communicates via JSON over WebSocket on `ws://127.0.0.1:3000`. Query 
 
 ### Authentication
 
-You can connect to protected worlds with:
+Protected worlds authenticate WebSocket sessions from an HTTP cookie. By default the cookie is named `rock_session`; override the name with `ROCK_SESSION_COOKIE`.
+
+Use `?auth=ticket` or `?auth=farcaster` to select the verifier. If omitted, the server defaults to `ticket`.
+
 ```txt
-ws://127.0.0.1:3000/?auth=ticket&token=...
-ws://127.0.0.1:3000/?auth=farcaster&token=...
+Cookie: rock_session=...
+ws://127.0.0.1:3000/?auth=ticket
+ws://127.0.0.1:3000/?auth=farcaster
 ```
 
-Omit both for anon sessions. Tickets use JWT (HS256). Farcaster Quick Auth uses RS256.
+Omit the cookie for anon sessions. Tickets use JWT (HS256). Farcaster Quick Auth uses RS256.
 
 ---
 
