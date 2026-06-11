@@ -1,7 +1,9 @@
 use mlua::{FromLua, LuaSerdeExt};
 use rock_wire::{
     PlayerId, PlayerKey,
-    farcaster::{CastIdentifierKind, ConversationSortKind, Fid, ReactionKind, SignerResponse},
+    farcaster::{
+        CastEmbed, CastIdentifierKind, ConversationSortKind, Fid, ReactionKind, SignerResponse,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -172,6 +174,7 @@ pub(crate) struct SendCastOpParams {
     pub text: String,
     pub parent: Option<String>,
     pub channel_id: Option<String>,
+    pub embeds: Vec<CastEmbed>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

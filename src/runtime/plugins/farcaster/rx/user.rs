@@ -17,6 +17,7 @@ pub(crate) struct UserRxOpcodes {
     pub get_user_casts: String,
     pub follow_user: String,
     pub unfollow_user: String,
+    pub get_notifications: String,
 }
 
 pub(crate) struct UserRxParams {
@@ -153,6 +154,30 @@ impl UserData for UserRx {
                 op.set("args", args)?;
 
                 lua.yield_with::<mlua::Value>(op).await
+            },
+        );
+
+        methods.add_async_method(
+            "notifications",
+            async |lua, this, params: Option<mlua::Table>| {
+                let Some(fid) = this.fids.first().copied() else {
+                    return Err(mlua::Error::runtime("user notifications: expected a fid"));
+                };
+
+                if this.fids.len() > 1 {
+                    return Err(mlua::Error::runtime(
+                        "user notifications: expected exactly one fid, got multiple",
+                    ));
+                }
+
+                let op = lua.create_table()?;
+                op.set("opcode", this.opcodes.get_notifications.clone())?;
+
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", fid)?;
+                op.set("args", args)?;
+
+                Ok(CursorRx::new(op))
             },
         );
     }

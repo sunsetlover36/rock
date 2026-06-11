@@ -13,13 +13,13 @@ use rock_wire::farcaster::{
     CastConversationResponse, CreatedCast, DeleteCastParams, DeleteCastResponse,
     DeleteReactionParams, Fid, FollowUserParams, FollowUserResponse, FollowingFeedResponse,
     ForYouFeedResponse, GetCastConversationParams, GetCastParams, GetCastResponse,
-    GetFollowingFeedParams, GetForYouFeedParams, GetReactionsParams, GetReactionsRawQuery,
-    GetSignerStatusParams, GetUserByUsernameParams, GetUserByUsernameResponse, GetUserCastsParams,
-    GetUsersByFidsParams, GetUsersByFidsRawQuery, GetUsersByFidsResponse, PublishReactionParams,
-    ReactionResponse, ReactionsResponse, RegisterSignedKeyParams, SearchUsersParams,
-    SearchUsersResponse, SearchUsersResult, SendCastParams, SendCastResponse,
-    SignedKeyRequestSponsor, SignerResponse, UnfollowUserParams, UnfollowUserResponse, User,
-    UserCastsResponse,
+    GetFollowingFeedParams, GetForYouFeedParams, GetNotificationsParams, GetNotificationsRawQuery,
+    GetReactionsParams, GetReactionsRawQuery, GetSignerStatusParams, GetUserByUsernameParams,
+    GetUserByUsernameResponse, GetUserCastsParams, GetUsersByFidsParams, GetUsersByFidsRawQuery,
+    GetUsersByFidsResponse, NotificationsResponse, PublishReactionParams, ReactionResponse,
+    ReactionsResponse, RegisterSignedKeyParams, SearchUsersParams, SearchUsersResponse,
+    SearchUsersResult, SendCastParams, SendCastResponse, SignedKeyRequestSponsor, SignerResponse,
+    UnfollowUserParams, UnfollowUserResponse, User, UserCastsResponse,
 };
 use std::{
     collections::HashMap,
@@ -453,6 +453,26 @@ impl FarcasterApi {
             .await?
             .error_for_status()?
             .json::<FollowingFeedResponse>()
+            .await?;
+
+        Ok(response)
+    }
+
+    pub async fn get_notifications(
+        &self,
+        params: &GetNotificationsParams,
+    ) -> eyre::Result<NotificationsResponse> {
+        let url = format!("{}/farcaster/notifications", self.base_url);
+        let query = GetNotificationsRawQuery::from(params);
+
+        let response = self
+            .client
+            .get(url)
+            .query(&query)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<NotificationsResponse>()
             .await?;
 
         Ok(response)

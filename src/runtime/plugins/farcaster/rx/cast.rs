@@ -2,8 +2,9 @@ use std::str::FromStr;
 
 use mlua::{LuaSerdeExt, UserData};
 use rock_wire::farcaster::{
-    BulkFetchCastsParams, CastConversationOptions, CastSortKind, GetCastConversationParams,
-    GetCastParams, GetReactionsOptions, GetReactionsParams, ReactionFilter, ReactionKind,
+    BulkFetchCastsParams, CastConversationOptions, CastEmbed, CastEmbedCastId, CastSortKind,
+    GetCastConversationParams, GetCastParams, GetReactionsOptions, GetReactionsParams,
+    ReactionFilter, ReactionKind,
 };
 
 use crate::{
@@ -65,15 +66,19 @@ pub(crate) struct CastRx {
     opcodes: CastRxOpcodes,
     text: Option<String>,
     reply_hash: Option<String>,
+    embeds: Vec<CastEmbed>,
     channel_id: Option<String>,
     ids: Vec<CastIdentifier>,
 }
+
+const MAX_CAST_EMBEDS: usize = 4;
 impl CastRx {
     pub fn new(params: CastRxParams) -> mlua::Result<Self> {
         Ok(CastRx {
             opcodes: params.opcodes,
             text: None,
             reply_hash: None,
+            embeds: Vec::new(),
             channel_id: None,
             ids: params.ids,
         })
@@ -163,6 +168,17 @@ impl CastRx {
 
         lua.yield_with::<mlua::Value>(op).await
     }
+
+    fn push_embed(&mut self, embed: CastEmbed) -> mlua::Result<()> {
+        if self.embeds.len() >= MAX_CAST_EMBEDS {
+            return Err(mlua::Error::runtime(format!(
+                "cast embed: cannot attach more than {MAX_CAST_EMBEDS} embeds"
+            )));
+        }
+
+        self.embeds.push(embed);
+        Ok(())
+    }
 }
 
 impl UserData for CastRx {
@@ -238,6 +254,7 @@ impl UserData for CastRx {
         });
         // --
 
+        // -- new cast data
         methods.add_method("text", |_, this, text: String| {
             let mut next = this.clone();
             next.text = Some(text);
@@ -256,6 +273,21 @@ impl UserData for CastRx {
             Ok(next)
         });
 
+        methods.add_method("quote", |lua, this, data: mlua::Value| {
+            let data: CastEmbedCastId = lua.from_value(data)?;
+
+            let mut next = this.clone();
+            next.push_embed(CastEmbed::CastId { cast_id: data })?;
+            Ok(next)
+        });
+
+        methods.add_method("embed_url", |_, this, url: String| {
+            let mut next = this.clone();
+            next.push_embed(CastEmbed::Url { url })?;
+            Ok(next)
+        });
+        // --
+
         methods.add_async_method(
             "send_as",
             async |lua, this, (ud, write_args): (mlua::AnyUserData, Option<WriteAsArgs>)| {
@@ -273,6 +305,7 @@ impl UserData for CastRx {
                         text,
                         parent: this.reply_hash.clone(),
                         channel_id: this.channel_id.clone(),
+                        embeds: this.embeds.clone(),
                     },
                 };
                 let args = lua.to_value(&payload)?;

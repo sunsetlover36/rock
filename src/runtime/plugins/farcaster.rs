@@ -7,9 +7,9 @@ use rock_wire::{
     farcaster::{
         BulkFetchCastsParams, DeleteCastParams, DeleteReactionParams, Fid, FollowUserParams,
         GetCastConversationParams, GetCastParams, GetFollowingFeedParams, GetForYouFeedParams,
-        GetReactionsParams, GetUserByUsernameParams, GetUserCastsParams, GetUsersByFidsParams,
-        PublishReactionParams, SearchUsersParams, SendCastParams, SignerResponse, SignerStatus,
-        UnfollowUserParams,
+        GetNotificationsParams, GetReactionsParams, GetUserByUsernameParams, GetUserCastsParams,
+        GetUsersByFidsParams, PublishReactionParams, SearchUsersParams, SendCastParams,
+        SignerResponse, SignerStatus, UnfollowUserParams,
     },
 };
 use strum::{AsRefStr, Display, EnumString};
@@ -63,6 +63,7 @@ pub(crate) enum FarcasterOp {
     GetUserCasts,
     UserFollow,
     UserUnfollow,
+    UserNotifications,
     SignerRequest,
     SignerGet,
     SignerRefresh,
@@ -231,6 +232,7 @@ impl GameModePlugin for FarcasterPlugin {
             get_user_casts: format!("{}_{}", &name_in_uppercase, FarcasterOp::GetUserCasts),
             follow_user: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserFollow),
             unfollow_user: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserUnfollow),
+            get_notifications: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserNotifications),
         };
 
         let user_plugin_name = plugin_name.clone();
@@ -384,8 +386,7 @@ impl GameModePlugin for FarcasterPlugin {
                         text: payload.params.text,
                         parent: payload.params.parent,
                         channel_id: payload.params.channel_id,
-                        // FIXME: embeds integration
-                        embeds: None,
+                        embeds: Some(payload.params.embeds),
                     };
                     let cast = fc_api.send_cast(&params).await?;
                     Ok(AsyncTaskResult::JsonValue(serde_json::to_value(cast)?))
@@ -553,6 +554,17 @@ impl GameModePlugin for FarcasterPlugin {
                         target_fids: payload.params.target_fids,
                     };
                     let res = fc_api.unfollow_user(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::UserNotifications => {
+                let params: GetNotificationsParams = lua.from_value(args).wrap_err(&format!(
+                    "{plugin_name}.user [notifications method]: incorrect params"
+                ))?;
+
+                let future = Box::pin(async move {
+                    let res = fc_api.get_notifications(&params).await?;
                     Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
                 });
                 Ok(Some(future))
