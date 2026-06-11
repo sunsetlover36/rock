@@ -21,7 +21,7 @@ pub enum SystemCallback {
         connection_params: SocketConnectionQuery,
     },
     PlayerDisconnect {
-        pk: PlayerKey,
+        identity: Option<String>,
     },
     ImpromptuRequest {
         name: Option<String>,

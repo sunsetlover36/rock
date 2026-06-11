@@ -36,6 +36,7 @@ pub(crate) enum SessionCommand {
 
 pub(crate) struct PlayerConnection {
     pub pk: PlayerKey,
+    pub identity: Option<String>,
     pub session_rx: mpsc::Receiver<SessionCommand>,
     pub broadcast_rx: broadcast::Receiver<OutgoingPacket>,
     registrar: SessionRegistrar,
@@ -43,12 +44,14 @@ pub(crate) struct PlayerConnection {
 impl PlayerConnection {
     pub fn new(
         pk: PlayerKey,
+        identity: Option<String>,
         session_rx: mpsc::Receiver<SessionCommand>,
         broadcast_rx: broadcast::Receiver<OutgoingPacket>,
         registrar: SessionRegistrar,
     ) -> Self {
         Self {
             pk,
+            identity,
             session_rx,
             broadcast_rx,
             registrar,

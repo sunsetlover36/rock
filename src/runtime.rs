@@ -12,6 +12,7 @@ use smallvec::smallvec;
 
 use crate::{
     clients::FarcasterApi, config::Config, crypto::Crypto, meta_db::MetaDb, router::CommitRouter,
+    runtime::plugins::player::PlayerSnapshot,
 };
 
 pub mod default_client_api;
@@ -272,11 +273,11 @@ impl Runtime {
                     }),
                 });
             }
-            SystemCallback::PlayerDisconnect { pk } => {
+            SystemCallback::PlayerDisconnect { identity } => {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Offline {
-                        player: PlayerHandle::new(pk),
+                        player: PlayerSnapshot::new(identity),
                     }),
                 });
             }

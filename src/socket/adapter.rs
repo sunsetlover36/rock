@@ -6,7 +6,10 @@ use futures_util::{
 };
 use rock_wire::{IncomingRequest, OutgoingPacket, SocketConnectionQuery, SystemPacket};
 use serde::Serialize;
-use tokio::sync::broadcast::error::RecvError;
+use tokio::{
+    sync::broadcast::error::RecvError,
+    time::{self, Duration},
+};
 
 use crate::{
     envelope::ClientEnvelope,
@@ -72,9 +75,14 @@ impl SocketAdapter {
             }))
             .await?;
 
+        let mut ping_interval = time::interval(Duration::from_secs(25));
         loop {
             tokio::select! {
-                biased;
+                _ = ping_interval.tick() => {
+                    if self.ws_tx.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
+                }
 
                 Some(command) = self.session.session_rx.recv() => {
                     match command {
@@ -136,7 +144,7 @@ impl SocketAdapter {
 
         self.runtime_callback_tx
             .send_async(RuntimeCallback::System(SystemCallback::PlayerDisconnect {
-                pk: self.session.pk,
+                identity: self.session.identity.clone(),
             }))
             .await?;
         Ok(())

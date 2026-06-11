@@ -41,6 +41,8 @@ mod watcher;
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().ok();
+
     if let Err(err) = run().await {
         eprintln!("{err}");
         std::process::exit(1)

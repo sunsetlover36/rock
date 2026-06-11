@@ -11,6 +11,9 @@ use rx::BroadcastRx;
 mod handle;
 pub(crate) use handle::PlayerHandle;
 
+mod snapshot;
+pub(crate) use snapshot::PlayerSnapshot;
+
 mod presence;
 mod vision;
 

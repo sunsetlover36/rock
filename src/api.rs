@@ -39,6 +39,21 @@ async fn localhost_only(
     Ok(next.run(req).await)
 }
 
+fn get_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    let cookie = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+
+    cookie.split(';').find_map(|part| {
+        let part = part.trim();
+        let (key, value) = part.split_once('=')?;
+
+        if key == name {
+            Some(value.to_string())
+        } else {
+            None
+        }
+    })
+}
+
 #[derive(Clone)]
 struct AppState {
     session_registrar: SessionRegistrar,
@@ -80,6 +95,7 @@ impl Api {
     async fn handle_ws(
         ws: WebSocketUpgrade,
         State(state): State<AppState>,
+        headers: HeaderMap,
         Query(mut query): Query<SocketConnectionQuery>,
     ) -> Response {
         let auth = match query
@@ -91,11 +107,12 @@ impl Api {
             Ok(auth) => auth,
             Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
         };
+        let auth = auth.or(Some(AuthKind::Ticket));
 
-        let token = query
-            .remove("token")
-            .and_then(|v| v.as_str().map(str::to_owned));
+        let cookie_name =
+            std::env::var("ROCK_SESSION_COOKIE").unwrap_or_else(|_| "rock_session".to_string());
 
+        let token = get_cookie(&headers, &cookie_name);
         let auth_config = state
             .config
             .auth

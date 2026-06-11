@@ -4,7 +4,9 @@ use mlua::{IntoLuaMulti, LuaSerdeExt};
 use rock_wire::{InputData, SignalData, SocketConnectionQuery};
 
 use crate::runtime::{
-    network_replicator::protocol::RoomId, plugins::player::PlayerHandle, room_id_to_name,
+    network_replicator::protocol::RoomId,
+    plugins::player::{PlayerHandle, PlayerSnapshot},
+    room_id_to_name,
 };
 
 #[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
@@ -23,7 +25,7 @@ pub(crate) enum PlayerEventData {
         connection_params: SocketConnectionQuery,
     },
     Offline {
-        player: PlayerHandle,
+        player: PlayerSnapshot,
     },
     Input {
         player: PlayerHandle,
