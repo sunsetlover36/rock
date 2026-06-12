@@ -6,7 +6,10 @@ use mlua::LuaSerdeExt;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, Display, EnumString};
 
-use crate::{crypto::Crypto, runtime::LuaResultExt};
+use crate::{
+    crypto::Crypto,
+    runtime::{LuaResultExt, plugins::ensure_yieldable},
+};
 
 use super::protocol::{AsyncTask, AsyncTaskResult, GameModePlugin, PluginName};
 
@@ -37,11 +40,7 @@ impl GameModePlugin for RockPlugin {
         PluginName::Rock
     }
 
-    fn create_global_api(&self, _: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
-        Ok(None)
-    }
-
-    fn create_scene_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
+    fn create_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         let plugin_prefix = self.name().to_string().to_uppercase();
 
         let table = lua.create_table()?;
@@ -51,6 +50,7 @@ impl GameModePlugin for RockPlugin {
             let opcode = balance_opcode.clone();
 
             async move {
+                ensure_yieldable(&lua, "rock.balance")?;
                 let op = lua.create_table()?;
                 op.set("opcode", opcode)?;
                 op.set("args", lua.to_value(&GetBalanceArgs { address })?)?;
@@ -65,6 +65,7 @@ impl GameModePlugin for RockPlugin {
                 let opcode = holds_opcode.clone();
 
                 async move {
+                    ensure_yieldable(&lua, "rock.holds")?;
                     let op = lua.create_table()?;
                     op.set("opcode", opcode)?;
                     op.set("args", lua.to_value(&HoldsArgs { address, amount })?)?;

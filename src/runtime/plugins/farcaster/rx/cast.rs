@@ -9,6 +9,7 @@ use rock_wire::farcaster::{
 
 use crate::{
     runtime::plugins::{
+        ensure_yieldable,
         farcaster::protocol::{
             CastGetOptions, CastIdentifier, DeleteCastOpParams, PublishReactionOpParams,
             SendCastOpParams, WriteAsArgs, WriteAsOp,
@@ -166,6 +167,7 @@ impl CastRx {
         let args = lua.to_value(&payload)?;
         let op = self.get_op(lua, opcode_key, &args)?;
 
+        ensure_yieldable(lua, "fc.cast reaction")?;
         lua.yield_with::<mlua::Value>(op).await
     }
 
@@ -215,6 +217,7 @@ impl UserData for CastRx {
                 })?;
                 this.get_op(&lua, CastRxOpcodeKey::Get, &args)?
             };
+            ensure_yieldable(&lua, "fc.cast.get")?;
             lua.yield_with::<mlua::Value>(op).await
         });
 
@@ -311,6 +314,7 @@ impl UserData for CastRx {
                 let args = lua.to_value(&payload)?;
                 let op = this.get_op(&lua, CastRxOpcodeKey::Send, &args)?;
 
+                ensure_yieldable(&lua, "fc.cast.send_as")?;
                 lua.yield_with::<mlua::Value>(op).await
             },
         );
@@ -390,6 +394,7 @@ impl UserData for CastRx {
                 let args = lua.to_value(&payload)?;
                 let op = this.get_op(&lua, CastRxOpcodeKey::Delete, &args)?;
 
+                ensure_yieldable(&lua, "fc.cast.delete_as")?;
                 lua.yield_with::<mlua::Value>(op).await
             },
         );

@@ -1,12 +1,12 @@
 use std::{str::FromStr, sync::Arc};
 
 use color_eyre::eyre::{self, Context};
-use mlua::{Function, Lua, LuaSerdeExt, Table};
+use mlua::{Lua, LuaSerdeExt, Table};
 use strum::{AsRefStr, Display, EnumString};
 
 use super::{
-    Yielder,
     protocol::{AsyncTask, AsyncTaskResult, GameModePlugin, PluginName},
+    yield_plugin_op,
 };
 use crate::{
     meta_db::MetaDb,
@@ -35,8 +35,9 @@ impl GameModePlugin for MemoryPlugin {
         PluginName::Memory
     }
 
-    fn create_global_api(&self, lua: &Lua) -> mlua::Result<Option<Table>> {
+    fn create_api(&self, lua: &Lua) -> mlua::Result<Option<Table>> {
         let plugin_name = self.name();
+        let name_in_uppercase = plugin_name.to_string().to_uppercase();
         let table = lua.create_table()?;
 
         let meta_db = self.meta_db.clone();
@@ -57,32 +58,48 @@ impl GameModePlugin for MemoryPlugin {
         let node_fn = lua.create_function(|_, key: String| Ok(SyncRx::new(key)))?;
         table.set("node", node_fn)?;
 
-        Ok(Some(table))
-    }
-
-    fn create_scene_api(&self, lua: &Lua) -> mlua::Result<Option<Table>> {
-        let plugin_name = self.name().to_string();
-        let name_in_uppercase = plugin_name.to_uppercase();
-
-        let table = lua.create_table()?;
-        let yielder = Yielder::get(&lua)?;
-
-        let global_memory = lua.globals().get::<Table>(plugin_name)?;
-        let mt = lua.create_table()?;
-        mt.set("__index", global_memory)?;
-        table.set_metatable(Some(mt))?;
-
         let recall_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Recall);
-        let recall_fn = yielder.call::<Function>(recall_op)?;
+        let recall_fn = lua.create_async_function(move |lua, key: String| {
+            let opcode = recall_op.clone();
+            async move {
+                let args = lua.create_sequence_from([key])?;
+                yield_plugin_op(&lua, "memory.recall", opcode, mlua::Value::Table(args)).await
+            }
+        })?;
         table.set("recall", recall_fn)?;
 
         let fetch_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Fetch);
-        let fetch_fn = yielder.call::<Function>(fetch_op)?;
+        let fetch_fn = lua.create_async_function(move |lua, key: String| {
+            let opcode = fetch_op.clone();
+            async move {
+                let args = lua.create_sequence_from([key])?;
+                yield_plugin_op(&lua, "memory.fetch", opcode, mlua::Value::Table(args)).await
+            }
+        })?;
         table.set("fetch", fetch_fn)?;
 
         let store_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Store);
-        let store_fn = yielder.call::<Function>(store_op)?;
+        let store_fn =
+            lua.create_async_function(move |lua, (key, value): (String, mlua::Value)| {
+                let opcode = store_op.clone();
+                async move {
+                    let args = lua.create_table()?;
+                    args.set(1, key)?;
+                    args.set(2, value)?;
+                    yield_plugin_op(&lua, "memory.store", opcode, mlua::Value::Table(args)).await
+                }
+            })?;
         table.set("store", store_fn)?;
+
+        let delete_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Delete);
+        let delete_fn = lua.create_async_function(move |lua, key: String| {
+            let opcode = delete_op.clone();
+            async move {
+                let args = lua.create_sequence_from([key])?;
+                yield_plugin_op(&lua, "memory.delete", opcode, mlua::Value::Table(args)).await
+            }
+        })?;
+        table.set("delete", delete_fn)?;
 
         Ok(Some(table))
     }

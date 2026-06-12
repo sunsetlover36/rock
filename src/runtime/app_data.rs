@@ -14,15 +14,12 @@ use crate::runtime::{
         input::protocol::InputEvent,
         layer::{LayerEntry, LayerId},
         on::{GameModeListener, protocol::GameModeEventKey},
-        protocol::PluginName,
     },
     timer_manager,
 };
 
 pub struct EventListeners(pub HashMap<GameModeEventKey, Vec<GameModeListener>>);
 pub struct Scenes(pub HashMap<String, Vec<mlua::Function>>);
-pub struct ScenePlugins(pub HashMap<PluginName, mlua::Table>);
-pub struct Yielder(pub Option<mlua::Function>);
 pub struct World(pub hecs::World);
 pub struct EventBus(pub Rc<event_bus::EventBus>);
 

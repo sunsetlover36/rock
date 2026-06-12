@@ -272,17 +272,15 @@ end)
 
 implicit async with entity-scoped execution. the scene will be interrupted if player disconnects.
 
-`memory` is a plugin. every injected namespace/table is a plugin that defines two methods:
-1. `create_global_api` -> synchronous API that is accessible outside of scenes (async code).
-2. `create_scene_api` -> sync + async API that is accessible inside the scenes only.
+`memory` is a plugin. every injected namespace/table is a plugin that defines `create_api`.
 
-scripter can use global API everywhere. it's behavior is deterministic, non-blocking and expected.
-scene API is where the things get beautiful. you can perform async tasks under the hood but on the surface you just write a simple declarative code.
+scripter can access plugin namespaces everywhere, which keeps helpers and domain modules simple: they do not need to care whether they are loaded from a scene or from top-level game mode code. synchronous methods can run anywhere. scene-only methods are also visible everywhere, but if they are executed outside of a scene coroutine they throw a clear runtime error.
 
-global API injects tables with synchronous-only methods and scene API uses a global API table to extend it with new sync or async methods inside the scene coroutine scope.
+scene-only API is where the things get beautiful. you can perform async tasks under the hood but on the surface you just write a simple declarative code.
+
 the beauty is that everything is synchronous at the surface. async methods return opcodes for async operations to be performed and handled by scheduler.
 
-async methods in the scene API don't perform any kind of asynchronous code nor the engine uses async directly to handle the request.
+scene-only async methods don't perform any kind of asynchronous code nor the engine uses async directly to handle the request.
 
 once the async method is called inside the coroutine -> it's result is being yielded as `coroutine.yield(OPCODE)`. `scene.play` and `scene.run` methods create a coroutine from the closure. after that, it sends a channel message to the scheduler (`SchedulerMessage::AddTask`): add task (new coroutine arrived) to a queue. the thing is that i'm not passing an actual coroutine or something. i'm passing its registry key so the scheduler can get this coroutine when it needs, because scheduler also has `&lua` borrowed reference.
 scheduler's task is to keep track of incoming coroutines, advance and wake up them when needed (keep yielding until an actual return) and then finish its execution.
@@ -297,4 +295,3 @@ scheduler and plugins are initialized in `api::register` module.
 
 ### axum
 web app framework. public API: HTTP and WebSockets. not much to describe.
-

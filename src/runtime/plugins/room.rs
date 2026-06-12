@@ -10,7 +10,7 @@ impl GameModePlugin for RoomPlugin {
         PluginName::Room
     }
 
-    fn create_global_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
+    fn create_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         let table = lua.create_table()?;
 
         let generate_id_fn = lua.create_function(|_, _: ()| Ok(nanoid!()))?;
@@ -19,9 +19,6 @@ impl GameModePlugin for RoomPlugin {
         Ok(Some(table))
     }
 
-    fn create_scene_api(&self, _: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
-        Ok(None)
-    }
     fn handle_op(
         &self,
         _: &mlua::Lua,

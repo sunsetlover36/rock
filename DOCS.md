@@ -796,20 +796,16 @@ Persistent key-value storage backed by SQLite with an in-memory cache.
 
 Keys are hierarchical paths like `"player/42/health"`. Keys ending with `/` are **prefixes** that return a map of all nested values.
 
-#### Global API (available everywhere)
+#### API
 
 | Method | Args | Returns | Description |
 |--------|------|---------|-------------|
 | `memory.peek(key)` | `string` | value or nil | Read from cache only (fast, synchronous, may be stale or missing) |
 | `memory.node(key)` | `string` | `SyncRx` | Create a replication policy for a memory node (see [Network Replication](#network-replication)) |
-
-#### Scene API (available inside scenes only)
-
-| Method | Args | Returns | Description |
-|--------|------|---------|-------------|
-| `memory.recall(key)` | `string` | value | Read from cache; if missing, fetch from DB first |
-| `memory.fetch(key)` | `string` | value | Always fetch the latest value from DB |
-| `memory.store(key, value)` | `string`, any | -- | Write a value to DB. Prefix keys store a map of values |
+| `memory.recall(key)` | `string` | value | Scene-only. Read from cache; if missing, fetch from DB first |
+| `memory.fetch(key)` | `string` | value | Scene-only. Always fetch the latest value from DB |
+| `memory.store(key, value)` | `string`, any | -- | Scene-only. Write a value to DB. Prefix keys store a map of values |
+| `memory.delete(key)` | `string` | -- | Scene-only. Delete a key or prefix |
 
 ```lua
 -- synchronous cache read (global)
@@ -832,6 +828,9 @@ scene.run(function()
     health = 100,
     money = 2000,
   })
+
+  -- delete a key or everything under a prefix
+  memory.delete("player/42/temporary_boost")
 end)
 ```
 

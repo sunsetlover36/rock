@@ -157,11 +157,7 @@ impl GameModePlugin for FarcasterPlugin {
         PluginName::Farcaster
     }
 
-    fn create_global_api(&self, _: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
-        Ok(None)
-    }
-
-    fn create_scene_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
+    fn create_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         let plugin_name = self.name().to_string();
         let name_in_uppercase = plugin_name.to_uppercase();
         let default_app_fid = self

@@ -50,12 +50,8 @@ impl GameModePlugin for OnPlugin {
         PluginName::On
     }
 
-    fn create_global_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
+    fn create_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         Ok(Some(self.create_listeners_table(lua)?))
-    }
-
-    fn create_scene_api(&self, _: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
-        Ok(None)
     }
 
     fn handle_op(&self, _: &mlua::Lua, _: &str, _: mlua::Value) -> eyre::Result<Option<AsyncTask>> {

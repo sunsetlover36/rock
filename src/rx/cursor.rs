@@ -1,6 +1,8 @@
 use mlua::UserData;
 use std::cell::RefCell;
 
+use crate::runtime::plugins::ensure_yieldable;
+
 // TODO: Neynar API thing ({ next: { cursor: String }? })
 // Might support more structures?
 
@@ -59,6 +61,7 @@ impl UserData for CursorRx {
                 state.op.clone()
             };
 
+            ensure_yieldable(&lua, "cursor.next")?;
             let response: mlua::Value = lua.yield_with(op).await?;
             let mlua::Value::Table(t) = &response else {
                 return Err(mlua::Error::runtime("cursor next: expected table response"));

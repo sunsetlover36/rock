@@ -1,5 +1,7 @@
 use mlua::UserData;
 
+use crate::runtime::plugins::ensure_yieldable;
+
 use super::protocol::{SceneYieldOp, YieldKind};
 
 pub(crate) struct SceneCtx {}
@@ -11,6 +13,7 @@ impl UserData for SceneCtx {
             op.set("opcode", SceneYieldOp::Sleep.as_ref())?;
             op.set("args", seconds)?;
 
+            ensure_yieldable(&lua, "scene ctx sleep")?;
             lua.yield_with::<mlua::Value>(op).await
         });
     }

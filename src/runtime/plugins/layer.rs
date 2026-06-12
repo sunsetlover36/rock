@@ -63,7 +63,7 @@ impl GameModePlugin for LayerPlugin {
         PluginName::Layer
     }
 
-    fn create_global_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
+    fn create_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         let table = lua.create_table()?;
 
         let create_fn = lua.create_function(|lua, _: ()| {
@@ -78,9 +78,6 @@ impl GameModePlugin for LayerPlugin {
         Ok(Some(table))
     }
 
-    fn create_scene_api(&self, _: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
-        Ok(None)
-    }
     fn handle_op(&self, _: &mlua::Lua, _: &str, _: mlua::Value) -> eyre::Result<Option<AsyncTask>> {
         Ok(None)
     }

@@ -15,9 +15,8 @@ pub type AsyncTask = BoxFuture<'static, eyre::Result<AsyncTaskResult>>;
 pub trait GameModePlugin {
     fn name(&self) -> PluginName;
 
-    fn create_global_api(&self, lua: &Lua) -> mlua::Result<Option<Table>>;
+    fn create_api(&self, lua: &Lua) -> mlua::Result<Option<Table>>;
 
-    fn create_scene_api(&self, lua: &Lua) -> mlua::Result<Option<Table>>;
     fn handle_op(&self, lua: &Lua, op: &str, args: mlua::Value) -> eyre::Result<Option<AsyncTask>>;
 }
 

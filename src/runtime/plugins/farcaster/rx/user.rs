@@ -3,6 +3,7 @@ use rock_wire::farcaster::Fid;
 
 use crate::{
     runtime::plugins::{
+        ensure_yieldable,
         farcaster::protocol::{FollowUserOpParams, WriteAsArgs, WriteAsOp},
         player::PlayerHandle,
     },
@@ -60,6 +61,7 @@ impl UserData for UserRx {
                 table.set("args", args)?;
             }
 
+            ensure_yieldable(&lua, "fc.user.get")?;
             lua.yield_with::<mlua::Value>(table).await
         });
 
@@ -124,6 +126,7 @@ impl UserData for UserRx {
                 op.set("opcode", this.opcodes.follow_user.clone())?;
                 op.set("args", args)?;
 
+                ensure_yieldable(&lua, "fc.user.follow_as")?;
                 lua.yield_with::<mlua::Value>(op).await
             },
         );
@@ -153,6 +156,7 @@ impl UserData for UserRx {
                 op.set("opcode", this.opcodes.unfollow_user.clone())?;
                 op.set("args", args)?;
 
+                ensure_yieldable(&lua, "fc.user.unfollow_as")?;
                 lua.yield_with::<mlua::Value>(op).await
             },
         );

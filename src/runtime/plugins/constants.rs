@@ -33,7 +33,7 @@ impl GameModePlugin for ConstantsPlugin {
         PluginName::Constants
     }
 
-    fn create_global_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
+    fn create_api(&self, lua: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
         let table = lua.create_table()?;
 
         let area_shape = lua.create_table()?;
@@ -72,9 +72,6 @@ impl GameModePlugin for ConstantsPlugin {
         Ok(Some(table))
     }
 
-    fn create_scene_api(&self, _: &mlua::Lua) -> mlua::Result<Option<mlua::Table>> {
-        Ok(None)
-    }
     fn handle_op(
         &self,
         _: &mlua::Lua,

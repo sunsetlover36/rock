@@ -95,8 +95,6 @@ impl Runtime {
         // App data
         lua.set_app_data::<app_data::EventListeners>(app_data::EventListeners(HashMap::new()));
         lua.set_app_data::<app_data::Scenes>(app_data::Scenes(HashMap::new()));
-        lua.set_app_data::<app_data::ScenePlugins>(app_data::ScenePlugins(HashMap::new()));
-        lua.set_app_data::<app_data::Yielder>(app_data::Yielder(None));
         lua.set_app_data::<app_data::World>(app_data::World(hecs::World::new()));
         lua.set_app_data::<app_data::EventBus>(app_data::EventBus(event_bus.clone()));
         lua.set_app_data::<app_data::BlueprintRegistry>(BlueprintRegistry::new());

@@ -20,12 +20,6 @@ fn get_scene_env(lua: &Lua) -> mlua::Result<mlua::Table> {
     mt.set("__index", lua.globals())?;
     env.set_metatable(Some(mt))?;
 
-    let scene_plugins = get_app_data::<app_data::ScenePlugins>(lua)?;
-    for plugin in scene_plugins.0.iter() {
-        let (name, table) = plugin;
-        env.set(name.as_ref(), table)?;
-    }
-
     Ok(env)
 }
 fn function_location(function: &mlua::Function) -> String {
@@ -88,7 +82,7 @@ impl GameModePlugin for ScenePlugin {
         PluginName::Scene
     }
 
-    fn create_global_api(&self, lua: &Lua) -> mlua::Result<Option<mlua::Table>> {
+    fn create_api(&self, lua: &Lua) -> mlua::Result<Option<mlua::Table>> {
         let plugin_name = self.name();
         let table = lua.create_table()?;
 
@@ -140,10 +134,6 @@ impl GameModePlugin for ScenePlugin {
         table.set("play", scene_play_fn)?;
 
         Ok(Some(table))
-    }
-
-    fn create_scene_api(&self, _: &Lua) -> mlua::Result<Option<mlua::Table>> {
-        Ok(None)
     }
 
     fn handle_op(&self, _: &Lua, _: &str, _: mlua::Value) -> eyre::Result<Option<AsyncTask>> {

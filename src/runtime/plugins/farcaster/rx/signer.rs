@@ -3,7 +3,10 @@ use rock_wire::{PlayerKey, farcaster::Fid};
 
 use crate::runtime::{
     app_data, get_app_data,
-    plugins::farcaster::protocol::{SignerRequestArgs, WithDefaultAppFid, WriteAsArgs},
+    plugins::{
+        ensure_yieldable,
+        farcaster::protocol::{SignerRequestArgs, WithDefaultAppFid, WriteAsArgs},
+    },
 };
 
 #[derive(Clone)]
@@ -88,6 +91,7 @@ impl UserData for SignerRx {
             async |lua, this, args: Option<SignerRequestArgs>| {
                 let args = this.args_or_default(args, "request")?;
                 let op = this.build_op(&lua, this.opcodes.request.clone(), args, "request")?;
+                ensure_yieldable(&lua, "fc.signer.request")?;
                 lua.yield_with::<mlua::Value>(op).await
             },
         );
@@ -95,12 +99,14 @@ impl UserData for SignerRx {
         methods.add_async_method("get", async |lua, this, args: Option<WriteAsArgs>| {
             let args = this.args_or_default(args, "get")?;
             let op = this.build_op(&lua, this.opcodes.get.clone(), args, "get")?;
+            ensure_yieldable(&lua, "fc.signer.get")?;
             lua.yield_with::<mlua::Value>(op).await
         });
 
         methods.add_async_method("refresh", async |lua, this, args: Option<WriteAsArgs>| {
             let args = this.args_or_default(args, "refresh")?;
             let op = this.build_op(&lua, this.opcodes.refresh.clone(), args, "refresh")?;
+            ensure_yieldable(&lua, "fc.signer.refresh")?;
             lua.yield_with::<mlua::Value>(op).await
         });
     }

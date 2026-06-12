@@ -45,49 +45,41 @@ pub(crate) use json::JsonPlugin;
 pub(crate) mod protocol;
 use protocol::*;
 
-use crate::runtime::{
-    app_data::{self},
-    utils::{LuaResultExt, get_app_data},
-};
+use crate::runtime::utils::LuaResultExt;
 
-pub struct Yielder {}
-impl Yielder {
-    pub fn get(lua: &Lua) -> mlua::Result<mlua::Function> {
-        let yielder_fn = get_app_data::<app_data::Yielder>(lua)?
-            .0
-            .clone()
-            .ok_or_else(|| mlua::Error::runtime("`yielder` function not found in app data"))?;
-
-        Ok(yielder_fn)
+pub(crate) fn ensure_yieldable(lua: &Lua, api_name: &str) -> mlua::Result<()> {
+    let coroutine: mlua::Table = lua.globals().get("coroutine")?;
+    let isyieldable: mlua::Function = coroutine.get("isyieldable")?;
+    let is_yieldable: bool = isyieldable.call(())?;
+    if is_yieldable {
+        Ok(())
+    } else {
+        Err(mlua::Error::runtime(format!(
+            "{api_name} can only be called inside a scene coroutine"
+        )))
     }
-    pub fn create(lua: &Lua) -> eyre::Result<mlua::Function> {
-        let yielder_script = r#"
-            return function(opcode)
-                return function(...)
-                    return coroutine.yield({ opcode = opcode, args = { ... } })
-                end
-            end
-        "#;
-        let yielder_fn: mlua::Function = lua
-            .load(yielder_script)
-            .set_name("runtime/yielder")
-            .eval()
-            .wrap_err("Failed to create `yielder_script`")?;
+}
 
-        Ok(yielder_fn)
-    }
+pub(crate) async fn yield_plugin_op(
+    lua: &Lua,
+    api_name: &str,
+    opcode: String,
+    args: mlua::Value,
+) -> mlua::Result<mlua::Value> {
+    ensure_yieldable(lua, api_name)?;
+
+    let op = lua.create_table()?;
+    op.set("opcode", opcode)?;
+    op.set("args", args)?;
+
+    lua.yield_with::<mlua::Value>(op).await
 }
 
 pub struct PluginComposer {
     plugins: HashMap<PluginName, Box<dyn GameModePlugin>>,
 }
 impl PluginComposer {
-    pub fn new(lua: &Lua) -> eyre::Result<Self> {
-        let mut yielder = lua
-            .app_data_mut::<app_data::Yielder>()
-            .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
-        yielder.0 = Some(Yielder::create(lua)?);
-
+    pub fn new(_: &Lua) -> eyre::Result<Self> {
         Ok(Self {
             plugins: HashMap::new(),
         })
@@ -102,26 +94,14 @@ impl PluginComposer {
         let globals = lua.globals();
 
         let err_msg = format!("Failed to initialize `{}` plugin", plugin_name);
-        if let Some(global_api) = plugin.create_global_api(lua).wrap_err(&err_msg)? {
-            globals
-                .set(plugin_name.as_ref(), global_api)
-                .wrap_err(&format!(
-                    "Failed to call `add_plugin(\"{}\")`: failed to set a global table",
-                    plugin_name.as_ref()
-                ))?;
+        if let Some(api) = plugin.create_api(lua).wrap_err(&err_msg)? {
+            globals.set(plugin_name.as_ref(), api).wrap_err(&format!(
+                "Failed to call `add_plugin(\"{}\")`: failed to set a global table",
+                plugin_name.as_ref()
+            ))?;
         };
-        if let Some(scene_api) = plugin.create_scene_api(lua).wrap_err(&err_msg)? {
-            let mut scene_plugins_data = lua
-                .app_data_mut::<app_data::ScenePlugins>()
-                .ok_or_else(|| eyre::eyre!("App data is not initialized"))?;
-            let scene_plugins = &mut scene_plugins_data.0;
 
-            if !scene_plugins.contains_key(&plugin_name) {
-                scene_plugins.insert(plugin_name, scene_api);
-            }
-
-            self.plugins.insert(plugin_name, plugin);
-        };
+        self.plugins.insert(plugin_name, plugin);
 
         Ok(())
     }
@@ -136,10 +116,6 @@ impl PluginComposer {
 
         if self.plugins.contains_key(&name) {
             self.plugins.remove(&name);
-            lua.app_data_mut::<app_data::ScenePlugins>()
-                .ok_or_else(|| eyre::eyre!("App data is not initialized"))?
-                .0
-                .remove(&name);
         }
 
         Ok(())
