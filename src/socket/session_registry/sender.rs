@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rock_wire::PlayerKey;
+use rock_wire::{OutgoingPacket, PlayerKey};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -21,6 +21,23 @@ impl SessionSender {
         self.inner.sessions.get(&pk).map(|e| e.value().tx.clone())
     }
 
+    fn try_send_data(
+        &self,
+        pk: PlayerKey,
+        tx: mpsc::Sender<SessionCommand>,
+        payload: OutgoingPacket,
+    ) {
+        match tx.try_send(SessionCommand::Data(payload)) {
+            Ok(_) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.inner.stats.record_private_channel_full(pk);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.inner.stats.record_private_channel_closed(pk);
+            }
+        }
+    }
+
     pub fn send_message(&self, message: ServerMessage) {
         match message.recipient {
             EnvelopeRecipient::All => {
@@ -28,13 +45,13 @@ impl SessionSender {
             }
             EnvelopeRecipient::Single(pk) => {
                 if let Some(tx) = self.get_endpoint(pk) {
-                    let _ = tx.try_send(SessionCommand::Data(message.payload));
+                    self.try_send_data(pk, tx, message.payload);
                 }
             }
             EnvelopeRecipient::List(pks) => {
                 for pk in pks {
                     if let Some(tx) = self.get_endpoint(pk) {
-                        let _ = tx.try_send(SessionCommand::Data(message.payload.clone()));
+                        self.try_send_data(pk, tx, message.payload.clone());
                     }
                 }
             }
@@ -46,7 +63,7 @@ impl SessionSender {
                     }
 
                     let tx = entry.value().tx.clone();
-                    let _ = tx.try_send(SessionCommand::Data(message.payload.clone()));
+                    self.try_send_data(pk, tx, message.payload.clone());
                 }
             }
         }

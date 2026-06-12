@@ -6,7 +6,10 @@ use rock_wire::OutgoingPacket;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use crate::{player_pool::PlayerPool, socket::session_registry::protocol::SessionRegistryState};
+use crate::{
+    player_pool::PlayerPool,
+    socket::session_registry::protocol::{SessionBackpressureStats, SessionRegistryState},
+};
 
 pub mod protocol;
 pub mod registrar;
@@ -36,6 +39,7 @@ impl SessionRegistry {
                 broadcast_hub,
                 session_channel_buffer: params.session_channel_buffer,
                 sessions,
+                stats: Arc::new(SessionBackpressureStats::default()),
             }),
             tokio_handle: params.tokio_handle,
         }

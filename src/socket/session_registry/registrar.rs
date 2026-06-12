@@ -29,6 +29,7 @@ impl SessionRegistrar {
             identity,
             rx,
             self.inner.broadcast_hub.subscribe(),
+            self.inner.stats.clone(),
             self.clone(),
         )
     }

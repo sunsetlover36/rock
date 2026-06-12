@@ -109,7 +109,11 @@ impl SocketAdapter {
                         Ok(p) => {
                             self.send(&p).await;
                         }
-                        Err(RecvError::Lagged(_)) => {}
+                        Err(RecvError::Lagged(skipped)) => {
+                            self.session
+                                .stats
+                                .record_broadcast_lagged(self.session.pk, skipped);
+                        }
                         Err(RecvError::Closed) => {
                             break;
                         }
