@@ -107,8 +107,6 @@ impl Api {
             Ok(auth) => auth,
             Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
         };
-        let auth = auth.or(Some(AuthKind::Ticket));
-
         let cookie_name =
             std::env::var("ROCK_SESSION_COOKIE").unwrap_or_else(|_| "rock_session".to_string());
 
@@ -118,6 +116,16 @@ impl Api {
             .auth
             .as_ref()
             .filter(|c| !c.providers.is_empty());
+
+        let auth = match (auth, auth_config) {
+            (Some(auth), _) => Some(auth),
+            (None, Some(auth_config)) if auth_config.providers.len() == 1 => {
+                auth_config.providers.first().copied()
+            }
+            (None, Some(_)) => return StatusCode::UNAUTHORIZED.into_response(),
+            (None, None) => None,
+        };
+
         let identity = match (auth_config, auth, token.as_deref()) {
             (None, _, _) => None,
             (Some(auth_config), Some(auth), Some(token)) => {

@@ -273,7 +273,11 @@ impl Runtime {
                     }),
                 });
             }
-            SystemCallback::PlayerDisconnect { identity } => {
+            SystemCallback::PlayerDisconnect { pk, identity } => {
+                if let Err(err) = self.replicator.clear_player_state(&self.lua, pk) {
+                    eprintln!("Failed to clear player state after disconnect: {err}");
+                }
+
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Offline {

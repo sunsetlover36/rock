@@ -552,6 +552,55 @@ impl NetworkReplicator {
         Ok(())
     }
 
+    pub fn clear_player_state(&self, lua: &mlua::Lua, pk: PlayerKey) -> mlua::Result<()> {
+        self.clear_player_rooms(lua, pk)?;
+
+        let mut inner = self.inner.borrow_mut();
+        inner.known_memory.remove(&pk);
+
+        let removed_anchors = inner.player_anchors.remove(&pk).unwrap_or_default();
+        for entity in removed_anchors {
+            let anchor = PlayerAnchor { pk, entity };
+
+            for anchors in inner.room_to_anchors.values_mut() {
+                anchors.remove(&anchor);
+            }
+
+            if let Some(visible_entities) = inner.anchor_visibility.remove(&anchor) {
+                for visible_entity in visible_entities {
+                    if let Some(anchors) = inner.entity_anchors.get_mut(&visible_entity) {
+                        anchors.remove(&anchor);
+                    }
+                }
+            }
+        }
+
+        for players in inner.room_to_players.values_mut() {
+            players.remove(&pk);
+        }
+        for anchors in inner.room_to_anchors.values_mut() {
+            anchors.retain(|anchor| anchor.pk != pk);
+        }
+        for anchors in inner.entity_anchors.values_mut() {
+            anchors.retain(|anchor| anchor.pk != pk);
+        }
+        inner
+            .anchor_visibility
+            .retain(|anchor, entities| anchor.pk != pk && !entities.is_empty());
+
+        inner
+            .room_to_players
+            .retain(|_, players| !players.is_empty());
+        inner
+            .room_to_anchors
+            .retain(|_, anchors| !anchors.is_empty());
+        inner
+            .entity_anchors
+            .retain(|_, anchors| !anchors.is_empty());
+
+        Ok(())
+    }
+
     fn compose_dirty_entity_data(
         &self,
         lua: &mlua::Lua,

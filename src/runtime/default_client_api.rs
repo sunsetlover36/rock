@@ -1,8 +1,12 @@
 use rock_wire::{PlayerKey, farcaster::Fid};
 
 use crate::{
+    envelope::{EnvelopeRecipient, ServerEnvelope},
     runtime::GameModeClientApi,
-    socket::{protocol::ServerMessage, session_registry::SessionSender},
+    socket::{
+        protocol::{ServerMessage, SocketCommand},
+        session_registry::SessionSender,
+    },
 };
 
 #[derive(Clone)]
@@ -20,6 +24,13 @@ impl GameModeClientApi for GameModeDefaultClientApi {
 
     fn send(&self, message: ServerMessage) {
         let _ = self.ws_session_sender.send_message(message);
+    }
+
+    fn kick(&self, pk: PlayerKey) {
+        let _ = self.ws_session_sender.send_control(ServerEnvelope {
+            recipient: EnvelopeRecipient::Single(pk),
+            payload: SocketCommand::Kick,
+        });
     }
 
     fn identity(&self, pk: PlayerKey) -> Option<String> {

@@ -11,6 +11,7 @@ pub trait GameModeClientApi: Send + Sync {
     fn has(&self, pk: PlayerKey) -> bool;
     fn list(&self) -> Vec<PlayerKey>;
     fn send(&self, message: ServerMessage);
+    fn kick(&self, pk: PlayerKey);
     fn identity(&self, pk: PlayerKey) -> Option<String>;
     fn fid(&self, pk: PlayerKey) -> Option<Fid>;
 }
@@ -21,6 +22,7 @@ pub enum SystemCallback {
         connection_params: SocketConnectionQuery,
     },
     PlayerDisconnect {
+        pk: PlayerKey,
         identity: Option<String>,
     },
     ImpromptuRequest {

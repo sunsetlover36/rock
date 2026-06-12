@@ -151,6 +151,7 @@ impl MetaDb {
             let mut map = serde_json::Map::new();
             for e in self.cache.iter() {
                 if let Some(key) = e.key().strip_prefix(key)
+                    && !key.is_empty()
                     && let Some(value) = &e.value().value
                 {
                     insert_nested(&mut map, key, value.clone()).map_err(MetaDbError::Custom)?;
@@ -237,6 +238,10 @@ impl MetaDb {
 
     pub async fn ensure_prefix(&self, prefix: &str) -> Result<(JsonValue, bool), MetaDbError> {
         self.validate_prefix(prefix)?;
+        let previous_value = match self.get(prefix)? {
+            MetaValue::Missing => JsonValue::Null,
+            MetaValue::Stale(value) | MetaValue::Fresh(value) => value,
+        };
 
         let rows =
             sqlx::query("SELECT key, value FROM meta_kv WHERE mode_id = ? AND key LIKE ? || '%'")
@@ -247,28 +252,36 @@ impl MetaDb {
                 .map_err(MetaDbError::Db)?;
 
         let mut map = serde_json::Map::new();
+        let mut parsed_rows: Vec<(String, JsonValue)> = Vec::new();
         for row in rows {
             let key: String = row.get("key");
             let value_str: String = row.get("value");
 
-            if let Ok(json_value) = serde_json::from_str(&value_str)
+            if let Ok(json_value) = serde_json::from_str::<JsonValue>(&value_str)
                 && let Some(stripped_prefix) = key.strip_prefix(prefix)
             {
                 insert_nested(
                     &mut map,
                     stripped_prefix.trim_start_matches('/'),
-                    json_value,
+                    json_value.clone(),
                 )
                 .map_err(MetaDbError::Custom)?;
+                parsed_rows.push((key, json_value));
             }
         }
 
+        self.cache.retain(|key, _| !key.starts_with(prefix));
         if map.is_empty() {
-            let changed = self.update_cache(prefix, None);
-            Ok((serde_json::Value::Null, changed))
+            let value = serde_json::Value::Null;
+            let changed = previous_value != value;
+            self.update_cache(prefix, None);
+            Ok((value, changed))
         } else {
             let json_map = JsonValue::Object(map);
-            let changed = self.update_cache(prefix, Some(json_map.clone()));
+            let changed = previous_value != json_map;
+            for (key, value) in parsed_rows {
+                self.update_cache(&key, Some(value));
+            }
             Ok((json_map, changed))
         }
     }

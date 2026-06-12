@@ -1,15 +1,11 @@
 use mlua::UserData;
-use rock_wire::{OutgoingPacket, PlayerKey, SystemPacket};
+use rock_wire::PlayerKey;
 
 use super::{
     rx::{SignalRx, signal::SignalScope},
     vision::PlayerVision,
 };
-use crate::{
-    envelope::EnvelopeRecipient,
-    runtime::{app_data, plugins::player::presence::PlayerPresence, utils::get_app_data},
-    socket::protocol::ServerMessage,
-};
+use crate::runtime::{app_data, plugins::player::presence::PlayerPresence, utils::get_app_data};
 
 #[derive(Clone)]
 pub(crate) struct PlayerHandle {
@@ -38,12 +34,7 @@ impl UserData for PlayerHandle {
         });
 
         methods.add_method("kick", |lua, this, _: ()| {
-            get_app_data::<app_data::ClientApi>(lua)?
-                .0
-                .send(ServerMessage {
-                    recipient: EnvelopeRecipient::Single(this.pk),
-                    payload: OutgoingPacket::System(SystemPacket::PlayerKicked),
-                });
+            get_app_data::<app_data::ClientApi>(lua)?.0.kick(this.pk);
             Ok(())
         });
 

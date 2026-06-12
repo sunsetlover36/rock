@@ -1544,7 +1544,7 @@ The server sends WebSocket ping frames every 25 seconds to keep idle connections
 
 Protected worlds authenticate WebSocket sessions from an HTTP cookie. By default the cookie is named `rock_session`; override the name with `ROCK_SESSION_COOKIE`.
 
-Use `?auth=ticket` or `?auth=farcaster` to select the verifier. If omitted, the server defaults to `ticket`.
+Use `?auth=ticket` or `?auth=farcaster` to select the verifier. If only one provider is configured, the server selects it automatically. If multiple providers are configured, clients must select one explicitly.
 
 ```txt
 Cookie: rock_session=...

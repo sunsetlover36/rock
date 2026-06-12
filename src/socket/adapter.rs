@@ -144,6 +144,7 @@ impl SocketAdapter {
 
         self.runtime_callback_tx
             .send_async(RuntimeCallback::System(SystemCallback::PlayerDisconnect {
+                pk: self.session.pk,
                 identity: self.session.identity.clone(),
             }))
             .await?;
