@@ -1518,7 +1518,7 @@ The server sends WebSocket ping frames every 25 seconds to keep idle connections
   "d": {
     "tick": 1234,
     "rooms": {
-      "12345": {
+      "room1": {
         "spawn": { "1": { "position": { "x": 5, "y": 10 }, "custom": { "health": 100 } } },
         "update": { "1": { "position": { "x": 6, "y": 10 } } },
         "state": {}

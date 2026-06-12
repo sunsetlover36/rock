@@ -29,6 +29,7 @@ use crate::{
             on::protocol::{EventScope, GameModeEvent, GameModeEventData, PlayerEventData},
             player::PlayerHandle,
         },
+        room_id_to_name,
     },
     rx::{RxSentry, RxSentryError, core::CoreSentryError},
     utils::{custom_table_to_json, multivalue_to_json},
@@ -818,6 +819,11 @@ impl NetworkReplicator {
 
         let mut policies_to_remove: HashSet<PolicyId> = HashSet::new();
         for (&room_id, entities) in room_to_entities {
+            let room_name = room_id_to_name(lua, room_id).wrap_err(&format!(
+                "Failed to build a world snapshot for room ID '{}'",
+                room_id
+            ))?;
+
             for &entity in entities.iter() {
                 let Some((blueprint_comp, pos_comp)) = entities_view.get(entity) else {
                     continue;
@@ -949,7 +955,7 @@ impl NetworkReplicator {
 
                             let entity_data = snapshot
                                 .rooms
-                                .entry(room_id)
+                                .entry(room_name.clone())
                                 .or_default()
                                 .spawn
                                 .entry(entity_id)
@@ -997,7 +1003,7 @@ impl NetworkReplicator {
                                         &updates,
                                         snapshot
                                             .rooms
-                                            .entry(room_id)
+                                            .entry(room_name.clone())
                                             .or_default()
                                             .update
                                             .entry(entity_id)
@@ -1096,6 +1102,10 @@ impl NetworkReplicator {
                     }
                     PolicyRouting::Pinned(pinned_room_id) => pinned_room_id,
                 };
+                let policy_room_name = room_id_to_name(lua, policy_room_id).wrap_err(&format!(
+                    "Failed to build a memory snapshot for room ID '{}'",
+                    policy_room_id
+                ))?;
 
                 let Some(anchors) = room_to_anchors.get(&policy_room_id) else {
                     continue;
@@ -1147,7 +1157,7 @@ impl NetworkReplicator {
                                 .entry(anchor.pk)
                                 .or_insert_with(|| base_snapshot.clone())
                                 .rooms
-                                .entry(policy_room_id)
+                                .entry(policy_room_name.clone())
                                 .or_default()
                                 .state
                                 .insert(key.clone(), json_str.clone());
