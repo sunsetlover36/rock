@@ -2,7 +2,7 @@ use std::collections::hash_map;
 
 use mlua::UserData;
 
-use super::to_coroutine;
+use super::{script_chain_label, to_coroutine};
 use crate::runtime::{SceneManagerMessage, app_data, utils::get_app_data_mut};
 
 #[derive(Clone)]
@@ -27,11 +27,15 @@ impl UserData for SceneRx {
         });
 
         methods.add_method("play", |lua, this, _: ()| {
+            let label = format!(
+                "scene.create(...).play ({})",
+                script_chain_label(&this.scripts)
+            );
             this.manager_tx
-                .send(SceneManagerMessage::AddTask(to_coroutine(
-                    lua,
-                    &this.scripts,
-                )?))
+                .send(SceneManagerMessage::AddTask {
+                    thread_rk: to_coroutine(lua, &this.scripts)?,
+                    label,
+                })
                 .map_err(|e| {
                     mlua::Error::runtime(format!("scene.play: Failed to add task ({})", e))
                 })?;

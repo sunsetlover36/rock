@@ -28,7 +28,37 @@ fn get_scene_env(lua: &Lua) -> mlua::Result<mlua::Table> {
 
     Ok(env)
 }
-fn to_coroutine(lua: &Lua, functions: &Vec<mlua::Function>) -> mlua::Result<mlua::RegistryKey> {
+fn function_location(function: &mlua::Function) -> String {
+    let info = function.info();
+    let source = info
+        .short_src
+        .or(info.source)
+        .unwrap_or_else(|| "<unknown>".to_owned());
+
+    match (info.name, info.line_defined) {
+        (Some(name), Some(line)) => format!("{name} at {source}:{line}"),
+        (Some(name), None) => format!("{name} at {source}"),
+        (None, Some(line)) => format!("{source}:{line}"),
+        (None, None) => source,
+    }
+}
+
+pub(super) fn script_chain_label(functions: &[mlua::Function]) -> String {
+    match functions {
+        [] => "empty script chain".to_owned(),
+        [function] => function_location(function),
+        functions => {
+            let locations = functions
+                .iter()
+                .map(function_location)
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            format!("{} scripts: {}", functions.len(), locations)
+        }
+    }
+}
+
+fn to_coroutine(lua: &Lua, functions: &[mlua::Function]) -> mlua::Result<mlua::RegistryKey> {
     let env = get_scene_env(lua)?;
     for function in functions {
         function.set_environment(env.clone())?;
@@ -69,11 +99,13 @@ impl GameModePlugin for ScenePlugin {
 
         let manager_tx = self.manager_tx.clone();
         let scene_run_fn = lua.create_function(move |lua, script: mlua::Function| {
+            let scripts = vec![script];
+            let label = format!("scene.run ({})", script_chain_label(&scripts));
             manager_tx
-                .send(SceneManagerMessage::AddTask(to_coroutine(
-                    lua,
-                    &vec![script],
-                )?))
+                .send(SceneManagerMessage::AddTask {
+                    thread_rk: to_coroutine(lua, &scripts)?,
+                    label,
+                })
                 .map_err(|e| {
                     mlua::Error::runtime(format!("{}.run: Failed to add task ({})", plugin_name, e))
                 })?;
@@ -89,13 +121,19 @@ impl GameModePlugin for ScenePlugin {
                     mlua::Error::runtime(format!("{}.play: scene {} not found", plugin_name, name))
                 })?;
 
-                to_coroutine(lua, scripts)?
+                let label = format!("scene.play(\"{}\") ({})", name, script_chain_label(scripts));
+                let thread_rk = to_coroutine(lua, scripts)?;
+                (thread_rk, label)
             };
+            let (thread_rk, label) = coroutine;
 
             manager_tx
-                .send(SceneManagerMessage::AddTask(coroutine))
+                .send(SceneManagerMessage::AddTask { thread_rk, label })
                 .map_err(|e| {
-                    mlua::Error::runtime(format!("{}.run: Failed to add task ({})", plugin_name, e))
+                    mlua::Error::runtime(format!(
+                        "{}.play: Failed to add task ({})",
+                        plugin_name, e
+                    ))
                 })?;
             Ok(())
         })?;

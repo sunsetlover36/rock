@@ -9,7 +9,10 @@ new_key_type! {
 
 #[derive(Debug)]
 pub(crate) enum SceneManagerMessage {
-    AddTask(mlua::RegistryKey),
+    AddTask {
+        thread_rk: mlua::RegistryKey,
+        label: String,
+    },
     Wake {
         task_id: TaskId,
         result: AsyncTaskResult,

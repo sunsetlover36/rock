@@ -14,6 +14,12 @@ use crate::{
 use super::ctx::SceneCtx;
 use super::protocol::{SceneManagerMessage, SceneYieldOp, TaskId, YieldKind};
 
+struct SceneTask {
+    thread_rk: mlua::RegistryKey,
+    label: String,
+    waiting_on: Option<String>,
+}
+
 pub struct SceneManagerParams {
     pub plugins: HashMap<PluginName, Box<dyn GameModePlugin>>,
     pub rx: flume::Receiver<SceneManagerMessage>,
@@ -22,7 +28,7 @@ pub struct SceneManagerParams {
 }
 
 pub struct SceneManager {
-    threads: SlotMap<TaskId, mlua::RegistryKey>,
+    threads: SlotMap<TaskId, SceneTask>,
     tx: flume::Sender<SceneManagerMessage>,
     rx: flume::Receiver<SceneManagerMessage>,
     tokio_handle: tokio::runtime::Handle,
@@ -31,7 +37,7 @@ pub struct SceneManager {
 impl SceneManager {
     pub fn new(params: SceneManagerParams) -> Self {
         Self {
-            threads: SlotMap::<TaskId, mlua::RegistryKey>::with_key(),
+            threads: SlotMap::<TaskId, SceneTask>::with_key(),
             rx: params.rx,
             tx: params.tx,
             tokio_handle: params.tokio_handle,
@@ -39,9 +45,19 @@ impl SceneManager {
         }
     }
 
-    fn add_task(&mut self, lua: &mlua::Lua, thread_rk: mlua::RegistryKey) -> eyre::Result<()> {
-        let task_id = self.threads.insert(thread_rk);
+    fn add_task(
+        &mut self,
+        lua: &mlua::Lua,
+        thread_rk: mlua::RegistryKey,
+        label: String,
+    ) -> eyre::Result<()> {
+        let task_id = self.threads.insert(SceneTask {
+            thread_rk,
+            label,
+            waiting_on: None,
+        });
         if let Err(e) = self.advance_task(lua, task_id, SceneCtx {}) {
+            self.log_task_error(task_id, "starting scene", &format!("{:#}", e));
             self.threads.remove(task_id);
             return Err(e);
         }
@@ -55,22 +71,19 @@ impl SceneManager {
         task_id: TaskId,
         args: impl mlua::IntoLuaMulti,
     ) -> eyre::Result<()> {
-        let thread_rk = match self.threads.get(task_id) {
-            Some(t) => t,
-            None => return Ok(()),
+        let thread: mlua::Thread = {
+            let task = match self.threads.get(task_id) {
+                Some(task) => task,
+                None => return Ok(()),
+            };
+            lua.registry_value(&task.thread_rk)
+                .wrap_err("Failed to resume scene: coroutine registry key is invalid")?
         };
-        let thread: mlua::Thread = lua
-            .registry_value(thread_rk)
-            .wrap_err("scene_manager.advance_task: cannot find a thread by its registry key")?;
 
         let resume_result = thread.resume::<mlua::Value>(args);
         match resume_result {
             Err(e) => {
-                return Err(eyre::eyre!(
-                    "scene_manager.advance_task: task {:?} crashed: {}",
-                    task_id,
-                    e
-                ));
+                return Err(eyre::eyre!("Lua scene function failed: {}", e));
             }
             Ok(yielded_val) => match thread.status() {
                 mlua::ThreadStatus::Resumable => {
@@ -85,8 +98,58 @@ impl SceneManager {
         Ok(())
     }
 
+    fn label_for_plugin_op(prefix: &str, suffix: &str) -> String {
+        format!("{}.{}", prefix.to_lowercase(), suffix.to_lowercase())
+    }
+
+    fn set_waiting_on(&mut self, task_id: TaskId, label: impl Into<String>) {
+        if let Some(task) = self.threads.get_mut(task_id) {
+            task.waiting_on = Some(label.into());
+        }
+    }
+
+    fn waiting_phase(&self, task_id: TaskId, default: &str) -> String {
+        self.threads
+            .get(task_id)
+            .and_then(|task| task.waiting_on.as_ref())
+            .map(|waiting_on| format!("{default} after `{waiting_on}`"))
+            .unwrap_or_else(|| default.to_owned())
+    }
+
+    fn indent_error(err: &str) -> String {
+        err.lines()
+            .map(|line| format!("    {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn log_task_error(&self, task_id: TaskId, phase: &str, err: &str) {
+        if let Some(task) = self.threads.get(task_id) {
+            let waiting = task
+                .waiting_on
+                .as_ref()
+                .map(|waiting_on| format!("\n  waiting on: {waiting_on}"))
+                .unwrap_or_default();
+            eprintln!(
+                "[SCENE] {}\n  task: {:?}\n  phase: {}{}\n  error:\n{}",
+                task.label,
+                task_id,
+                phase,
+                waiting,
+                Self::indent_error(err)
+            );
+        } else {
+            eprintln!(
+                "[SCENE] Unknown scene task {:?}\n  phase: {}\n  error:\n{}",
+                task_id,
+                phase,
+                Self::indent_error(err)
+            );
+        }
+    }
+
     fn handle_plugin_yield(
-        &self,
+        &mut self,
         lua: &mlua::Lua,
         task_id: TaskId,
         op: mlua::Table,
@@ -100,13 +163,18 @@ impl SceneManager {
                 opcode
             )
         })?;
+        self.set_waiting_on(task_id, Self::label_for_plugin_op(prefix, suffix));
 
         let plugin_name = prefix.to_lowercase().parse::<PluginName>()?;
         match self.plugins.get(&plugin_name) {
             Some(plugin) => {
                 let args = op.get("args").unwrap_or(mlua::Value::Nil);
                 let Some(task) = plugin.handle_op(lua, suffix, args)? else {
-                    return Ok(());
+                    return Err(eyre::eyre!(
+                        "Scene yielded `{}` but plugin `{}` did not create an async task",
+                        opcode,
+                        plugin_name
+                    ));
                 };
                 let tx = self.tx.clone();
                 self.tokio_handle.spawn(async move {
@@ -117,7 +185,7 @@ impl SceneManager {
                         Err(err) => {
                             let _ = tx.send(SceneManagerMessage::Error {
                                 task_id,
-                                err: err.to_string(),
+                                err: format!("{:#}", err),
                             });
                         }
                     }
@@ -134,7 +202,7 @@ impl SceneManager {
         Ok(())
     }
     fn handle_scene_yield(
-        &self,
+        &mut self,
         _: &mlua::Lua,
         task_id: TaskId,
         op: mlua::Table,
@@ -145,6 +213,7 @@ impl SceneManager {
         let scene_opcode = opcode.parse::<SceneYieldOp>()?;
         match scene_opcode {
             SceneYieldOp::Sleep => {
+                self.set_waiting_on(task_id, "scene.sleep");
                 let seconds: u64 = op
                     .get("args")
                     .wrap_err("handle_scene_yield: cannot find `args` in the yield output")?;
@@ -162,7 +231,7 @@ impl SceneManager {
         Ok(())
     }
     fn handle_yield(
-        &self,
+        &mut self,
         lua: &mlua::Lua,
         task_id: TaskId,
         yielded_val: mlua::Value,
@@ -171,13 +240,16 @@ impl SceneManager {
             mlua::Value::Table(t) => t,
             _ => {
                 return Err(eyre::eyre!(
-                    "handle_yield: encountered an unexpected yield output"
+                    "Scene yielded an invalid value: expected a yield table, got {}",
+                    yielded_val.type_name()
                 ));
             }
         };
 
         let kind = match t.get::<String>("kind") {
-            Ok(kind) => kind.parse::<YieldKind>()?,
+            Ok(kind) => kind
+                .parse::<YieldKind>()
+                .map_err(|err| eyre::eyre!("Scene yielded an invalid kind `{}`: {}", kind, err))?,
             Err(_) => YieldKind::Plugin, // backward compatibility
         };
         match kind {
@@ -189,10 +261,8 @@ impl SceneManager {
     pub fn tick(&mut self, lua: &mlua::Lua) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                SceneManagerMessage::AddTask(thread_rk) => {
-                    if let Err(e) = self.add_task(lua, thread_rk) {
-                        eprintln!("scene_manager.tick: error adding task ({})", e);
-                    }
+                SceneManagerMessage::AddTask { thread_rk, label } => {
+                    let _ = self.add_task(lua, thread_rk, label);
                 }
                 SceneManagerMessage::Cancel(task_id) => {
                     self.threads.remove(task_id);
@@ -202,18 +272,24 @@ impl SceneManager {
                         AsyncTaskResult::JsonValue(v) => match json_to_lua(lua, v) {
                             mlua::Result::Ok(v) => v,
                             mlua::Result::Err(err) => {
-                                eprintln!(
-                                    "scene_manager.tick: failed to convert JSON result to Lua value: {err}"
+                                self.log_task_error(
+                                    task_id,
+                                    &self.waiting_phase(task_id, "materializing async result"),
+                                    &format!("{:#}", err),
                                 );
+                                self.threads.remove(task_id);
                                 continue;
                             }
                         },
                         AsyncTaskResult::String(s) => match lua.create_string(&s) {
                             mlua::Result::Ok(s) => mlua::Value::String(s),
                             mlua::Result::Err(err) => {
-                                eprintln!(
-                                    "scene_manager.tick: failed to create Lua string result: {err}"
+                                self.log_task_error(
+                                    task_id,
+                                    &self.waiting_phase(task_id, "materializing async result"),
+                                    &format!("{:#}", err),
                                 );
+                                self.threads.remove(task_id);
                                 continue;
                             }
                         },
@@ -222,17 +298,19 @@ impl SceneManager {
                     };
 
                     if let Err(e) = self.advance_task(lua, task_id, lua_val) {
-                        eprintln!(
-                            "scene_manager.tick: error advancing task {:?} ({})",
-                            task_id, e
+                        self.log_task_error(
+                            task_id,
+                            &self.waiting_phase(task_id, "resuming scene"),
+                            &format!("{:#}", e),
                         );
                         self.threads.remove(task_id);
                     };
                 }
                 SceneManagerMessage::Error { task_id, err } => {
-                    eprintln!(
-                        "scene_manager.tick: scene execution error. task_id = {:?}; {}",
-                        &task_id, err
+                    self.log_task_error(
+                        task_id,
+                        &self.waiting_phase(task_id, "running async scene operation"),
+                        &err,
                     );
                     self.threads.remove(task_id);
                 }
