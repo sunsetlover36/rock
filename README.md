@@ -164,3 +164,9 @@ X-Rock-Impromptu-Token: ...
 Cookie-authenticated WebSocket sessions should also set `ROCK_ALLOWED_ORIGINS` to prevent browser-based cross-site WebSocket hijacking.
 
 See [DOCS.md](DOCS.md) for the full security-related setup.
+
+## Inspiration
+
+ROCK is inspired by the feeling of writing SA-MP Pawn gamemodes: small scripts that could turn a plain multiplayer sandbox into a living world. The goal is to keep that direct gamemode-authoring loop, but give it a modern runtime underneath.
+
+<video src="./gta_sa.mp4" controls width="720"></video>
