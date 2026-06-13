@@ -1,8 +1,8 @@
 [package]
 name = "rock"
-description = "ROCK server runtime"
-authors = ["Luther Blissett"]
-version = "0.2.15"
+description = "Programmable runtime for multiplayer worlds"
+authors = ["ruburi"]
+version = "0.2.16"
 edition = "2024"
 
 [dependencies]

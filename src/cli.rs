@@ -1,10 +1,22 @@
 use clap::{Parser, Subcommand};
 
+const ABOUT: &str = r#"
+██████╗  ██████╗  ██████╗██╗  ██╗
+██╔══██╗██╔═══██╗██╔════╝██║ ██╔╝
+██████╔╝██║   ██║██║     █████╔╝
+██╔══██╗██║   ██║██║     ██╔═██╗
+██║  ██║╚██████╔╝╚██████╗██║  ██╗
+╚═╝  ╚═╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
+
+Build multiplayer worlds with Lua.
+Docs: https://github.com/sunsetlover36/rock/blob/main/DOCS.md"#;
+
 #[derive(Parser)]
 #[command(name = "rock")]
-#[command(author = "Luther Blissett")]
-#[command(version = "0.2.15")]
-#[command(about = "ROCK server runtime", long_about = None)]
+#[command(author = env!("CARGO_PKG_AUTHORS"))]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(about = ABOUT)]
+#[command(arg_required_else_help = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
