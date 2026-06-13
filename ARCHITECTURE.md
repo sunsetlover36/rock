@@ -187,19 +187,28 @@ runtime initialization params:
 * `callback_rx` -> a channel for gamemode callbacks. this is the way to befriend gamemode with other entities and domains. for example, client messenger actor sends client intents to this channel (`GameModeClientCommand::Client(...)`).
 * `commit_router` -> handed to the runtime from the outside because commit router should be initialized in the main file because it gathers all types of listeners located throughout the engine.
 * `meta_db` -> runtime uses meta db to inject a `memory` plugin (see below)
-* `tokio_handle` -> scheduler is using it to spawn async background tasks (see below)
+* `tokio_handle` -> scene manager is using it to spawn async background tasks (see below)
 
 gamemode runtime operates on a different synchronous thread (apart of tokio runtime), so the tokio runtime is not being blocked by gamemode calculations and ticks.
 
 the great three pillars of `runtime.rs`:
 1. world state and world natives
 2. gamemode callbacks
-3. lua, plugins and scheduler
+3. lua, plugins and scene manager
 
 #### world state and world natives
 SA-MP had its natives (`GetVehiclePos`, `SetPlayerPos`, etc.). natives is a convenient way to modify the world state. that's all.
 
 world state is an in-game state. this is the place where the difference between meta db and world state can be easily spotted. meta db is used for custom scripter's data (anything). world state is the state of the world. world has its own laws and deterministic behavior and data model, for example, entity positions, cars if present etc. state that is forged to the world (just like San Andreas in GTA SA with its cars and skins and physics laws).
+
+#### network replicator
+network replicator is responsible for turning world state into per-player snapshots.
+
+entities live in rooms. players see through vision anchors attached to entities. policies decide what fields are visible, where they are visible, and how often they are sent. the important thing here: replication is not "broadcast the world". it's "build a small world slice for this player".
+
+entity fields are represented by a 64-bit mask. engine components reserve their own bits (`position`, `rotation`, `control`, `sprite_2d`, `sprite_char`, `owned_by`, `blueprint`, `name`, `room`). custom fields use the same mask by top-level key, so the current budget is 55 custom top-level fields per entity. this is intentional: masks stay cheap and policies stay simple.
+
+custom data is dirty-tracked by top-level key. if `health` changes, only `health` is replicated. if a key is removed, the update sends this key as `null`, and client code should treat this as deletion. nested objects are values. if one field inside `inventory` changes, then `inventory` is the dirty top-level field.
 
 #### gamemode callbacks
 SA-MP had its callbacks (`OnGameModeInit`, `OnPlayerConnect`, etc.). callbacks here is a more convenient way (compared to SA-MP) to handle different events. the beauty and obvious strength of callbacks in ROCK engine is that:
@@ -250,7 +259,7 @@ vs.
 
 currently, there are two active types of callback: `RuntimeCallback::System` for system callbacks (called by the engine) and `RuntimeCallback::Client` for client messages.
 
-#### lua, plugins and scheduler
+#### lua, plugins and scene manager
 the engine uses `mlua` to make Rust and Lua friends. one of the most powerful concepts of the engine shines here: scenes and plugins.
 
 let me show you a simple example:
@@ -278,20 +287,20 @@ scripter can access plugin namespaces everywhere, which keeps helpers and domain
 
 scene-only API is where the things get beautiful. you can perform async tasks under the hood but on the surface you just write a simple declarative code.
 
-the beauty is that everything is synchronous at the surface. async methods return opcodes for async operations to be performed and handled by scheduler.
+the beauty is that everything is synchronous at the surface. async methods build a yield operation table and yield it to the scene manager.
 
 scene-only async methods don't perform any kind of asynchronous code nor the engine uses async directly to handle the request.
 
-once the async method is called inside the coroutine -> it's result is being yielded as `coroutine.yield(OPCODE)`. `scene.play` and `scene.run` methods create a coroutine from the closure. after that, it sends a channel message to the scheduler (`SchedulerMessage::AddTask`): add task (new coroutine arrived) to a queue. the thing is that i'm not passing an actual coroutine or something. i'm passing its registry key so the scheduler can get this coroutine when it needs, because scheduler also has `&lua` borrowed reference.
-scheduler's task is to keep track of incoming coroutines, advance and wake up them when needed (keep yielding until an actual return) and then finish its execution.
+once the async method is called inside the coroutine -> it yields `{ kind, opcode, args }`. `kind` says whether this is a plugin operation or a scene operation. `opcode` says what needs to happen. `args` is the payload. `scene.play` and `scene.run` create a coroutine from the closure and send a channel message to the scene manager: add task (new coroutine arrived) to a queue. the thing is that i'm not passing an actual coroutine or something. i'm passing its registry key so the manager can get this coroutine when it needs, because manager also has `&lua` borrowed reference.
+scene manager's task is to keep track of incoming coroutines, advance and wake up them when needed (keep yielding until an actual return) and then finish its execution.
 
-it has a `tick` method that pings a channel for new messages (add task, cancel task, etc.). `scheduler.tick` method is being called in the main game loop (each 16ms as of now). so it keeps running along with the game loop.
-scheduler parses opcode and gets two elements: prefix and suffix.
+it has a `tick` method that pings a channel for new messages (add task, cancel task, wake, etc.). `scene_manager.tick` method is being called in the main game loop (each 16ms as of now). so it keeps running along with the game loop.
+for plugin operations, manager parses opcode and gets two elements: prefix and suffix.
 
 `prefix` is a plugin's name, `suffix` is an action related to this plugin. to keep things clean, each plugin has a `name()` method that returns a constant `&str`, so opcodes are being constructed safely. i also use `strum` to parse operations from enums (for example, `MemoryOp`). opcodes are written in `SCREAMING_SNAKE_CASE`.
-each plugin has a `handle_op` method that returns `Result<Option<AsyncTask>>` where `AsyncTask` is a `BoxFuture`. basically, a work that needs to be done. so scheduler synchronously calls `handle_op` method of the parsed plugin (scheduler stores plugins as a `HashMap<String, Box<dyn GameModePlugin>>`). it returns a `BoxFuture` and scheduler spawns a tokio task using a handle where it executes and awaits for the task to complete. after that, it uses its own channel to wake up a task or alert about an error.
+each plugin has a `handle_op` method that returns `Result<Option<AsyncTask>>` where `AsyncTask` is a `BoxFuture`. basically, a work that needs to be done. so manager synchronously calls `handle_op` method of the parsed plugin (manager stores plugins as a `HashMap<PluginName, Box<dyn GameModePlugin>>`). it returns a `BoxFuture` and manager spawns a tokio task using a handle where it executes and awaits for the task to complete. after that, it uses its own channel to wake up a task or alert about an error.
 
-scheduler and plugins are initialized in `api::register` module.
+scene manager and plugins are initialized as part of runtime setup.
 
 ### axum
 web app framework. public API: HTTP and WebSockets. not much to describe.

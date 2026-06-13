@@ -1387,7 +1387,9 @@ secret_bp:sync()
   :commit()
 ```
 
-Field selectors accept both **component keys** (`c.position`, `c.rotation`, `c.name`, `c.owned_by`, `c.control`, `c.sprite`, `c.char`) and **custom field names** as strings.
+Field selectors accept both **component keys** (`c.position`, `c.rotation`, `c.name`, `c.owned_by`, `c.control`, `c.sprite_2d`, `c.sprite_char`) and **custom field names** as strings.
+
+Replication fields use a compact 64-bit mask. Built-in entity fields reserve part of that budget (`position`, `rotation`, `control`, `sprite_2d`, `sprite_char`, `owned_by`, `blueprint`, `name`, `room`), so the current practical limit is **55 custom top-level fields** per entity. If more engine components are added later, this custom field budget gets smaller.
 
 ### Spatial Filters
 
@@ -1492,6 +1494,26 @@ local data = ent:custom()                              -- read
 ```
 
 Custom fields are replicated to clients alongside components when included in sync policies (referenced by string name in `:only()` / `:hide()`).
+
+Custom data is tracked at the **top level**. Updating `health` only replicates `custom.health`, not the whole custom table. If a top-level custom key disappears, the server sends that key as `null` in the next update; clients should treat `null` in `custom` as a delete marker.
+
+```lua
+ent:custom({ health = 100, weapon = "axe" })
+
+ent:custom(function(c)
+  c.health = 80
+  c.weapon = nil
+  return c
+end)
+```
+
+The update can look like this:
+
+```json
+{ "custom": { "health": 80, "weapon": null } }
+```
+
+Nested tables are still normal JSON values. If `inventory` is one custom field and one slot inside it changes, the whole `inventory` value is replicated. Use separate top-level custom fields when you want fine-grained replication.
 
 ---
 
