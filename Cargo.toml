@@ -45,3 +45,4 @@ jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 toml = "0.9.8"
 alloy = { version = "2.0.4", features = ["signer-local", "signer-mnemonic", "eip712"] }
 dotenvy = "0.15.7"
+subtle = "2.6"

@@ -1,9 +1,8 @@
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{ConnectInfo, Query, State, WebSocketUpgrade},
-    http::{HeaderMap, Request, StatusCode},
-    middleware::{self, Next},
+    extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
+    http::{HeaderMap, StatusCode, header::ORIGIN},
     response::{IntoResponse, Response},
     routing::{any, post},
 };
@@ -11,7 +10,8 @@ use color_eyre::eyre;
 use hmac::{Hmac, KeyInit, Mac};
 use rock_wire::{ImpromptuRequest, SocketConnectionQuery, farcaster::WebhookPayload};
 use sha2::Sha512;
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 
@@ -27,17 +27,11 @@ use crate::{
 
 type HmacSha512 = Hmac<Sha512>;
 
-async fn localhost_only(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    req: Request<axum::body::Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    if !addr.ip().is_loopback() {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    Ok(next.run(req).await)
-}
+const IMPROMPTU_TOKEN_ENV: &str = "ROCK_IMPROMPTU_TOKEN";
+const IMPROMPTU_TOKEN_HEADER: &str = "X-Rock-Impromptu-Token";
+const ALLOWED_ORIGINS_ENV: &str = "ROCK_ALLOWED_ORIGINS";
+const IMPROMPTU_BODY_LIMIT: usize = 256 * 1024;
+const WEBHOOK_BODY_LIMIT: usize = 1024 * 1024;
 
 fn get_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     let cookie = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
@@ -54,12 +48,67 @@ fn get_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     })
 }
 
+fn verify_impromptu_token(headers: &HeaderMap) -> Result<(), StatusCode> {
+    let expected = std::env::var(IMPROMPTU_TOKEN_ENV)
+        .ok()
+        .filter(|token| !token.is_empty())
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let actual = headers
+        .get(IMPROMPTU_TOKEN_HEADER)
+        .and_then(|token| token.to_str().ok())
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if actual.as_bytes().ct_eq(expected.as_bytes()).into() {
+        Ok(())
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+fn normalize_origin(origin: &str) -> &str {
+    origin.trim().trim_end_matches('/')
+}
+
+fn parse_allowed_origins() -> Vec<String> {
+    std::env::var(ALLOWED_ORIGINS_ENV)
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|origin| {
+            let origin = normalize_origin(origin);
+            if origin.is_empty() {
+                None
+            } else {
+                Some(origin.to_owned())
+            }
+        })
+        .collect()
+}
+
+fn verify_ws_origin(headers: &HeaderMap, allowed_origins: &[String]) -> Result<(), StatusCode> {
+    if allowed_origins.is_empty() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let origin = headers
+        .get(ORIGIN)
+        .and_then(|origin| origin.to_str().ok())
+        .map(normalize_origin)
+        .ok_or(StatusCode::FORBIDDEN)?;
+
+    if allowed_origins.iter().any(|allowed| allowed == origin) {
+        Ok(())
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     session_registrar: SessionRegistrar,
     runtime_callback_tx: flume::Sender<RuntimeCallback>,
     config: Arc<Config>,
     fc_verifier: Option<Arc<FarcasterVerifier>>,
+    allowed_origins: Arc<Vec<String>>,
 }
 
 pub struct ApiParams {
@@ -78,15 +127,19 @@ impl Api {
             runtime_callback_tx: params.runtime_callback_tx.clone(),
             config: Arc::new(params.config),
             fc_verifier: params.fc_verifier.map(Arc::new),
+            allowed_origins: Arc::new(parse_allowed_origins()),
         };
 
         let app = Router::new()
             .route("/", any(Api::handle_ws))
             .route(
                 "/impromptu",
-                post(Api::process_impromptu).route_layer(middleware::from_fn(localhost_only)),
+                post(Api::process_impromptu).layer(DefaultBodyLimit::max(IMPROMPTU_BODY_LIMIT)),
             )
-            .route("/farcaster-webhook", post(Api::process_webhook))
+            .route(
+                "/farcaster-webhook",
+                post(Api::process_webhook).layer(DefaultBodyLimit::max(WEBHOOK_BODY_LIMIT)),
+            )
             .nest_service("/assets", ServeDir::new("./assets"))
             .with_state(state);
         Self { app }
@@ -116,6 +169,11 @@ impl Api {
             .auth
             .as_ref()
             .filter(|c| !c.providers.is_empty());
+        if auth_config.is_some()
+            && let Err(status) = verify_ws_origin(&headers, &state.allowed_origins)
+        {
+            return status.into_response();
+        }
 
         let auth = match (auth, auth_config) {
             (Some(auth), _) => Some(auth),
@@ -156,9 +214,12 @@ impl Api {
     }
 
     async fn process_impromptu(
+        headers: HeaderMap,
         State(state): State<AppState>,
         Json(payload): Json<ImpromptuRequest>,
     ) -> Result<&'static str, StatusCode> {
+        verify_impromptu_token(&headers)?;
+
         state
             .runtime_callback_tx
             .send_async(RuntimeCallback::System(SystemCallback::ImpromptuRequest {
@@ -218,6 +279,7 @@ impl Api {
         let listener = TcpListener::bind(&addr)
             .await
             .map_err(|err| eyre::eyre!("Failed to bind {addr}: {err}"))?;
+
         axum::serve(listener, self.app)
             .await
             .map_err(|err| eyre::eyre!("Server error: {err}"))?;

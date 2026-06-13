@@ -83,11 +83,15 @@ api_key = "YOUR_NEYNAR_API_KEY"
 HOST=127.0.0.1
 PORT=3000
 ROCK_SESSION_COOKIE=rock_session
+ROCK_ALLOWED_ORIGINS=http://127.0.0.1:3000,http://localhost:5173
+ROCK_IMPROMPTU_TOKEN=change-me
 ```
 
 * `HOST`: address to bind the server (default: `127.0.0.1`)
 * `PORT`: port to listen on (default: `3000`)
 * `ROCK_SESSION_COOKIE`: cookie name used for authenticated WebSocket sessions (default: `rock_session`)
+* `ROCK_ALLOWED_ORIGINS`: comma-separated WebSocket `Origin` allowlist for protected cookie sessions. Required when auth providers are enabled and clients connect with the session cookie.
+* `ROCK_IMPROMPTU_TOKEN`: token required by the live-code `/impromptu` endpoint. If unset or empty, `/impromptu` rejects every request.
 
 The engine loads environment variables from a local `.env` file on startup, then falls back to the process environment.
 
@@ -1575,6 +1579,12 @@ ws://127.0.0.1:3000/?auth=farcaster
 
 Omit the cookie for anon sessions. Tickets use JWT (HS256). Farcaster Quick Auth uses RS256.
 
+Protected cookie sessions also check the WebSocket `Origin` header against `ROCK_ALLOWED_ORIGINS`. This blocks browser-based cross-site WebSocket hijacking. Set it to the exact frontend origins that are allowed to open authenticated sockets, for example:
+
+```env
+ROCK_ALLOWED_ORIGINS=https://game.example.com,http://localhost:5173
+```
+
 ---
 
 ## Geodes
@@ -1623,10 +1633,15 @@ The engine exposes a `POST /impromptu` endpoint for injecting Lua code at runtim
 ```bash
 curl -X POST http://127.0.0.1:3000/impromptu \
   -H "Content-Type: application/json" \
+  -H "X-Rock-Impromptu-Token: $ROCK_IMPROMPTU_TOKEN" \
   -d '{"code": "print(\"hello from live code\")", "name": "test"}'
 ```
 
 This fires `on.world.impromptu()` events and executes the code within the running game loop. Useful for debugging and live development.
+
+`/impromptu` is protected by `ROCK_IMPROMPTU_TOKEN`, not by client IP. This matters behind reverse proxies such as nginx or Caddy: the engine may see the proxy as a local peer, so loopback checks are not a reliable security boundary. Requests without the correct `X-Rock-Impromptu-Token` header are rejected with `404`.
+
+The request body is capped at 256 KiB. Farcaster webhook bodies are capped at 1 MiB.
 
 ---
 

@@ -4925,6 +4925,7 @@ dependencies = [
  "smallvec",
  "sqlx",
  "strum",
+ "subtle",
  "thiserror 2.0.18",
  "tokio",
  "toml",
