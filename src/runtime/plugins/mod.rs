@@ -47,32 +47,45 @@ use protocol::*;
 
 use crate::runtime::utils::LuaResultExt;
 
-pub(crate) fn ensure_yieldable(lua: &Lua, api_name: &str) -> mlua::Result<()> {
-    let coroutine: mlua::Table = lua.globals().get("coroutine")?;
-    let isyieldable: mlua::Function = coroutine.get("isyieldable")?;
-    let is_yieldable: bool = isyieldable.call(())?;
-    if is_yieldable {
-        Ok(())
-    } else {
-        Err(mlua::Error::runtime(format!(
-            "{api_name} can only be called inside a scene coroutine"
-        )))
-    }
+pub(crate) fn build_op(
+    lua: &Lua,
+    kind: YieldKind,
+    opcode: impl AsRef<str>,
+    args: mlua::Value,
+) -> mlua::Result<mlua::Table> {
+    let op = lua.create_table()?;
+    op.set("kind", kind.as_ref())?;
+    op.set("opcode", opcode.as_ref())?;
+    op.set("args", args)?;
+    Ok(op)
 }
 
-pub(crate) async fn yield_plugin_op(
+pub(crate) fn build_plugin_op(
+    lua: &Lua,
+    opcode: impl AsRef<str>,
+    args: mlua::Value,
+) -> mlua::Result<mlua::Table> {
+    build_op(lua, YieldKind::Plugin, opcode, args)
+}
+
+pub(crate) fn build_scene_op(
+    lua: &Lua,
+    opcode: impl AsRef<str>,
+    args: mlua::Value,
+) -> mlua::Result<mlua::Table> {
+    build_op(lua, YieldKind::Scene, opcode, args)
+}
+
+pub(crate) async fn yield_op(
     lua: &Lua,
     api_name: &str,
-    opcode: String,
-    args: mlua::Value,
+    op: mlua::Table,
 ) -> mlua::Result<mlua::Value> {
-    ensure_yieldable(lua, api_name)?;
-
-    let op = lua.create_table()?;
-    op.set("opcode", opcode)?;
-    op.set("args", args)?;
-
-    lua.yield_with::<mlua::Value>(op).await
+    lua.yield_with::<mlua::Value>(op).await.map_err(|e| {
+        mlua::Error::runtime(format!(
+            "{api_name} can only be called inside a scene coroutine: {e}"
+        ))
+    })
 }
 
 pub struct PluginComposer {

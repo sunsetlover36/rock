@@ -9,12 +9,13 @@ use rock_wire::farcaster::{
 
 use crate::{
     runtime::plugins::{
-        ensure_yieldable,
+        build_plugin_op,
         farcaster::protocol::{
             CastGetOptions, CastIdentifier, DeleteCastOpParams, PublishReactionOpParams,
             SendCastOpParams, WriteAsArgs, WriteAsOp,
         },
         player::PlayerHandle,
+        yield_op,
     },
     rx::CursorRx,
 };
@@ -91,10 +92,7 @@ impl CastRx {
         op: CastRxOpcodeKey,
         args: &mlua::Value,
     ) -> mlua::Result<mlua::Table> {
-        let table = lua.create_table()?;
-        table.set("opcode", self.opcodes.get(op))?;
-        table.set("args", args)?;
-        Ok(table)
+        build_plugin_op(lua, self.opcodes.get(op), args.clone())
     }
 
     fn get_first_cast_id(&self) -> mlua::Result<CastIdentifier> {
@@ -167,8 +165,7 @@ impl CastRx {
         let args = lua.to_value(&payload)?;
         let op = self.get_op(lua, opcode_key, &args)?;
 
-        ensure_yieldable(lua, "fc.cast reaction")?;
-        lua.yield_with::<mlua::Value>(op).await
+        yield_op(lua, "fc.cast reaction", op).await
     }
 
     fn push_embed(&mut self, embed: CastEmbed) -> mlua::Result<()> {
@@ -217,8 +214,7 @@ impl UserData for CastRx {
                 })?;
                 this.get_op(&lua, CastRxOpcodeKey::Get, &args)?
             };
-            ensure_yieldable(&lua, "fc.cast.get")?;
-            lua.yield_with::<mlua::Value>(op).await
+            yield_op(&lua, "fc.cast.get", op).await
         });
 
         methods.add_async_method("convo", async |lua, this, options: mlua::Value| {
@@ -314,8 +310,7 @@ impl UserData for CastRx {
                 let args = lua.to_value(&payload)?;
                 let op = this.get_op(&lua, CastRxOpcodeKey::Send, &args)?;
 
-                ensure_yieldable(&lua, "fc.cast.send_as")?;
-                lua.yield_with::<mlua::Value>(op).await
+                yield_op(&lua, "fc.cast.send_as", op).await
             },
         );
         methods.add_async_method(
@@ -394,8 +389,7 @@ impl UserData for CastRx {
                 let args = lua.to_value(&payload)?;
                 let op = this.get_op(&lua, CastRxOpcodeKey::Delete, &args)?;
 
-                ensure_yieldable(&lua, "fc.cast.delete_as")?;
-                lua.yield_with::<mlua::Value>(op).await
+                yield_op(&lua, "fc.cast.delete_as", op).await
             },
         );
     }

@@ -12,6 +12,13 @@ pub enum AsyncTaskResult {
 }
 pub type AsyncTask = BoxFuture<'static, eyre::Result<AsyncTaskResult>>;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, AsRefStr, EnumString)]
+#[strum(serialize_all = "lowercase")]
+pub(crate) enum YieldKind {
+    Plugin,
+    Scene,
+}
+
 pub trait GameModePlugin {
     fn name(&self) -> PluginName;
 

@@ -4,8 +4,9 @@ use rock_wire::{PlayerKey, farcaster::Fid};
 use crate::runtime::{
     app_data, get_app_data,
     plugins::{
-        ensure_yieldable,
+        build_plugin_op,
         farcaster::protocol::{SignerRequestArgs, WithDefaultAppFid, WriteAsArgs},
+        yield_op,
     },
 };
 
@@ -36,7 +37,7 @@ impl SignerRx {
         }
     }
 
-    fn build_op<A>(
+    fn build_signer_op<A>(
         &self,
         lua: &mlua::Lua,
         opcode: String,
@@ -46,9 +47,6 @@ impl SignerRx {
     where
         A: serde::Serialize,
     {
-        let op = lua.create_table()?;
-        op.set("opcode", opcode)?;
-
         let mlua::Value::Table(op_args) = lua.to_value(&args)? else {
             return Err(mlua::Error::runtime(format!(
                 "signer {action}: unknown argument type, expected a table"
@@ -64,9 +62,8 @@ impl SignerRx {
                 ))
             })?;
         op_args.set("player_fid", fid)?;
-        op.set("args", op_args)?;
 
-        Ok(op)
+        build_plugin_op(lua, opcode, mlua::Value::Table(op_args))
     }
 
     fn args_or_default<A>(&self, args: Option<A>, action: &str) -> mlua::Result<A>
@@ -90,24 +87,22 @@ impl UserData for SignerRx {
             "request",
             async |lua, this, args: Option<SignerRequestArgs>| {
                 let args = this.args_or_default(args, "request")?;
-                let op = this.build_op(&lua, this.opcodes.request.clone(), args, "request")?;
-                ensure_yieldable(&lua, "fc.signer.request")?;
-                lua.yield_with::<mlua::Value>(op).await
+                let op =
+                    this.build_signer_op(&lua, this.opcodes.request.clone(), args, "request")?;
+                yield_op(&lua, "fc.signer.request", op).await
             },
         );
 
         methods.add_async_method("get", async |lua, this, args: Option<WriteAsArgs>| {
             let args = this.args_or_default(args, "get")?;
-            let op = this.build_op(&lua, this.opcodes.get.clone(), args, "get")?;
-            ensure_yieldable(&lua, "fc.signer.get")?;
-            lua.yield_with::<mlua::Value>(op).await
+            let op = this.build_signer_op(&lua, this.opcodes.get.clone(), args, "get")?;
+            yield_op(&lua, "fc.signer.get", op).await
         });
 
         methods.add_async_method("refresh", async |lua, this, args: Option<WriteAsArgs>| {
             let args = this.args_or_default(args, "refresh")?;
-            let op = this.build_op(&lua, this.opcodes.refresh.clone(), args, "refresh")?;
-            ensure_yieldable(&lua, "fc.signer.refresh")?;
-            lua.yield_with::<mlua::Value>(op).await
+            let op = this.build_signer_op(&lua, this.opcodes.refresh.clone(), args, "refresh")?;
+            yield_op(&lua, "fc.signer.refresh", op).await
         });
     }
 }

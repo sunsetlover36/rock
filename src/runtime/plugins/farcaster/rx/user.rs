@@ -3,9 +3,10 @@ use rock_wire::farcaster::Fid;
 
 use crate::{
     runtime::plugins::{
-        ensure_yieldable,
+        build_plugin_op,
         farcaster::protocol::{FollowUserOpParams, WriteAsArgs, WriteAsOp},
         player::PlayerHandle,
+        yield_op,
     },
     rx::CursorRx,
 };
@@ -46,33 +47,35 @@ impl UserRx {
 impl UserData for UserRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_async_method("get", async |lua, this, _: ()| {
-            let table = lua.create_table()?;
-            if let Some(username) = this.username.clone() {
-                table.set("opcode", this.opcodes.get_by_username.clone())?;
-
+            let (opcode, args) = if let Some(username) = this.username.clone() {
                 let args = lua.create_table()?;
                 args.set("username", username)?;
-                table.set("args", args)?;
-            } else {
-                table.set("opcode", this.opcodes.get_by_fids.clone())?;
 
+                (
+                    this.opcodes.get_by_username.clone(),
+                    mlua::Value::Table(args),
+                )
+            } else {
                 let args = lua.create_table()?;
                 args.set("fids", this.fids.clone())?;
-                table.set("args", args)?;
-            }
 
-            ensure_yieldable(&lua, "fc.user.get")?;
-            lua.yield_with::<mlua::Value>(table).await
+                (this.opcodes.get_by_fids.clone(), mlua::Value::Table(args))
+            };
+
+            let op = build_plugin_op(&lua, opcode, args)?;
+            yield_op(&lua, "fc.user.get", op).await
         });
 
         methods.add_async_method("search", async |lua, this, params: Option<mlua::Table>| {
             if let Some(username) = this.username.clone() {
-                let op = lua.create_table()?;
-                op.set("opcode", this.opcodes.search_by_username.clone())?;
-
                 let args = params.unwrap_or(lua.create_table()?);
                 args.set("q", username)?;
-                op.set("args", args)?;
+
+                let op = build_plugin_op(
+                    &lua,
+                    this.opcodes.search_by_username.clone(),
+                    mlua::Value::Table(args),
+                )?;
 
                 Ok(CursorRx::new(op))
             } else {
@@ -91,12 +94,14 @@ impl UserData for UserRx {
                 ));
             }
 
-            let op = lua.create_table()?;
-            op.set("opcode", this.opcodes.get_user_casts.clone())?;
-
             let args = params.unwrap_or(lua.create_table()?);
             args.set("fid", fid)?;
-            op.set("args", args)?;
+
+            let op = build_plugin_op(
+                &lua,
+                this.opcodes.get_user_casts.clone(),
+                mlua::Value::Table(args),
+            )?;
 
             Ok(CursorRx::new(op))
         });
@@ -121,13 +126,9 @@ impl UserData for UserRx {
                 };
 
                 let args = lua.to_value(&payload)?;
+                let op = build_plugin_op(&lua, this.opcodes.follow_user.clone(), args)?;
 
-                let op = lua.create_table()?;
-                op.set("opcode", this.opcodes.follow_user.clone())?;
-                op.set("args", args)?;
-
-                ensure_yieldable(&lua, "fc.user.follow_as")?;
-                lua.yield_with::<mlua::Value>(op).await
+                yield_op(&lua, "fc.user.follow_as", op).await
             },
         );
 
@@ -151,13 +152,9 @@ impl UserData for UserRx {
                 };
 
                 let args = lua.to_value(&payload)?;
+                let op = build_plugin_op(&lua, this.opcodes.unfollow_user.clone(), args)?;
 
-                let op = lua.create_table()?;
-                op.set("opcode", this.opcodes.unfollow_user.clone())?;
-                op.set("args", args)?;
-
-                ensure_yieldable(&lua, "fc.user.unfollow_as")?;
-                lua.yield_with::<mlua::Value>(op).await
+                yield_op(&lua, "fc.user.unfollow_as", op).await
             },
         );
 
@@ -174,12 +171,14 @@ impl UserData for UserRx {
                     ));
                 }
 
-                let op = lua.create_table()?;
-                op.set("opcode", this.opcodes.get_notifications.clone())?;
-
                 let args = params.unwrap_or(lua.create_table()?);
                 args.set("fid", fid)?;
-                op.set("args", args)?;
+
+                let op = build_plugin_op(
+                    &lua,
+                    this.opcodes.get_notifications.clone(),
+                    mlua::Value::Table(args),
+                )?;
 
                 Ok(CursorRx::new(op))
             },

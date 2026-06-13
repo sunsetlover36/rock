@@ -25,13 +25,6 @@ pub(crate) enum SceneManagerMessage {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, AsRefStr, EnumString)]
-#[strum(serialize_all = "lowercase")]
-pub(crate) enum YieldKind {
-    Scene,
-    Plugin,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq, AsRefStr, EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub(crate) enum SceneYieldOp {
     Sleep,

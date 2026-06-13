@@ -5,14 +5,14 @@ use slotmap::SlotMap;
 
 use crate::{
     runtime::{
-        plugins::protocol::{AsyncTaskResult, GameModePlugin, PluginName},
+        plugins::protocol::{AsyncTaskResult, GameModePlugin, PluginName, YieldKind},
         utils::LuaResultExt,
     },
     utils::json_to_lua,
 };
 
 use super::ctx::SceneCtx;
-use super::protocol::{SceneManagerMessage, SceneYieldOp, TaskId, YieldKind};
+use super::protocol::{SceneManagerMessage, SceneYieldOp, TaskId};
 
 struct SceneTask {
     thread_rk: mlua::RegistryKey,

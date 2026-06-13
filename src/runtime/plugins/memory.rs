@@ -4,14 +4,14 @@ use color_eyre::eyre::{self, Context};
 use mlua::{Lua, LuaSerdeExt, Table};
 use strum::{AsRefStr, Display, EnumString};
 
-use super::{
-    protocol::{AsyncTask, AsyncTaskResult, GameModePlugin, PluginName},
-    yield_plugin_op,
-};
+use super::protocol::{AsyncTask, AsyncTaskResult, GameModePlugin, PluginName};
 use crate::{
     meta_db::MetaDb,
     runtime::{
-        app_data, get_app_data, network_replicator::protocol::ReplicationMark, utils::LuaResultExt,
+        app_data, get_app_data,
+        network_replicator::protocol::ReplicationMark,
+        plugins::{build_plugin_op, yield_op},
+        utils::LuaResultExt,
     },
 };
 
@@ -61,9 +61,11 @@ impl GameModePlugin for MemoryPlugin {
         let recall_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Recall);
         let recall_fn = lua.create_async_function(move |lua, key: String| {
             let opcode = recall_op.clone();
+
             async move {
                 let args = lua.create_sequence_from([key])?;
-                yield_plugin_op(&lua, "memory.recall", opcode, mlua::Value::Table(args)).await
+                let op = build_plugin_op(&lua, opcode, mlua::Value::Table(args))?;
+                yield_op(&lua, "memory.recall", op).await
             }
         })?;
         table.set("recall", recall_fn)?;
@@ -71,9 +73,11 @@ impl GameModePlugin for MemoryPlugin {
         let fetch_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Fetch);
         let fetch_fn = lua.create_async_function(move |lua, key: String| {
             let opcode = fetch_op.clone();
+
             async move {
                 let args = lua.create_sequence_from([key])?;
-                yield_plugin_op(&lua, "memory.fetch", opcode, mlua::Value::Table(args)).await
+                let op = build_plugin_op(&lua, opcode, mlua::Value::Table(args))?;
+                yield_op(&lua, "memory.fetch", op).await
             }
         })?;
         table.set("fetch", fetch_fn)?;
@@ -82,11 +86,14 @@ impl GameModePlugin for MemoryPlugin {
         let store_fn =
             lua.create_async_function(move |lua, (key, value): (String, mlua::Value)| {
                 let opcode = store_op.clone();
+
                 async move {
                     let args = lua.create_table()?;
                     args.set(1, key)?;
                     args.set(2, value)?;
-                    yield_plugin_op(&lua, "memory.store", opcode, mlua::Value::Table(args)).await
+
+                    let op = build_plugin_op(&lua, opcode, mlua::Value::Table(args))?;
+                    yield_op(&lua, "memory.store", op).await
                 }
             })?;
         table.set("store", store_fn)?;
@@ -94,9 +101,11 @@ impl GameModePlugin for MemoryPlugin {
         let delete_op = format!("{}_{}", &name_in_uppercase, MemoryOp::Delete);
         let delete_fn = lua.create_async_function(move |lua, key: String| {
             let opcode = delete_op.clone();
+
             async move {
                 let args = lua.create_sequence_from([key])?;
-                yield_plugin_op(&lua, "memory.delete", opcode, mlua::Value::Table(args)).await
+                let op = build_plugin_op(&lua, opcode, mlua::Value::Table(args))?;
+                yield_op(&lua, "memory.delete", op).await
             }
         })?;
         table.set("delete", delete_fn)?;

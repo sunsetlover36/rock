@@ -8,7 +8,10 @@ use strum::{AsRefStr, Display, EnumString};
 
 use crate::{
     crypto::Crypto,
-    runtime::{LuaResultExt, plugins::ensure_yieldable},
+    runtime::{
+        LuaResultExt,
+        plugins::{build_plugin_op, yield_op},
+    },
 };
 
 use super::protocol::{AsyncTask, AsyncTaskResult, GameModePlugin, PluginName};
@@ -50,11 +53,9 @@ impl GameModePlugin for RockPlugin {
             let opcode = balance_opcode.clone();
 
             async move {
-                ensure_yieldable(&lua, "rock.balance")?;
-                let op = lua.create_table()?;
-                op.set("opcode", opcode)?;
-                op.set("args", lua.to_value(&GetBalanceArgs { address })?)?;
-                lua.yield_with::<mlua::Value>(op).await
+                let args = lua.to_value(&GetBalanceArgs { address })?;
+                let op = build_plugin_op(&lua, opcode, args)?;
+                yield_op(&lua, "rock.balance", op).await
             }
         })?;
         table.set("balance", balance_fn)?;
@@ -65,11 +66,9 @@ impl GameModePlugin for RockPlugin {
                 let opcode = holds_opcode.clone();
 
                 async move {
-                    ensure_yieldable(&lua, "rock.holds")?;
-                    let op = lua.create_table()?;
-                    op.set("opcode", opcode)?;
-                    op.set("args", lua.to_value(&HoldsArgs { address, amount })?)?;
-                    lua.yield_with::<mlua::Value>(op).await
+                    let args = lua.to_value(&HoldsArgs { address, amount })?;
+                    let op = build_plugin_op(&lua, opcode, args)?;
+                    yield_op(&lua, "rock.holds", op).await
                 }
             })?;
         table.set("holds", holds_fn)?;
