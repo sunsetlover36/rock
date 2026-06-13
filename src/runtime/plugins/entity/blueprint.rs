@@ -84,7 +84,7 @@ impl UserData for EntityBlueprint {
                         )));
                     }
 
-                    field_registry.add_bit_for(&key).map_err(|e| {
+                    field_registry.get_or_add_bit_for(&key).map_err(|e| {
                         mlua::Error::runtime(format!(
                             "Failed to add a new bit index for key '{}': {}",
                             key, e

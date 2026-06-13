@@ -62,7 +62,7 @@ pub(crate) type RoomId = u64;
 #[derive(Debug, Clone)]
 pub(crate) enum EntityDirtyComponent {
     Core(ComponentData),
-    Custom,
+    CustomField(String),
 }
 
 pub(crate) enum EntityReplicationAction {

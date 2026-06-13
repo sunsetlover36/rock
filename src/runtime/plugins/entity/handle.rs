@@ -24,6 +24,7 @@ use crate::runtime::{
     room_id_to_name, room_str_to_id,
     utils::{get_app_data, get_app_data_mut},
 };
+use crate::utils::{custom_table_to_json, json_to_lua};
 
 #[derive(Clone)]
 pub(crate) struct EntityHandle {
@@ -34,16 +35,34 @@ impl EntityHandle {
     fn get_custom(&self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
         let customs = get_app_data::<app_data::EntityCustoms>(lua)?;
         if let Some(custom) = customs.0.get(&self.entity) {
-            Ok(mlua::Value::Table(custom.clone()))
+            let custom = custom_table_to_json(lua, Some(custom))?;
+            json_to_lua(lua, serde_json::Value::Object(custom))
         } else {
             Ok(mlua::Value::Nil)
         }
     }
     fn set_custom(&self, lua: &mlua::Lua, table: mlua::Table) -> mlua::Result<()> {
-        if !table.is_empty() {
+        let previous_custom = {
+            let customs = get_app_data::<app_data::EntityCustoms>(lua)?;
+            custom_table_to_json(lua, customs.0.get(&self.entity))?
+        };
+        let next_custom = custom_table_to_json(lua, Some(&table))?;
+
+        let mut changed_keys = Vec::new();
+        for (key, value) in &next_custom {
+            if previous_custom.get(key) != Some(value) {
+                changed_keys.push(key.clone());
+            }
+        }
+        for key in previous_custom.keys() {
+            if !next_custom.contains_key(key) {
+                changed_keys.push(key.clone());
+            }
+        }
+
+        if !next_custom.is_empty() {
             let mut field_registry = get_app_data_mut::<FieldRegistry>(lua)?;
-            for pair in table.pairs::<String, mlua::Value>() {
-                let (key, _) = pair?;
+            for key in next_custom.keys() {
                 if field_registry.is_reserved_field(&key) {
                     return Err(mlua::Error::runtime(format!(
                         "Cannot use reserved core component name '{}' in custom fields",
@@ -51,7 +70,7 @@ impl EntityHandle {
                     )));
                 }
 
-                field_registry.add_bit_for(&key).map_err(|e| {
+                field_registry.get_or_add_bit_for(&key).map_err(|e| {
                     mlua::Error::runtime(format!(
                         "Failed to add a new bit index for key '{}': {}",
                         key, e
@@ -74,10 +93,12 @@ impl EntityHandle {
         });
 
         let replicator_tx = get_app_data::<app_data::ReplicatorMarkTx>(lua)?;
-        let _ = replicator_tx.0.send(ReplicationMark::Entity {
-            entity: self.entity,
-            action: EntityReplicationAction::Update(EntityDirtyComponent::Custom),
-        });
+        for key in changed_keys {
+            let _ = replicator_tx.0.send(ReplicationMark::Entity {
+                entity: self.entity,
+                action: EntityReplicationAction::Update(EntityDirtyComponent::CustomField(key)),
+            });
+        }
 
         Ok(())
     }

@@ -650,12 +650,29 @@ impl NetworkReplicator {
                         ComponentData::Blueprint(_) | ComponentData::Room(_) => {}
                     }
                 }
-                EntityDirtyComponent::Custom => {
-                    // FIXME: one custom field change triggers a whole custom component replication
-                    entity_data.custom = custom_table_to_json(lua, entity_customs.0.get(entity)).wrap_err(&format!(
-                        "Failed to convert a custom component table to JSON for an entity with ID '{}'",
-                        entity.id()
-                    ))?;
+                EntityDirtyComponent::CustomField(key) => {
+                    let bit = field_registry.get_bit_index(key).ok_or_else(|| {
+                        eyre::eyre!("Failed to get a bit index for custom key '{}'", key)
+                    })?;
+                    if (mask & (1 << bit)) == 0 {
+                        continue;
+                    }
+
+                    let value = match entity_customs
+                        .0
+                        .get(entity)
+                        .and_then(|custom| custom.get::<mlua::Value>(key.as_str()).ok())
+                    {
+                        Some(value) if !matches!(value, mlua::Value::Nil) => {
+                            lua.from_value(value).wrap_err(&format!(
+                                "Failed to convert custom field '{}' to JSON for an entity with ID '{}'",
+                                key,
+                                entity.id()
+                            ))?
+                        }
+                        _ => serde_json::Value::Null,
+                    };
+                    entity_data.custom.insert(key.clone(), value);
                 }
             }
         }

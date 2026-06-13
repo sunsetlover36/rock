@@ -13,7 +13,7 @@ fn get_fields_mask(lua: &mlua::Lua, table: mlua::Table) -> mlua::Result<u64> {
         let key = key?;
         let bit = match field_registry.get_bit_index(&key) {
             Some(bit) => bit,
-            None => field_registry.add_bit_for(&key).map_err(|e| {
+            None => field_registry.get_or_add_bit_for(&key).map_err(|e| {
                 mlua::Error::runtime(format!(
                     "Failed to add a new bit index for key '{}': {}",
                     key, e
