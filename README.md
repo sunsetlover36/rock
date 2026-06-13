@@ -169,4 +169,4 @@ See [DOCS.md](DOCS.md) for the full security-related setup.
 
 ROCK is inspired by the feeling of writing SA-MP Pawn gamemodes: small scripts that could turn a plain multiplayer sandbox into a living world. The goal is to keep that direct gamemode-authoring loop, but give it a modern runtime underneath.
 
-<video src="./gta_sa.mp4" controls width="720"></video>
+https://github.com/user-attachments/assets/bca1b3f3-f67c-4787-984f-415c10d6241c
