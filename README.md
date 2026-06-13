@@ -36,6 +36,24 @@ on.player.input()
   end)
 ```
 
+## What can I build today?
+
+ROCK is early, but already usable for small multiplayer worlds.
+
+Today, you can build:
+
+* SA-MP-style Lua gamemodes;
+* multiplayer websites where every visitor is connected by default;
+* live rooms with presence, shared state, custom entities, and server-driven events;
+* persistent social spaces backed by SQLite memory;
+* reactive event systems with filters, throttles, timers, and one-shot handlers;
+* Farcaster-connected experiences that react to casts, users or webhooks;
+* prototypes for bots, live events, multiplayer toys, dashboards, games, and tiny virtual spaces.
+
+ROCK is not a renderer, physics engine, or full game editor. It's the server-side runtime.
+
+Bring your own lens. ROCK gives it a shared world to connect to.
+
 ## Quick Start
 
 ### Requirements
