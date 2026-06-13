@@ -1157,6 +1157,15 @@ end)
 | `:unlike_as(player, [args])` | `PlayerHandle, table?` | response | Remove a like as a connected player (scene-only) |
 | `:unrecast_as(player, [args])` | `PlayerHandle, table?` | response | Remove a recast as a connected player (scene-only) |
 
+`:get()` accepts `sort_type`; use `Const.CastSort` values instead of raw strings:
+
+```lua
+scene.run(function()
+  local casts = fc.cast({ hash_a, hash_b })
+    :get({ sort_type = Const.CastSort.Recent })
+end)
+```
+
 `:send_as()` returns the created cast:
 
 | Field | Type | Description |
@@ -1269,6 +1278,20 @@ The `Const` plugin exposes engine constants to Lua. Use constants instead of raw
 
 **`Input.Stick`:**
 `LeftStick`, `RightStick`
+
+### Farcaster constants
+
+Use `Const.CastSort` for `fc.cast(...):get({ sort_type = ... })`.
+
+**`CastSort`:**
+`Trending`, `Likes`, `Recasts`, `Replies`, `Recent`
+
+```lua
+scene.run(function()
+  local latest = fc.cast({ hash_a, hash_b })
+    :get({ sort_type = Const.CastSort.Recent })
+end)
+```
 
 ### Area shapes
 
