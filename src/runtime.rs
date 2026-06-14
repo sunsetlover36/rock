@@ -279,7 +279,7 @@ impl Runtime {
                 self.event_bus.schedule_event(GameModeEvent {
                     scopes: smallvec![EventScope::Global],
                     data: GameModeEventData::Player(PlayerEventData::Offline {
-                        player: PlayerSnapshot::new(identity),
+                        player: PlayerSnapshot::new(pk, identity),
                     }),
                 });
             }

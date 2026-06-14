@@ -163,7 +163,10 @@ impl Api {
         let cookie_name =
             std::env::var("ROCK_SESSION_COOKIE").unwrap_or_else(|_| "rock_session".to_string());
 
-        let token = get_cookie(&headers, &cookie_name);
+        let query_token = query
+            .remove("token")
+            .and_then(|v| v.as_str().map(str::to_owned));
+        let token = query_token.or_else(|| get_cookie(&headers, &cookie_name));
         let auth_config = state
             .config
             .auth
@@ -193,6 +196,7 @@ impl Api {
                     Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
                 }
             }
+            (Some(auth_config), _, None) if auth_config.allow_anonymous => None,
             (Some(_), _, _) => {
                 return StatusCode::UNAUTHORIZED.into_response();
             }

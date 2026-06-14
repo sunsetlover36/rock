@@ -36,6 +36,9 @@ pub(crate) enum AuthKind {
 pub(crate) struct AuthConfig {
     pub providers: Vec<AuthKind>,
 
+    #[serde(default)]
+    pub allow_anonymous: bool,
+
     pub ticket: Option<TicketAuthConfig>,
     pub farcaster: Option<FarcasterAuthConfig>,
 }

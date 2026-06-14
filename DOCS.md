@@ -59,6 +59,8 @@ name = "farcaster"
 [auth]
 # Optional. Enables auth providers and requires authenticated sessions.
 providers = ["ticket", "farcaster"]
+# Optional. Allows clients without a token to connect as anonymous sessions.
+allow_anonymous = false
 
 [auth.ticket]
 # Env var that stores the HS256 secret.
@@ -302,7 +304,7 @@ end)
 
 on.player.offline():each(function(p)
   -- offline receives a snapshot, not a live player handle.
-  print("Player left:", p:who() or "anonymous")
+  print("Player left:", p:id(), p:who() or "anonymous")
 end)
 ```
 
@@ -1590,17 +1592,33 @@ The server sends WebSocket ping frames every 25 seconds to keep idle connections
 
 ### Authentication
 
-Protected worlds authenticate WebSocket sessions from an HTTP cookie. By default the cookie is named `rock_session`; override the name with `ROCK_SESSION_COOKIE`.
+Protected worlds authenticate WebSocket sessions from an HTTP cookie or from a `token` query parameter. By default the cookie is named `rock_session`; override the name with `ROCK_SESSION_COOKIE`.
 
 Use `?auth=ticket` or `?auth=farcaster` to select the verifier. If only one provider is configured, the server selects it automatically. If multiple providers are configured, clients must select one explicitly.
 
 ```txt
 Cookie: rock_session=...
-ws://127.0.0.1:3000/?auth=ticket
-ws://127.0.0.1:3000/?auth=farcaster
+ws://127.0.0.1:3000/?auth=ticket&token=...
+ws://127.0.0.1:3000/?auth=farcaster&token=...
 ```
 
-Omit the cookie for anon sessions. Tickets use JWT (HS256). Farcaster Quick Auth uses RS256.
+Tickets use JWT (HS256). Farcaster Quick Auth uses RS256.
+
+To allow one-shot anonymous sessions in an otherwise protected world, set:
+
+```toml
+[auth]
+providers = ["farcaster"]
+allow_anonymous = true
+```
+
+Anonymous clients connect without `auth` and without `token`:
+
+```txt
+ws://127.0.0.1:3000/
+```
+
+For anonymous players, `p:who()` and `p:fid()` return `nil`; use `p:id()` for runtime-local player identity and cleanup.
 
 Protected cookie sessions also check the WebSocket `Origin` header against `ROCK_ALLOWED_ORIGINS`. This blocks browser-based cross-site WebSocket hijacking. Set it to the exact frontend origins that are allowed to open authenticated sockets, for example:
 
