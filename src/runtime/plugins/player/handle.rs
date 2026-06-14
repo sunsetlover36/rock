@@ -22,7 +22,7 @@ impl PlayerHandle {
 }
 impl UserData for PlayerHandle {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("id", |_, this, _: ()| Ok(this.pk.slot_idx));
+        methods.add_method("id", |_, this, _: ()| Ok(this.pk.pack()));
 
         methods.add_method("who", |lua, this, _: ()| {
             Ok(get_app_data::<app_data::ClientApi>(lua)?

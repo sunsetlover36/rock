@@ -19,7 +19,7 @@ impl PlayerSnapshot {
 
 impl UserData for PlayerSnapshot {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("id", |_, this, _: ()| Ok(this.pk.slot_idx));
+        methods.add_method("id", |_, this, _: ()| Ok(this.pk.pack()));
 
         methods.add_method("who", |_, this, _: ()| Ok(this.identity.clone()));
 
