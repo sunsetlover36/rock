@@ -160,13 +160,16 @@ impl Api {
             Ok(auth) => auth,
             Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
         };
+        let explicit_auth = auth.is_some();
         let cookie_name =
             std::env::var("ROCK_SESSION_COOKIE").unwrap_or_else(|_| "rock_session".to_string());
 
         let query_token = query
             .remove("token")
             .and_then(|v| v.as_str().map(str::to_owned));
-        let token = query_token.or_else(|| get_cookie(&headers, &cookie_name));
+        let cookie_token = get_cookie(&headers, &cookie_name);
+        let token = query_token.as_deref().or(cookie_token.as_deref());
+        let token_from_cookie = query_token.is_none() && cookie_token.is_some();
         let auth_config = state
             .config
             .auth
@@ -187,13 +190,20 @@ impl Api {
             (None, None) => None,
         };
 
-        let identity = match (auth_config, auth, token.as_deref()) {
+        let identity = match (auth_config, auth, token) {
             (None, _, _) => None,
             (Some(auth_config), Some(auth), Some(token)) => {
                 match verify_auth(auth_config, state.fc_verifier.as_deref(), auth, token) {
                     Ok(sub) => Some(sub),
                     Err(AuthError::Disabled) => None,
-                    Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
+                    Err(_)
+                        if auth_config.allow_anonymous && !explicit_auth && token_from_cookie =>
+                    {
+                        None
+                    }
+                    Err(_) => {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
                 }
             }
             (Some(auth_config), _, None) if auth_config.allow_anonymous => None,
