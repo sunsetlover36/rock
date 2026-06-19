@@ -1,5 +1,5 @@
 use color_eyre::eyre;
-use rock_wire::farcaster::CastSortKind;
+use rock_wire::farcaster::{CastSortKind, NotificationFilterKind, ReactionFilter};
 use strum::IntoEnumIterator;
 
 use crate::runtime::{
@@ -68,6 +68,14 @@ impl GameModePlugin for ConstantsPlugin {
             cast_sort_kind.set(kind, kind)?;
         }
         table.set("CastSort", cast_sort_kind)?;
+
+        let notification_kind = lua.create_table()?;
+        for kind in [NotificationFilterKind::Follows, NotificationFilterKind::Recasts, NotificationFilterKind::Likes, NotificationFilterKind::Mentions, NotificationFilterKind::Replies, NotificationFilterKind::Quotes] { notification_kind.set(kind.as_ref(), kind.as_ref())?; }
+        table.set("NotificationKind", notification_kind)?;
+
+        let reaction_filter = lua.create_table()?;
+        for kind in [ReactionFilter::All, ReactionFilter::Likes, ReactionFilter::Recasts] { reaction_filter.set(kind.as_ref(), kind.as_ref())?; }
+        table.set("ReactionFilter", reaction_filter)?;
 
         Ok(Some(table))
     }

@@ -20,7 +20,7 @@ Documentation for world scripters. Everything you need to build multiplayer worl
   - [layer → Layers](#layer)
   - [room → Rooms](#room)
   - [fc → Farcaster](#fc)
-  - [Const -> Constants](#const)
+  - [Const → Constants](#const)
 - [Reactive Operators](#reactive-operators)
 - [Network Replication](#network-replication)
 - [Components Reference](#components-reference)
@@ -1088,13 +1088,17 @@ end)
 | `:get()` | -- | `User` or `User[]` | Execute the lookup (scene-only). Single `User` when called with a username, array when called with a FID list |
 | `:search([params])` | `table?` | `CursorRx` | Search users by username query. Only valid when `fc.user()` was created with a username string |
 | `:casts([params])` | `table?` | `CursorRx` | Fetch casts for a single FID |
-| `:notifications([params])` | `table?` | `CursorRx` | Fetch notifications for a single FID |
 | `:followers([params])` | `table?` | `CursorRx` | Fetch followers for a single FID |
 | `:relevant_followers(params)` | `table` | `CursorRx` | Fetch followers relevant to `viewer_fid` for a single FID |
 | `:reciprocal_followers([params])` | `table?` | `CursorRx` | Fetch users who follow and are followed by a single FID |
 | `:following([params])` | `table?` | `CursorRx` | Fetch users followed by a single FID |
 | `:suggested_follows([params])` | `table?` | `CursorRx` | Fetch follow suggestions for a single FID |
 | `:best_friends([params])` | `table?` | `CursorRx` | Fetch best friends ranked by mutual affinity |
+| `:channels([params])` | `table?` | `CursorRx` | Fetch channels followed by a single FID |
+| `:channel_memberships([params])` | `table?` | `CursorRx` | Fetch channels where a single FID is a member |
+| `:replies_and_recasts([params])` | `table?` | `CursorRx` | Fetch a user's recent replies and recasts |
+| `:popular_casts([params])` | `table?` | `CursorRx` | Fetch a user's popular casts |
+| `:reactions(params)` | `table` | `CursorRx` | Fetch a user's likes, recasts, or both |
 | `:follow_as(player, [args])` | `PlayerHandle, table?` | response | Follow one or more FIDs as the connected player (scene-only) |
 | `:unfollow_as(player, [args])` | `PlayerHandle, table?` | response | Unfollow one or more FIDs as the connected player (scene-only) |
 
@@ -1102,8 +1106,8 @@ Cursor-returning methods are consumed with `:next()` inside a scene:
 
 ```lua
 scene.run(function()
-  local notifications = fc.user({ 423406 })
-    :notifications({ limit = 25 })
+  local notifications = fc.notifications()
+    :get_for(423406, { limit = 25 })
     :next()
 
   print("notifications:", #notifications.notifications)
@@ -1146,6 +1150,52 @@ The returned `User` table matches the Neynar user shape. Commonly used fields:
 | `pro` | `table?` | `{ status, subscribed_at, expires_at }` when present |
 
 Some nested payloads (e.g. `app` on a webhook, `mentioned_profiles` inside a bio) use a **dehydrated** user shape with a subset of fields — `fid` is always present, the rest (`username`, `display_name`, `pfp_url`, `custody_address`, `score`) may be `nil`.
+
+#### `fc.notifications()`
+
+Notifications are independent of a `UserRx` builder. Both methods run inside a scene.
+
+| Method | Args | Returns | Description |
+|--------|------|---------|-------------|
+| `:get_for(fid, [params])` | `number, table?` | `CursorRx` | Fetch notifications for a FID |
+| `:mark_seen_as(player, [args], [params])` | `PlayerHandle, table?, table?` | response | Mark all or one notification category as seen with the player's approved signer |
+
+```lua
+scene.run(function()
+  local page = fc.notifications()
+    :get_for(423406, { kinds = { Const.NotificationKind.Mentions }, limit = 25 })
+    :next()
+
+  fc.notifications():mark_seen_as(player, nil, {
+    kind = Const.NotificationKind.Mentions,
+  })
+end)
+```
+
+#### `fc.channel([id])`
+
+Creates a channel builder. Omit `id` for discovery methods; pass a channel ID for lookup, member/follower, and follow actions.
+
+| Method | Args | Returns | Description |
+|--------|------|---------|-------------|
+| `:list([params])` | `table?` | `CursorRx` | List all channels |
+| `:search(params)` | `table` | `CursorRx` | Search channels by `q` |
+| `:bulk(params)` | `table` | `CursorRx` | Fetch up to 100 channel IDs or parent URLs |
+| `:trending([params])` | `table?` | `CursorRx` | Fetch channels ranked by activity |
+| `:get([params])` | `table?` | `CursorRx` | Fetch the selected channel's details |
+| `:members([params])` | `table?` | `CursorRx` | Fetch members of the selected channel |
+| `:followers([params])` | `table?` | `CursorRx` | Fetch followers of the selected channel |
+| `:relevant_followers(params)` | `table` | `CursorRx` | Fetch followers relevant to `viewer_fid` |
+| `:follow_as(player, [args])` | `PlayerHandle, table?` | response | Follow the selected channel with an approved signer |
+| `:unfollow_as(player, [args])` | `PlayerHandle, table?` | response | Unfollow the selected channel with an approved signer |
+
+```lua
+scene.run(function()
+  local channels = fc.channel():search({ q = "neynar", limit = 20 }):next()
+  local members = fc.channel("neynar"):members({ limit = 50 }):next()
+  fc.channel("neynar"):follow_as(player)
+end)
+```
 
 #### `fc.cast(identifier)`
 
@@ -1373,6 +1423,16 @@ Use `Const.CastSort` for `fc.cast(...):get({ sort_type = ... })`.
 
 **`CastSort`:**
 `Trending`, `Likes`, `Recasts`, `Replies`, `Recent`
+
+**`NotificationKind`:**
+`Follows`, `Recasts`, `Likes`, `Mentions`, `Replies`, `Quotes`
+
+Use these with `fc.notifications():get_for(..., { kinds = { ... } })` and `:mark_seen_as(..., { kind = ... })`.
+
+**`ReactionFilter`:**
+`All`, `Likes`, `Recasts`
+
+Use these with `fc.user(fid):reactions({ reaction_type = ... })`.
 
 ```lua
 scene.run(function()

@@ -4889,7 +4889,7 @@ dependencies = [
 
 [[package]]
 name = "rock"
-version = "0.2.19"
+version = "0.2.20"
 dependencies = [
  "ahash",
  "alloy",
@@ -4935,8 +4935,8 @@ dependencies = [
 
 [[package]]
 name = "rock-wire"
-version = "0.1.7"
-source = "git+https://github.com/sunsetlover36/rock-wire?tag=v0.1.7#acdc7e160aeb938ee6816fe6dfb091145189506c"
+version = "0.1.8"
+source = "git+https://github.com/sunsetlover36/rock-wire?tag=v0.1.8#a0a70af3fabf8fc339f530c3168bc6b13de7135a"
 dependencies = [
  "chrono",
  "serde",

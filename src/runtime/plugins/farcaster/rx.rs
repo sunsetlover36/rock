@@ -12,3 +12,6 @@ pub(crate) use feed::{FeedRx, FeedRxOpcodes, FeedRxParams};
 
 mod channel;
 pub(crate) use channel::{ChannelRx, ChannelRxOpcodes, ChannelRxParams};
+
+mod notifications;
+pub(crate) use notifications::{NotificationsRx, NotificationsRxOpcodes};

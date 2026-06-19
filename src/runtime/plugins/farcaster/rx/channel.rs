@@ -94,10 +94,13 @@ impl UserData for ChannelRx {
                     pid: player.key().pack(),
                     write_args: write_args.unwrap_or_default(),
                     params: FollowChannelOpParams {
-                        channel_id: this.id.clone().ok_or_else(|| mlua::Error::runtime("channel follow: expected an ID"))?,
+                        channel_id: this.id.clone().ok_or_else(|| {
+                            mlua::Error::runtime("channel follow: expected an ID")
+                        })?,
                     },
                 };
-                let op = build_plugin_op(&lua, this.opcodes.follow.clone(), lua.to_value(&payload)?)?;
+                let op =
+                    build_plugin_op(&lua, this.opcodes.follow.clone(), lua.to_value(&payload)?)?;
                 yield_op(&lua, "fc.channel.follow_as", op).await
             },
         );
@@ -109,10 +112,13 @@ impl UserData for ChannelRx {
                     pid: player.key().pack(),
                     write_args: write_args.unwrap_or_default(),
                     params: FollowChannelOpParams {
-                        channel_id: this.id.clone().ok_or_else(|| mlua::Error::runtime("channel unfollow: expected an ID"))?,
+                        channel_id: this.id.clone().ok_or_else(|| {
+                            mlua::Error::runtime("channel unfollow: expected an ID")
+                        })?,
                     },
                 };
-                let op = build_plugin_op(&lua, this.opcodes.unfollow.clone(), lua.to_value(&payload)?)?;
+                let op =
+                    build_plugin_op(&lua, this.opcodes.unfollow.clone(), lua.to_value(&payload)?)?;
                 yield_op(&lua, "fc.channel.unfollow_as", op).await
             },
         );

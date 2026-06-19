@@ -19,7 +19,6 @@ pub(crate) struct UserRxOpcodes {
     pub get_user_casts: String,
     pub follow_user: String,
     pub unfollow_user: String,
-    pub get_notifications: String,
     pub followers: String,
     pub relevant_followers: String,
     pub reciprocal_followers: String,
@@ -28,6 +27,9 @@ pub(crate) struct UserRxOpcodes {
     pub best_friends: String,
     pub channels: String,
     pub channel_memberships: String,
+    pub replies_and_recasts: String,
+    pub popular_casts: String,
+    pub reactions: String,
 }
 
 pub(crate) struct UserRxParams {
@@ -175,24 +177,6 @@ impl UserData for UserRx {
         );
 
         methods.add_async_method(
-            "notifications",
-            async |lua, this, params: Option<mlua::Table>| {
-                let fid = this.single_fid("notifications")?;
-
-                let args = params.unwrap_or(lua.create_table()?);
-                args.set("fid", fid)?;
-
-                let op = build_plugin_op(
-                    &lua,
-                    this.opcodes.get_notifications.clone(),
-                    mlua::Value::Table(args),
-                )?;
-
-                Ok(CursorRx::new(op))
-            },
-        );
-
-        methods.add_async_method(
             "followers",
             async |lua, this, params: Option<mlua::Table>| {
                 let fid = this.single_fid("followers")?;
@@ -287,13 +271,61 @@ impl UserData for UserRx {
             },
         );
 
-        methods.add_async_method("channels", async |lua, this, params: Option<mlua::Table>| {
-            let args = params.unwrap_or(lua.create_table()?); args.set("fid", this.single_fid("channels")?)?;
-            Ok(CursorRx::new(build_plugin_op(&lua, this.opcodes.channels.clone(), mlua::Value::Table(args))?))
-        });
-        methods.add_async_method("channel_memberships", async |lua, this, params: Option<mlua::Table>| {
-            let args = params.unwrap_or(lua.create_table()?); args.set("fid", this.single_fid("channel_memberships")?)?;
-            Ok(CursorRx::new(build_plugin_op(&lua, this.opcodes.channel_memberships.clone(), mlua::Value::Table(args))?))
+        methods.add_async_method(
+            "channels",
+            async |lua, this, params: Option<mlua::Table>| {
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", this.single_fid("channels")?)?;
+                Ok(CursorRx::new(build_plugin_op(
+                    &lua,
+                    this.opcodes.channels.clone(),
+                    mlua::Value::Table(args),
+                )?))
+            },
+        );
+        methods.add_async_method(
+            "channel_memberships",
+            async |lua, this, params: Option<mlua::Table>| {
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", this.single_fid("channel_memberships")?)?;
+                Ok(CursorRx::new(build_plugin_op(
+                    &lua,
+                    this.opcodes.channel_memberships.clone(),
+                    mlua::Value::Table(args),
+                )?))
+            },
+        );
+        methods.add_async_method(
+            "replies_and_recasts",
+            async |lua, this, params: Option<mlua::Table>| {
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", this.single_fid("replies_and_recasts")?)?;
+                Ok(CursorRx::new(build_plugin_op(
+                    &lua,
+                    this.opcodes.replies_and_recasts.clone(),
+                    mlua::Value::Table(args),
+                )?))
+            },
+        );
+        methods.add_async_method(
+            "popular_casts",
+            async |lua, this, params: Option<mlua::Table>| {
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", this.single_fid("popular_casts")?)?;
+                Ok(CursorRx::new(build_plugin_op(
+                    &lua,
+                    this.opcodes.popular_casts.clone(),
+                    mlua::Value::Table(args),
+                )?))
+            },
+        );
+        methods.add_async_method("reactions", async |lua, this, params: mlua::Table| {
+            params.set("fid", this.single_fid("reactions")?)?;
+            Ok(CursorRx::new(build_plugin_op(
+                &lua,
+                this.opcodes.reactions.clone(),
+                mlua::Value::Table(params),
+            )?))
         });
     }
 }

@@ -308,6 +308,38 @@ impl FarcasterApi {
 
         Ok(response)
     }
+    pub async fn get_user_replies_and_recasts(
+        &self,
+        p: &GetUserRepliesAndRecastsParams,
+    ) -> eyre::Result<UserRepliesAndRecastsResponse> {
+        self.get("feed/user/replies_and_recasts", p, false).await
+    }
+    pub async fn get_user_popular_casts(
+        &self,
+        p: &GetUserPopularCastsParams,
+    ) -> eyre::Result<UserPopularCastsResponse> {
+        self.get("feed/user/popular", p, false).await
+    }
+    pub async fn get_user_reactions(
+        &self,
+        p: &GetUserReactionsParams,
+    ) -> eyre::Result<UserReactionsResponse> {
+        self.get("reactions/user", p, false).await
+    }
+    pub async fn mark_notifications_seen(
+        &self,
+        p: &MarkNotificationsSeenParams,
+    ) -> eyre::Result<MarkNotificationsSeenResponse> {
+        Ok(self
+            .client
+            .post(format!("{}/farcaster/notifications/seen", self.base_url))
+            .json(p)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
 
     pub async fn list_channels(&self, p: &ListChannelsParams) -> eyre::Result<ChannelsResponse> {
         p.validate().map_err(|e| eyre::eyre!(e))?;
@@ -354,11 +386,33 @@ impl FarcasterApi {
         self.get("channel/followers", p, p.experimental).await
     }
 
-    pub async fn follow_channel(&self, params: &FollowChannelParams) -> eyre::Result<FollowChannelResponse> {
-        Ok(self.client.post(format!("{}/farcaster/channel/follow", self.base_url)).json(params).send().await?.error_for_status()?.json().await?)
+    pub async fn follow_channel(
+        &self,
+        params: &FollowChannelParams,
+    ) -> eyre::Result<FollowChannelResponse> {
+        Ok(self
+            .client
+            .post(format!("{}/farcaster/channel/follow", self.base_url))
+            .json(params)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
     }
-    pub async fn unfollow_channel(&self, params: &UnfollowChannelParams) -> eyre::Result<UnfollowChannelResponse> {
-        Ok(self.client.delete(format!("{}/farcaster/channel/follow", self.base_url)).json(params).send().await?.error_for_status()?.json().await?)
+    pub async fn unfollow_channel(
+        &self,
+        params: &UnfollowChannelParams,
+    ) -> eyre::Result<UnfollowChannelResponse> {
+        Ok(self
+            .client
+            .delete(format!("{}/farcaster/channel/follow", self.base_url))
+            .json(params)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
     }
     pub async fn get_relevant_channel_followers(
         &self,

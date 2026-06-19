@@ -2,7 +2,8 @@ use mlua::{FromLua, LuaSerdeExt};
 use rock_wire::{
     PlayerId, PlayerKey,
     farcaster::{
-        CastEmbed, CastIdentifierKind, ConversationSortKind, Fid, ReactionKind, SignerResponse,
+        CastEmbed, CastIdentifierKind, ConversationSortKind, Fid, NotificationFilterKind,
+        ReactionKind, SignerResponse,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -200,4 +201,8 @@ pub(crate) struct FollowChannelOpParams {
     pub channel_id: String,
 }
 pub(crate) type UnfollowChannelOpParams = FollowChannelOpParams;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct MarkNotificationsSeenOpParams {
+    pub kind: Option<NotificationFilterKind>,
+}
 // --
