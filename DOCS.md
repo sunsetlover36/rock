@@ -1178,6 +1178,68 @@ end)
 
 `args` is optional and can include `app_fid` when a server has multiple configured Farcaster apps. If omitted, ROCK uses the default app FID from config.
 
+#### `fc.feed([fid])`
+
+Creates a feed builder. Pass a FID for the existing personalized `:for_you()` and `:following()` feeds; omit it for filtered, trending, and channel-ID feeds.
+
+| Method | Args | Returns | Description |
+|--------|------|---------|-------------|
+| `:for_you([params])` | `table?` | `CursorRx` | Fetch the for-you feed for the FID passed to `fc.feed(fid)` |
+| `:following([params])` | `table?` | `CursorRx` | Fetch the following feed for the FID passed to `fc.feed(fid)` |
+| `:by_filters(params)` | `table` | `CursorRx` | Fetch casts with one required Neynar filter |
+| `:trending([params])` | `table?` | `CursorRx` | Fetch globally or channel-scoped trending casts |
+| `:by_channel_ids(params)` | `table` | `CursorRx` | Fetch casts from up to 10 channel IDs |
+
+All feed methods return `CursorRx`; call `:next()` inside a scene. The result has `{ casts = Cast[], next = { cursor? } }`.
+
+```lua
+scene.run(function()
+  -- Filtered feed. `filter_type` determines the required filter field.
+  local feed = fc.feed():by_filters({
+    filter_type = "fids",
+    fids = { 3, 194 },
+    limit = 30,
+    with_recasts = true,
+  })
+  local page = feed:next()
+
+  -- Other filter types: parent_url, channel_id, embed_url, embed_types,
+  -- and global_trending. `channel_id` may also accept members_only.
+  local channel_feed = fc.feed():by_filters({
+    filter_type = "channel_id",
+    channel_id = "neynar",
+    members_only = true,
+  }):next()
+
+  local trending = fc.feed():trending({
+    time_window = "24h", -- 1h, 6h, 12h, 24h, or 7d (channel_id only)
+    channel_id = "neynar",
+    limit = 10,
+  }):next()
+
+  local channels = fc.feed():by_channel_ids({
+    channel_ids = { "neynar", "farcaster" },
+    with_recasts = true,
+    with_replies = false,
+    fids = { 3, 194 }, -- optional; at most 10 FIDs
+    limit = 25,
+  }):next()
+end)
+```
+
+`by_filters` accepts exactly one filter shape:
+
+| `filter_type` | Required field |
+|---------------|----------------|
+| `fids` | `fids = { Fid, ... }` (1–100) |
+| `parent_url` | `parent_url = string` |
+| `channel_id` | `channel_id = string` |
+| `embed_url` | `embed_url = string` |
+| `embed_types` | `embed_types = { "image", "video/mp4", ... }` |
+| `global_trending` | none |
+
+Optional common fields are `with_recasts`, `limit` (1–100), `cursor`, `viewer_fid`, and `experimental`. Set `experimental = true` to send Neynar's `x-neynar-experimental: true` header. `trending` also accepts `cursor`, `viewer_fid`, `provider = "neynar"`, `parent_url`, and `experimental`; `channel_id` and `parent_url` cannot be used together.
+
 #### `on.fc.webhook()`
 
 Fires when the engine receives an inbound Farcaster webhook. The handler receives a single `WebhookEvent`:

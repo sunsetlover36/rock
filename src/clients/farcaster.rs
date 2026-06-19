@@ -13,13 +13,15 @@ use rock_wire::farcaster::{
     CastConversationResponse, CreatedCast, DeleteCastParams, DeleteCastResponse,
     DeleteReactionParams, Fid, FollowUserParams, FollowUserResponse, FollowingFeedResponse,
     ForYouFeedResponse, GetCastConversationParams, GetCastParams, GetCastResponse,
-    GetFollowingFeedParams, GetForYouFeedParams, GetNotificationsParams, GetNotificationsRawQuery,
-    GetReactionsParams, GetReactionsRawQuery, GetSignerStatusParams, GetUserByUsernameParams,
-    GetUserByUsernameResponse, GetUserCastsParams, GetUsersByFidsParams, GetUsersByFidsRawQuery,
-    GetUsersByFidsResponse, NotificationsResponse, PublishReactionParams, ReactionResponse,
-    ReactionsResponse, RegisterSignedKeyParams, SearchUsersParams, SearchUsersResponse,
-    SearchUsersResult, SendCastParams, SendCastResponse, SignedKeyRequestSponsor, SignerResponse,
-    UnfollowUserParams, UnfollowUserResponse, User, UserCastsResponse,
+    GetFeedByChannelIdsParams, GetFeedByChannelIdsRawQuery, GetFeedByFiltersParams,
+    GetFeedByFiltersRawQuery, GetFollowingFeedParams, GetForYouFeedParams, GetNotificationsParams,
+    GetNotificationsRawQuery, GetReactionsParams, GetReactionsRawQuery, GetSignerStatusParams,
+    GetTrendingFeedParams, GetUserByUsernameParams, GetUserByUsernameResponse, GetUserCastsParams,
+    GetUsersByFidsParams, GetUsersByFidsRawQuery, GetUsersByFidsResponse, NotificationsResponse,
+    PublishReactionParams, ReactionResponse, ReactionsResponse, RegisterSignedKeyParams,
+    SearchUsersParams, SearchUsersResponse, SearchUsersResult, SendCastParams, SendCastResponse,
+    SignedKeyRequestSponsor, SignerResponse, TrendingFeedResponse, UnfollowUserParams,
+    UnfollowUserResponse, User, UserCastsResponse,
 };
 use std::{
     collections::HashMap,
@@ -453,6 +455,71 @@ impl FarcasterApi {
             .await?
             .error_for_status()?
             .json::<FollowingFeedResponse>()
+            .await?;
+
+        Ok(response)
+    }
+
+    pub async fn get_feed_by_filters(
+        &self,
+        params: &GetFeedByFiltersParams,
+    ) -> eyre::Result<TrendingFeedResponse> {
+        params.validate().map_err(|err| eyre::eyre!(err))?;
+        let url = format!("{}/farcaster/feed", self.base_url);
+        let query = GetFeedByFiltersRawQuery::from(params);
+        let mut request = self.client.get(url).query(&query);
+        if params.experimental {
+            request = request.header("x-neynar-experimental", "true");
+        }
+
+        let response = request
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<TrendingFeedResponse>()
+            .await?;
+
+        Ok(response)
+    }
+
+    pub async fn get_trending_feed(
+        &self,
+        params: &GetTrendingFeedParams,
+    ) -> eyre::Result<TrendingFeedResponse> {
+        params.validate().map_err(|err| eyre::eyre!(err))?;
+        let url = format!("{}/farcaster/feed/trending", self.base_url);
+        let mut request = self.client.get(url).query(params);
+        if params.experimental {
+            request = request.header("x-neynar-experimental", "true");
+        }
+
+        let response = request
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<TrendingFeedResponse>()
+            .await?;
+
+        Ok(response)
+    }
+
+    pub async fn get_feed_by_channel_ids(
+        &self,
+        params: &GetFeedByChannelIdsParams,
+    ) -> eyre::Result<TrendingFeedResponse> {
+        params.validate().map_err(|err| eyre::eyre!(err))?;
+        let url = format!("{}/farcaster/feed/channels", self.base_url);
+        let query = GetFeedByChannelIdsRawQuery::from(params);
+        let mut request = self.client.get(url).query(&query);
+        if params.experimental {
+            request = request.header("x-neynar-experimental", "true");
+        }
+
+        let response = request
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<TrendingFeedResponse>()
             .await?;
 
         Ok(response)

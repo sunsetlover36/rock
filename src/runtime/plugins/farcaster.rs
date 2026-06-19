@@ -6,10 +6,11 @@ use rock_wire::{
     PlayerKey,
     farcaster::{
         BulkFetchCastsParams, DeleteCastParams, DeleteReactionParams, Fid, FollowUserParams,
-        GetCastConversationParams, GetCastParams, GetFollowingFeedParams, GetForYouFeedParams,
-        GetNotificationsParams, GetReactionsParams, GetUserByUsernameParams, GetUserCastsParams,
-        GetUsersByFidsParams, PublishReactionParams, SearchUsersParams, SendCastParams,
-        SignerResponse, SignerStatus, UnfollowUserParams,
+        GetCastConversationParams, GetCastParams, GetFeedByChannelIdsParams,
+        GetFeedByFiltersParams, GetFollowingFeedParams, GetForYouFeedParams,
+        GetNotificationsParams, GetReactionsParams, GetTrendingFeedParams, GetUserByUsernameParams,
+        GetUserCastsParams, GetUsersByFidsParams, PublishReactionParams, SearchUsersParams,
+        SendCastParams, SignerResponse, SignerStatus, UnfollowUserParams,
     },
 };
 use strum::{AsRefStr, Display, EnumString};
@@ -69,6 +70,9 @@ pub(crate) enum FarcasterOp {
     SignerRefresh,
     FeedForYou,
     FeedFollowing,
+    FeedByFilters,
+    FeedTrending,
+    FeedByChannelIds,
 }
 
 async fn register_and_store_signer(
@@ -286,8 +290,11 @@ impl GameModePlugin for FarcasterPlugin {
         let feed_opcodes = FeedRxOpcodes {
             for_you: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedForYou),
             following: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedFollowing),
+            by_filters: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedByFilters),
+            trending: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedTrending),
+            by_channel_ids: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedByChannelIds),
         };
-        let feed_fn = lua.create_function(move |_, fid: Fid| {
+        let feed_fn = lua.create_function(move |_, fid: Option<Fid>| {
             Ok(FeedRx::new(FeedRxParams {
                 opcodes: feed_opcodes.clone(),
                 fid,
@@ -678,6 +685,39 @@ impl GameModePlugin for FarcasterPlugin {
 
                 let future = Box::pin(async move {
                     let feed = fc_api.get_following_feed(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(feed)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::FeedByFilters => {
+                let params: GetFeedByFiltersParams = lua.from_value(args).wrap_err(&format!(
+                    "{plugin_name}.feed [by filters method]: incorrect params"
+                ))?;
+
+                let future = Box::pin(async move {
+                    let feed = fc_api.get_feed_by_filters(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(feed)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::FeedTrending => {
+                let params: GetTrendingFeedParams = lua.from_value(args).wrap_err(&format!(
+                    "{plugin_name}.feed [trending method]: incorrect params"
+                ))?;
+
+                let future = Box::pin(async move {
+                    let feed = fc_api.get_trending_feed(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(feed)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::FeedByChannelIds => {
+                let params: GetFeedByChannelIdsParams = lua.from_value(args).wrap_err(&format!(
+                    "{plugin_name}.feed [by channel IDs method]: incorrect params"
+                ))?;
+
+                let future = Box::pin(async move {
+                    let feed = fc_api.get_feed_by_channel_ids(&params).await?;
                     Ok(AsyncTaskResult::JsonValue(serde_json::to_value(feed)?))
                 });
                 Ok(Some(future))
