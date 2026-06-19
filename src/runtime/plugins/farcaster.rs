@@ -6,11 +6,13 @@ use rock_wire::{
     PlayerKey,
     farcaster::{
         BulkFetchCastsParams, DeleteCastParams, DeleteReactionParams, Fid, FollowUserParams,
-        GetCastConversationParams, GetCastParams, GetFeedByChannelIdsParams,
-        GetFeedByFiltersParams, GetFollowingFeedParams, GetForYouFeedParams,
-        GetNotificationsParams, GetReactionsParams, GetTrendingFeedParams, GetUserByUsernameParams,
-        GetUserCastsParams, GetUsersByFidsParams, PublishReactionParams, SearchUsersParams,
-        SendCastParams, SignerResponse, SignerStatus, UnfollowUserParams,
+        GetBestFriendsParams, GetCastConversationParams, GetCastParams, GetFeedByChannelIdsParams,
+        GetFeedByFiltersParams, GetFollowSuggestionsParams, GetFollowersParams,
+        GetFollowingFeedParams, GetFollowingParams, GetForYouFeedParams, GetNotificationsParams,
+        GetReactionsParams, GetReciprocalFollowersParams, GetRelevantFollowersParams,
+        GetTrendingFeedParams, GetUserByUsernameParams, GetUserCastsParams, GetUsersByFidsParams,
+        PublishReactionParams, SearchUsersParams, SendCastParams, SignerResponse, SignerStatus,
+        UnfollowUserParams,
     },
 };
 use strum::{AsRefStr, Display, EnumString};
@@ -65,6 +67,12 @@ pub(crate) enum FarcasterOp {
     UserFollow,
     UserUnfollow,
     UserNotifications,
+    UserFollowers,
+    UserRelevantFollowers,
+    UserReciprocalFollowers,
+    UserFollowing,
+    UserFollowSuggestions,
+    UserBestFriends,
     SignerRequest,
     SignerGet,
     SignerRefresh,
@@ -233,6 +241,24 @@ impl GameModePlugin for FarcasterPlugin {
             follow_user: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserFollow),
             unfollow_user: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserUnfollow),
             get_notifications: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserNotifications),
+            followers: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserFollowers),
+            relevant_followers: format!(
+                "{}_{}",
+                &name_in_uppercase,
+                FarcasterOp::UserRelevantFollowers
+            ),
+            reciprocal_followers: format!(
+                "{}_{}",
+                &name_in_uppercase,
+                FarcasterOp::UserReciprocalFollowers
+            ),
+            following: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserFollowing),
+            follow_suggestions: format!(
+                "{}_{}",
+                &name_in_uppercase,
+                FarcasterOp::UserFollowSuggestions
+            ),
+            best_friends: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserBestFriends),
         };
 
         let user_plugin_name = plugin_name.clone();
@@ -568,6 +594,72 @@ impl GameModePlugin for FarcasterPlugin {
 
                 let future = Box::pin(async move {
                     let res = fc_api.get_notifications(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::UserFollowers => {
+                let params: GetFollowersParams = lua.from_value(args).wrap_err(&format!(
+                    "{plugin_name}.user [followers method]: incorrect params"
+                ))?;
+
+                let future = Box::pin(async move {
+                    let res = fc_api.get_followers(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::UserRelevantFollowers => {
+                let params: GetRelevantFollowersParams = lua.from_value(args).wrap_err(
+                    &format!("{plugin_name}.user [relevant followers method]: incorrect params"),
+                )?;
+
+                let future = Box::pin(async move {
+                    let res = fc_api.get_relevant_followers(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::UserReciprocalFollowers => {
+                let params: GetReciprocalFollowersParams = lua.from_value(args).wrap_err(
+                    &format!("{plugin_name}.user [reciprocal followers method]: incorrect params"),
+                )?;
+
+                let future = Box::pin(async move {
+                    let res = fc_api.get_reciprocal_followers(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::UserFollowing => {
+                let params: GetFollowingParams = lua.from_value(args).wrap_err(&format!(
+                    "{plugin_name}.user [following method]: incorrect params"
+                ))?;
+
+                let future = Box::pin(async move {
+                    let res = fc_api.get_following(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::UserFollowSuggestions => {
+                let params: GetFollowSuggestionsParams = lua.from_value(args).wrap_err(
+                    &format!("{plugin_name}.user [follow suggestions method]: incorrect params"),
+                )?;
+
+                let future = Box::pin(async move {
+                    let res = fc_api.get_follow_suggestions(&params).await?;
+                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
+                });
+                Ok(Some(future))
+            }
+            FarcasterOp::UserBestFriends => {
+                let params: GetBestFriendsParams = lua.from_value(args).wrap_err(&format!(
+                    "{plugin_name}.user [best friends method]: incorrect params"
+                ))?;
+
+                let future = Box::pin(async move {
+                    let res = fc_api.get_best_friends(&params).await?;
                     Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
                 });
                 Ok(Some(future))

@@ -1089,6 +1089,12 @@ end)
 | `:search([params])` | `table?` | `CursorRx` | Search users by username query. Only valid when `fc.user()` was created with a username string |
 | `:casts([params])` | `table?` | `CursorRx` | Fetch casts for a single FID |
 | `:notifications([params])` | `table?` | `CursorRx` | Fetch notifications for a single FID |
+| `:followers([params])` | `table?` | `CursorRx` | Fetch followers for a single FID |
+| `:relevant_followers(params)` | `table` | `CursorRx` | Fetch followers relevant to `viewer_fid` for a single FID |
+| `:reciprocal_followers([params])` | `table?` | `CursorRx` | Fetch users who follow and are followed by a single FID |
+| `:following([params])` | `table?` | `CursorRx` | Fetch users followed by a single FID |
+| `:suggested_follows([params])` | `table?` | `CursorRx` | Fetch follow suggestions for a single FID |
+| `:best_friends([params])` | `table?` | `CursorRx` | Fetch best friends ranked by mutual affinity |
 | `:follow_as(player, [args])` | `PlayerHandle, table?` | response | Follow one or more FIDs as the connected player (scene-only) |
 | `:unfollow_as(player, [args])` | `PlayerHandle, table?` | response | Unfollow one or more FIDs as the connected player (scene-only) |
 
@@ -1101,6 +1107,24 @@ scene.run(function()
     :next()
 
   print("notifications:", #notifications.notifications)
+end)
+```
+
+The follower/following methods require exactly one FID, e.g. `fc.user(3)`. They return cursor pages; call `:next()` inside a scene. `followers`, `reciprocal_followers`, and `following` accept `viewer_fid`, `sort_type = "desc_chron" | "algorithmic"`, `limit` (1–100), `cursor`, and `experimental`. `relevant_followers` requires `viewer_fid`; `suggested_follows` accepts `viewer_fid`, `limit`, and `experimental`.
+
+```lua
+scene.run(function()
+  local followers = fc.user(3):followers({
+    viewer_fid = 194,
+    sort_type = "desc_chron",
+    limit = 30,
+  }):next()
+
+  local relevant = fc.user(3):relevant_followers({
+    viewer_fid = 194,
+  }):next()
+
+  local best_friends = fc.user(3):best_friends({ limit = 5 }):next()
 end)
 ```
 

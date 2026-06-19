@@ -20,6 +20,12 @@ pub(crate) struct UserRxOpcodes {
     pub follow_user: String,
     pub unfollow_user: String,
     pub get_notifications: String,
+    pub followers: String,
+    pub relevant_followers: String,
+    pub reciprocal_followers: String,
+    pub following: String,
+    pub follow_suggestions: String,
+    pub best_friends: String,
 }
 
 pub(crate) struct UserRxParams {
@@ -41,6 +47,22 @@ impl UserRx {
             username: params.username,
             fids: params.fids,
         }
+    }
+
+    fn single_fid(&self, method: &str) -> mlua::Result<Fid> {
+        let Some(fid) = self.fids.first().copied() else {
+            return Err(mlua::Error::runtime(format!(
+                "user {method}: expected a fid"
+            )));
+        };
+
+        if self.fids.len() > 1 {
+            return Err(mlua::Error::runtime(format!(
+                "user {method}: expected exactly one fid, got multiple"
+            )));
+        }
+
+        Ok(fid)
     }
 }
 
@@ -84,15 +106,7 @@ impl UserData for UserRx {
         });
 
         methods.add_async_method("casts", async |lua, this, params: Option<mlua::Table>| {
-            let Some(fid) = this.fids.first().copied() else {
-                return Err(mlua::Error::runtime("user casts: expected a fid"));
-            };
-
-            if this.fids.len() > 1 {
-                return Err(mlua::Error::runtime(
-                    "user casts: expected exactly one fid, got multiple",
-                ));
-            }
+            let fid = this.single_fid("casts")?;
 
             let args = params.unwrap_or(lua.create_table()?);
             args.set("fid", fid)?;
@@ -161,15 +175,7 @@ impl UserData for UserRx {
         methods.add_async_method(
             "notifications",
             async |lua, this, params: Option<mlua::Table>| {
-                let Some(fid) = this.fids.first().copied() else {
-                    return Err(mlua::Error::runtime("user notifications: expected a fid"));
-                };
-
-                if this.fids.len() > 1 {
-                    return Err(mlua::Error::runtime(
-                        "user notifications: expected exactly one fid, got multiple",
-                    ));
-                }
+                let fid = this.single_fid("notifications")?;
 
                 let args = params.unwrap_or(lua.create_table()?);
                 args.set("fid", fid)?;
@@ -180,6 +186,101 @@ impl UserData for UserRx {
                     mlua::Value::Table(args),
                 )?;
 
+                Ok(CursorRx::new(op))
+            },
+        );
+
+        methods.add_async_method(
+            "followers",
+            async |lua, this, params: Option<mlua::Table>| {
+                let fid = this.single_fid("followers")?;
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", fid)?;
+
+                let op = build_plugin_op(
+                    &lua,
+                    this.opcodes.followers.clone(),
+                    mlua::Value::Table(args),
+                )?;
+                Ok(CursorRx::new(op))
+            },
+        );
+
+        methods.add_async_method(
+            "relevant_followers",
+            async |lua, this, params: mlua::Table| {
+                let fid = this.single_fid("relevant_followers")?;
+                params.set("target_fid", fid)?;
+
+                let op = build_plugin_op(
+                    &lua,
+                    this.opcodes.relevant_followers.clone(),
+                    mlua::Value::Table(params),
+                )?;
+                Ok(CursorRx::new(op))
+            },
+        );
+
+        methods.add_async_method(
+            "reciprocal_followers",
+            async |lua, this, params: Option<mlua::Table>| {
+                let fid = this.single_fid("reciprocal_followers")?;
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", fid)?;
+
+                let op = build_plugin_op(
+                    &lua,
+                    this.opcodes.reciprocal_followers.clone(),
+                    mlua::Value::Table(args),
+                )?;
+                Ok(CursorRx::new(op))
+            },
+        );
+
+        methods.add_async_method(
+            "following",
+            async |lua, this, params: Option<mlua::Table>| {
+                let fid = this.single_fid("following")?;
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", fid)?;
+
+                let op = build_plugin_op(
+                    &lua,
+                    this.opcodes.following.clone(),
+                    mlua::Value::Table(args),
+                )?;
+                Ok(CursorRx::new(op))
+            },
+        );
+
+        methods.add_async_method(
+            "suggested_follows",
+            async |lua, this, params: Option<mlua::Table>| {
+                let fid = this.single_fid("suggested_follows")?;
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", fid)?;
+
+                let op = build_plugin_op(
+                    &lua,
+                    this.opcodes.follow_suggestions.clone(),
+                    mlua::Value::Table(args),
+                )?;
+                Ok(CursorRx::new(op))
+            },
+        );
+
+        methods.add_async_method(
+            "best_friends",
+            async |lua, this, params: Option<mlua::Table>| {
+                let fid = this.single_fid("best_friends")?;
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", fid)?;
+
+                let op = build_plugin_op(
+                    &lua,
+                    this.opcodes.best_friends.clone(),
+                    mlua::Value::Table(args),
+                )?;
                 Ok(CursorRx::new(op))
             },
         );

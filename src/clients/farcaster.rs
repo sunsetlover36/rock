@@ -9,19 +9,22 @@ use reqwest::{
     header::{self, HeaderMap, HeaderName, HeaderValue},
 };
 use rock_wire::farcaster::{
-    BulkFetchCastsParams, BulkFetchCastsRawQuery, BulkFetchCastsResponse, Cast,
-    CastConversationResponse, CreatedCast, DeleteCastParams, DeleteCastResponse,
-    DeleteReactionParams, Fid, FollowUserParams, FollowUserResponse, FollowingFeedResponse,
-    ForYouFeedResponse, GetCastConversationParams, GetCastParams, GetCastResponse,
+    BestFriendsResponse, BulkFetchCastsParams, BulkFetchCastsRawQuery, BulkFetchCastsResponse,
+    Cast, CastConversationResponse, CreatedCast, DeleteCastParams, DeleteCastResponse,
+    DeleteReactionParams, Fid, FollowSuggestionsResponse, FollowUserParams, FollowUserResponse,
+    FollowersResponse, FollowingFeedResponse, FollowingResponse, ForYouFeedResponse,
+    GetBestFriendsParams, GetCastConversationParams, GetCastParams, GetCastResponse,
     GetFeedByChannelIdsParams, GetFeedByChannelIdsRawQuery, GetFeedByFiltersParams,
-    GetFeedByFiltersRawQuery, GetFollowingFeedParams, GetForYouFeedParams, GetNotificationsParams,
-    GetNotificationsRawQuery, GetReactionsParams, GetReactionsRawQuery, GetSignerStatusParams,
+    GetFeedByFiltersRawQuery, GetFollowSuggestionsParams, GetFollowersParams,
+    GetFollowingFeedParams, GetFollowingParams, GetForYouFeedParams, GetNotificationsParams,
+    GetNotificationsRawQuery, GetReactionsParams, GetReactionsRawQuery,
+    GetReciprocalFollowersParams, GetRelevantFollowersParams, GetSignerStatusParams,
     GetTrendingFeedParams, GetUserByUsernameParams, GetUserByUsernameResponse, GetUserCastsParams,
     GetUsersByFidsParams, GetUsersByFidsRawQuery, GetUsersByFidsResponse, NotificationsResponse,
-    PublishReactionParams, ReactionResponse, ReactionsResponse, RegisterSignedKeyParams,
-    SearchUsersParams, SearchUsersResponse, SearchUsersResult, SendCastParams, SendCastResponse,
-    SignedKeyRequestSponsor, SignerResponse, TrendingFeedResponse, UnfollowUserParams,
-    UnfollowUserResponse, User, UserCastsResponse,
+    PublishReactionParams, ReactionResponse, ReactionsResponse, ReciprocalFollowersResponse,
+    RegisterSignedKeyParams, RelevantFollowersResponse, SearchUsersParams, SearchUsersResponse,
+    SearchUsersResult, SendCastParams, SendCastResponse, SignedKeyRequestSponsor, SignerResponse,
+    TrendingFeedResponse, UnfollowUserParams, UnfollowUserResponse, User, UserCastsResponse,
 };
 use std::{
     collections::HashMap,
@@ -300,6 +303,119 @@ impl FarcasterApi {
             .await?;
 
         Ok(response)
+    }
+
+    pub async fn get_followers(
+        &self,
+        params: &GetFollowersParams,
+    ) -> eyre::Result<FollowersResponse> {
+        params.validate().map_err(|err| eyre::eyre!(err))?;
+        let url = format!("{}/farcaster/followers", self.base_url);
+        let mut request = self.client.get(url).query(params);
+        if params.experimental {
+            request = request.header("x-neynar-experimental", "true");
+        }
+
+        Ok(request
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<FollowersResponse>()
+            .await?)
+    }
+
+    pub async fn get_relevant_followers(
+        &self,
+        params: &GetRelevantFollowersParams,
+    ) -> eyre::Result<RelevantFollowersResponse> {
+        params.validate().map_err(|err| eyre::eyre!(err))?;
+        let url = format!("{}/farcaster/followers/relevant", self.base_url);
+        let mut request = self.client.get(url).query(params);
+        if params.experimental {
+            request = request.header("x-neynar-experimental", "true");
+        }
+
+        Ok(request
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<RelevantFollowersResponse>()
+            .await?)
+    }
+
+    pub async fn get_reciprocal_followers(
+        &self,
+        params: &GetReciprocalFollowersParams,
+    ) -> eyre::Result<ReciprocalFollowersResponse> {
+        params.validate().map_err(|err| eyre::eyre!(err))?;
+        let url = format!("{}/farcaster/followers/reciprocal", self.base_url);
+        let mut request = self.client.get(url).query(params);
+        if params.experimental {
+            request = request.header("x-neynar-experimental", "true");
+        }
+
+        Ok(request
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<ReciprocalFollowersResponse>()
+            .await?)
+    }
+
+    pub async fn get_following(
+        &self,
+        params: &GetFollowingParams,
+    ) -> eyre::Result<FollowingResponse> {
+        params.validate().map_err(|err| eyre::eyre!(err))?;
+        let url = format!("{}/farcaster/following", self.base_url);
+        let mut request = self.client.get(url).query(params);
+        if params.experimental {
+            request = request.header("x-neynar-experimental", "true");
+        }
+
+        Ok(request
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<FollowingResponse>()
+            .await?)
+    }
+
+    pub async fn get_follow_suggestions(
+        &self,
+        params: &GetFollowSuggestionsParams,
+    ) -> eyre::Result<FollowSuggestionsResponse> {
+        params.validate().map_err(|err| eyre::eyre!(err))?;
+        let url = format!("{}/farcaster/following/suggested", self.base_url);
+        let mut request = self.client.get(url).query(params);
+        if params.experimental {
+            request = request.header("x-neynar-experimental", "true");
+        }
+
+        Ok(request
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<FollowSuggestionsResponse>()
+            .await?)
+    }
+
+    pub async fn get_best_friends(
+        &self,
+        params: &GetBestFriendsParams,
+    ) -> eyre::Result<BestFriendsResponse> {
+        params.validate().map_err(|err| eyre::eyre!(err))?;
+        let url = format!("{}/farcaster/user/best_friends", self.base_url);
+
+        Ok(self
+            .client
+            .get(url)
+            .query(params)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<BestFriendsResponse>()
+            .await?)
     }
 
     pub async fn follow_user(&self, params: &FollowUserParams) -> eyre::Result<FollowUserResponse> {
