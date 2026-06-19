@@ -1095,24 +1095,13 @@ end)
 | `:suggested_follows([params])` | `table?` | `CursorRx` | Fetch follow suggestions for a single FID |
 | `:best_friends([params])` | `table?` | `CursorRx` | Fetch best friends ranked by mutual affinity |
 | `:channels([params])` | `table?` | `CursorRx` | Fetch channels followed by a single FID |
+| `:active_channels([params])` | `table?` | `CursorRx` | Fetch channels where a single FID has casted, newest first |
 | `:channel_memberships([params])` | `table?` | `CursorRx` | Fetch channels where a single FID is a member |
 | `:replies_and_recasts([params])` | `table?` | `CursorRx` | Fetch a user's recent replies and recasts |
 | `:popular_casts([params])` | `table?` | `CursorRx` | Fetch a user's popular casts |
 | `:reactions(params)` | `table` | `CursorRx` | Fetch a user's likes, recasts, or both |
 | `:follow_as(player, [args])` | `PlayerHandle, table?` | response | Follow one or more FIDs as the connected player (scene-only) |
 | `:unfollow_as(player, [args])` | `PlayerHandle, table?` | response | Unfollow one or more FIDs as the connected player (scene-only) |
-
-Cursor-returning methods are consumed with `:next()` inside a scene:
-
-```lua
-scene.run(function()
-  local notifications = fc.notifications()
-    :get_for(423406, { limit = 25 })
-    :next()
-
-  print("notifications:", #notifications.notifications)
-end)
-```
 
 The follower/following methods require exactly one FID, e.g. `fc.user(3)`. They return cursor pages; call `:next()` inside a scene. `followers`, `reciprocal_followers`, and `following` accept `viewer_fid`, `sort_type = "desc_chron" | "algorithmic"`, `limit` (1–100), `cursor`, and `experimental`. `relevant_followers` requires `viewer_fid`; `suggested_follows` accepts `viewer_fid`, `limit`, and `experimental`.
 
@@ -1434,6 +1423,21 @@ Use these with `fc.notifications():get_for(..., { kinds = { ... } })` and `:mark
 
 Use these with `fc.user(fid):reactions({ reaction_type = ... })`.
 
+**Other Farcaster filters:**
+
+| Table | Values |
+|-------|--------|
+| `FollowSort` | `DescChron`, `Algorithmic` |
+| `RepliesAndRecastsFilter` | `All`, `Replies`, `Recasts` |
+| `ChannelIdentifier` | `Id`, `ParentUrl` |
+| `ChannelTrendingWindow` | `OneDay`, `SevenDays`, `ThirtyDays` |
+| `FeedTrendingWindow` | `OneHour`, `SixHours`, `TwelveHours`, `TwentyFourHours`, `SevenDays` |
+| `FeedFilter` | `Fids`, `ParentUrl`, `ChannelId`, `EmbedUrl`, `EmbedTypes`, `GlobalTrending` |
+| `EmbedType` | `Text`, `Image`, `Video`, `Audio`, plus MIME-specific variants such as `ImagePng` and `VideoMp4` |
+| `ReactionKind` | `Like`, `Recast` |
+
+For example: `fc.user(3):following({ sort_type = Const.FollowSort.DescChron })`.
+
 ```lua
 scene.run(function()
   local latest = fc.cast({ hash_a, hash_b })
@@ -1703,7 +1707,7 @@ The server sends WebSocket ping frames every 25 seconds to keep idle connections
 ```json
 { "t": "input", "d": { "id": 1, "data": { "x": 0.5, "y": -1.0 } } }
 { "t": "input", "d": { "id": 2, "data": true } }
-{ "t": "chat",  "d": "hello world" }
+{ "t": "signal", "d": { "name": "ChatMessage", "data": { "text": "hello world" } } }
 ```
 
 ### Server to Client

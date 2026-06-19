@@ -1,7 +1,6 @@
 use std::{str::FromStr, sync::Arc};
 
 use color_eyre::eyre::{self, Context};
-use mlua::LuaSerdeExt;
 use rock_wire::{PlayerKey, farcaster::*};
 use strum::{AsRefStr, Display, EnumString};
 
@@ -13,16 +12,10 @@ use crate::{
         GameModeClientApi, LuaResultExt, app_data, get_app_data,
         plugins::{
             farcaster::{
-                protocol::{
-                    DeleteCastOpParams, DeleteReactionOpParams, FollowChannelOpParams,
-                    FollowUserOpParams, MarkNotificationsSeenOpParams, PublishReactionOpParams,
-                    SendCastOpParams, SignerGetOptions, UnfollowUserOpParams, WriteAsArgs,
-                    WriteAsOp,
-                },
+                protocol::{SignerRequestOptions, StoredSigner, WriteAsArgs, parse_lua_fid},
                 rx::{FeedRx, FeedRxOpcodes, FeedRxParams},
             },
             player::PlayerHandle,
-            protocol::AsyncTaskResult,
         },
     },
 };
@@ -37,7 +30,9 @@ use rx::{
 };
 
 mod protocol;
-use protocol::{CastIdentifier, SignerRequestOptions, StoredSigner};
+use protocol::CastIdentifier;
+
+mod dispatch;
 
 #[derive(Debug, Clone, Copy, EnumString, Display, AsRefStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
@@ -64,6 +59,7 @@ pub(crate) enum FarcasterOp {
     UserFollowSuggestions,
     UserBestFriends,
     UserChannels,
+    UserActiveChannels,
     UserChannelMemberships,
     UserRepliesAndRecasts,
     UserPopularCasts,
@@ -89,7 +85,7 @@ pub(crate) enum FarcasterOp {
     ChannelUnfollow,
 }
 
-async fn register_and_store_signer(
+pub(super) async fn register_and_store_signer(
     fc_api: &FarcasterApi,
     meta_db: &MetaDb,
     key: &str,
@@ -106,14 +102,12 @@ async fn register_and_store_signer(
             sponsor: None,
         })
         .await?;
-
     let value = serde_json::to_value(StoredSigner {
         app_fid: opts.app_fid,
         player_fid: opts.player_fid,
-        signer: signer.clone(),
+        signer,
     })?;
     meta_db.update_key(key, Some(value.clone())).await?;
-
     Ok(value)
 }
 
@@ -124,7 +118,6 @@ async fn require_approved_signer(
 ) -> eyre::Result<String> {
     let key = MetaDb::farcaster_signer_key(app_fid, player_fid);
     let (existing, _) = meta_db.get_or_ensure_key(&key).await?;
-
     if existing.is_null() {
         return Err(eyre::eyre!(
             "missing Farcaster signer for app_fid={} player_fid={}",
@@ -132,7 +125,6 @@ async fn require_approved_signer(
             player_fid
         ));
     }
-
     let stored: StoredSigner = serde_json::from_value(existing)?;
     if stored.signer.status != SignerStatus::Approved {
         return Err(eyre::eyre!(
@@ -142,11 +134,10 @@ async fn require_approved_signer(
             stored.signer.status.as_ref()
         ));
     }
-
     Ok(stored.signer.signer_uuid)
 }
 
-async fn resolve_write_signer(
+pub(super) async fn resolve_write_signer(
     meta_db: &MetaDb,
     client_api: &dyn GameModeClientApi,
     default_app_fid: Option<Fid>,
@@ -157,11 +148,9 @@ async fn resolve_write_signer(
         .app_fid
         .or(default_app_fid)
         .ok_or_else(|| eyre::eyre!("missing app_fid and no default_app_fid configured"))?;
-
     let player_fid = client_api
         .fid(pk)
         .ok_or_else(|| eyre::eyre!("player fid is missing"))?;
-
     require_approved_signer(meta_db, app_fid, player_fid).await
 }
 
@@ -170,6 +159,7 @@ pub(crate) struct FarcasterPlugin {
     pub meta_db: Arc<MetaDb>,
     pub config: Option<FarcasterConfig>,
 }
+
 impl GameModePlugin for FarcasterPlugin {
     fn name(&self) -> PluginName {
         PluginName::Farcaster
@@ -182,34 +172,25 @@ impl GameModePlugin for FarcasterPlugin {
             .config
             .as_ref()
             .and_then(|config| config.default_app_fid);
-
         let table = lua.create_table()?;
 
         let cast_opcodes = CastRxOpcodes {
-            get: format!("{}_{}", &name_in_uppercase, FarcasterOp::CastGet),
-            bulk_fetch: format!("{}_{}", &name_in_uppercase, FarcasterOp::CastBulkFetch),
-            convo: format!("{}_{}", &name_in_uppercase, FarcasterOp::CastConvo),
-            reactions: format!("{}_{}", &name_in_uppercase, FarcasterOp::CastReactions),
-            send: format!("{}_{}", &name_in_uppercase, FarcasterOp::CastSend),
-            publish_reaction: format!(
-                "{}_{}",
-                &name_in_uppercase,
-                FarcasterOp::CastReactionPublish
-            ),
-            delete_reaction: format!("{}_{}", &name_in_uppercase, FarcasterOp::CastReactionDelete),
-            delete: format!("{}_{}", &name_in_uppercase, FarcasterOp::CastDelete),
+            get: format!("{}_{}", name_in_uppercase, FarcasterOp::CastGet),
+            bulk_fetch: format!("{}_{}", name_in_uppercase, FarcasterOp::CastBulkFetch),
+            convo: format!("{}_{}", name_in_uppercase, FarcasterOp::CastConvo),
+            reactions: format!("{}_{}", name_in_uppercase, FarcasterOp::CastReactions),
+            send: format!("{}_{}", name_in_uppercase, FarcasterOp::CastSend),
+            publish_reaction: format!("{}_{}", name_in_uppercase, FarcasterOp::CastReactionPublish),
+            delete_reaction: format!("{}_{}", name_in_uppercase, FarcasterOp::CastReactionDelete),
+            delete: format!("{}_{}", name_in_uppercase, FarcasterOp::CastDelete),
         };
-
         let cast_plugin_name = plugin_name.clone();
         let cast_fn = lua.create_function(move |_, v: mlua::Value| {
-            let mut ids: Vec<CastIdentifier> = Vec::new();
+            let mut ids = Vec::new();
             match v {
-                mlua::Value::String(s) => {
-                    ids.push(
-                        CastIdentifier::try_from(s.to_string_lossy())
-                            .map_err(mlua::Error::runtime)?,
-                    );
-                }
+                mlua::Value::String(s) => ids.push(
+                    CastIdentifier::try_from(s.to_string_lossy()).map_err(mlua::Error::runtime)?,
+                ),
                 mlua::Value::Table(arr) => {
                     if arr.is_empty() {
                         return Err(mlua::Error::runtime(format!(
@@ -227,7 +208,6 @@ impl GameModePlugin for FarcasterPlugin {
                     )));
                 }
             }
-
             CastRx::new(CastRxParams {
                 opcodes: cast_opcodes.clone(),
                 ids,
@@ -236,69 +216,68 @@ impl GameModePlugin for FarcasterPlugin {
         table.set("cast", cast_fn)?;
 
         let user_opcodes = UserRxOpcodes {
-            get_by_username: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserGetByUsername),
-            get_by_fids: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserGetByFids),
+            get_by_username: format!("{}_{}", name_in_uppercase, FarcasterOp::UserGetByUsername),
+            get_by_fids: format!("{}_{}", name_in_uppercase, FarcasterOp::UserGetByFids),
             search_by_username: format!(
                 "{}_{}",
-                &name_in_uppercase,
+                name_in_uppercase,
                 FarcasterOp::UserSearchByUsername
             ),
-            get_user_casts: format!("{}_{}", &name_in_uppercase, FarcasterOp::GetUserCasts),
-            follow_user: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserFollow),
-            unfollow_user: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserUnfollow),
-            followers: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserFollowers),
+            get_user_casts: format!("{}_{}", name_in_uppercase, FarcasterOp::GetUserCasts),
+            follow_user: format!("{}_{}", name_in_uppercase, FarcasterOp::UserFollow),
+            unfollow_user: format!("{}_{}", name_in_uppercase, FarcasterOp::UserUnfollow),
+            followers: format!("{}_{}", name_in_uppercase, FarcasterOp::UserFollowers),
             relevant_followers: format!(
                 "{}_{}",
-                &name_in_uppercase,
+                name_in_uppercase,
                 FarcasterOp::UserRelevantFollowers
             ),
             reciprocal_followers: format!(
                 "{}_{}",
-                &name_in_uppercase,
+                name_in_uppercase,
                 FarcasterOp::UserReciprocalFollowers
             ),
-            following: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserFollowing),
+            following: format!("{}_{}", name_in_uppercase, FarcasterOp::UserFollowing),
             follow_suggestions: format!(
                 "{}_{}",
-                &name_in_uppercase,
+                name_in_uppercase,
                 FarcasterOp::UserFollowSuggestions
             ),
-            best_friends: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserBestFriends),
-            channels: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserChannels),
+            best_friends: format!("{}_{}", name_in_uppercase, FarcasterOp::UserBestFriends),
+            channels: format!("{}_{}", name_in_uppercase, FarcasterOp::UserChannels),
+            active_channels: format!(
+                "{}_{}",
+                name_in_uppercase,
+                FarcasterOp::UserActiveChannels
+            ),
             channel_memberships: format!(
                 "{}_{}",
-                &name_in_uppercase,
+                name_in_uppercase,
                 FarcasterOp::UserChannelMemberships
             ),
             replies_and_recasts: format!(
                 "{}_{}",
-                &name_in_uppercase,
+                name_in_uppercase,
                 FarcasterOp::UserRepliesAndRecasts
             ),
-            popular_casts: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserPopularCasts),
-            reactions: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserReactions),
+            popular_casts: format!("{}_{}", name_in_uppercase, FarcasterOp::UserPopularCasts),
+            reactions: format!("{}_{}", name_in_uppercase, FarcasterOp::UserReactions),
         };
-
         let user_plugin_name = plugin_name.clone();
         let user_fn = lua.create_function(move |_, v: mlua::Value| {
-            let mut username: Option<String> = None;
-            let mut fids: Vec<Fid> = vec![];
-
+            let mut username = None;
+            let mut fids = Vec::new();
             match v {
-                mlua::Value::String(s) => {
-                    username = Some(s.to_string_lossy());
-                }
-                mlua::Value::Integer(fid) => {
-                    fids.push(fid as Fid);
-                }
+                mlua::Value::String(s) => username = Some(s.to_string_lossy()),
+                mlua::Value::Integer(fid) => fids.push(parse_lua_fid(fid, "user")?),
                 mlua::Value::Table(arr) => {
                     if arr.is_empty() {
                         return Err(mlua::Error::runtime(format!(
                             "{user_plugin_name}.user: fids list is empty"
                         )));
                     }
-                    for value in arr.sequence_values::<u64>() {
-                        fids.push(value?);
+                    for value in arr.sequence_values::<i64>() {
+                        fids.push(parse_lua_fid(value?, "user")?);
                     }
                 }
                 _ => {
@@ -307,7 +286,6 @@ impl GameModePlugin for FarcasterPlugin {
                     )));
                 }
             }
-
             Ok(UserRx::new(UserRxParams {
                 opcodes: user_opcodes.clone(),
                 username,
@@ -317,10 +295,10 @@ impl GameModePlugin for FarcasterPlugin {
         table.set("user", user_fn)?;
 
         let notifications_opcodes = NotificationsRxOpcodes {
-            get: format!("{}_{}", &name_in_uppercase, FarcasterOp::UserNotifications),
+            get: format!("{}_{}", name_in_uppercase, FarcasterOp::UserNotifications),
             mark_seen: format!(
                 "{}_{}",
-                &name_in_uppercase,
+                name_in_uppercase,
                 FarcasterOp::UserNotificationsSeen
             ),
         };
@@ -332,9 +310,9 @@ impl GameModePlugin for FarcasterPlugin {
         )?;
 
         let signer_opcodes = SignerRxOpcodes {
-            request: format!("{}_{}", &name_in_uppercase, FarcasterOp::SignerRequest),
-            get: format!("{}_{}", &name_in_uppercase, FarcasterOp::SignerGet),
-            refresh: format!("{}_{}", &name_in_uppercase, FarcasterOp::SignerRefresh),
+            request: format!("{}_{}", name_in_uppercase, FarcasterOp::SignerRequest),
+            get: format!("{}_{}", name_in_uppercase, FarcasterOp::SignerGet),
+            refresh: format!("{}_{}", name_in_uppercase, FarcasterOp::SignerRefresh),
         };
         let signer_fn = lua.create_function(move |_, ud: mlua::AnyUserData| {
             let player = ud.borrow::<PlayerHandle>()?;
@@ -347,35 +325,37 @@ impl GameModePlugin for FarcasterPlugin {
         table.set("signer", signer_fn)?;
 
         let feed_opcodes = FeedRxOpcodes {
-            for_you: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedForYou),
-            following: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedFollowing),
-            by_filters: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedByFilters),
-            trending: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedTrending),
-            by_channel_ids: format!("{}_{}", &name_in_uppercase, FarcasterOp::FeedByChannelIds),
+            for_you: format!("{}_{}", name_in_uppercase, FarcasterOp::FeedForYou),
+            following: format!("{}_{}", name_in_uppercase, FarcasterOp::FeedFollowing),
+            by_filters: format!("{}_{}", name_in_uppercase, FarcasterOp::FeedByFilters),
+            trending: format!("{}_{}", name_in_uppercase, FarcasterOp::FeedTrending),
+            by_channel_ids: format!("{}_{}", name_in_uppercase, FarcasterOp::FeedByChannelIds),
         };
-        let feed_fn = lua.create_function(move |_, fid: Option<Fid>| {
-            Ok(FeedRx::new(FeedRxParams {
-                opcodes: feed_opcodes.clone(),
-                fid,
-            }))
-        })?;
-        table.set("feed", feed_fn)?;
+        table.set(
+            "feed",
+            lua.create_function(move |_, fid: Option<Fid>| {
+                Ok(FeedRx::new(FeedRxParams {
+                    opcodes: feed_opcodes.clone(),
+                    fid,
+                }))
+            })?,
+        )?;
 
         let channel_opcodes = ChannelRxOpcodes {
-            list: format!("{}_{}", &name_in_uppercase, FarcasterOp::ChannelList),
-            search: format!("{}_{}", &name_in_uppercase, FarcasterOp::ChannelSearch),
-            bulk: format!("{}_{}", &name_in_uppercase, FarcasterOp::ChannelBulk),
-            get: format!("{}_{}", &name_in_uppercase, FarcasterOp::ChannelGet),
-            members: format!("{}_{}", &name_in_uppercase, FarcasterOp::ChannelMembers),
-            followers: format!("{}_{}", &name_in_uppercase, FarcasterOp::ChannelFollowers),
+            list: format!("{}_{}", name_in_uppercase, FarcasterOp::ChannelList),
+            search: format!("{}_{}", name_in_uppercase, FarcasterOp::ChannelSearch),
+            bulk: format!("{}_{}", name_in_uppercase, FarcasterOp::ChannelBulk),
+            get: format!("{}_{}", name_in_uppercase, FarcasterOp::ChannelGet),
+            members: format!("{}_{}", name_in_uppercase, FarcasterOp::ChannelMembers),
+            followers: format!("{}_{}", name_in_uppercase, FarcasterOp::ChannelFollowers),
             relevant_followers: format!(
                 "{}_{}",
-                &name_in_uppercase,
+                name_in_uppercase,
                 FarcasterOp::ChannelRelevantFollowers
             ),
-            trending: format!("{}_{}", &name_in_uppercase, FarcasterOp::ChannelTrending),
-            follow: format!("{}_{}", &name_in_uppercase, FarcasterOp::ChannelFollow),
-            unfollow: format!("{}_{}", &name_in_uppercase, FarcasterOp::ChannelUnfollow),
+            trending: format!("{}_{}", name_in_uppercase, FarcasterOp::ChannelTrending),
+            follow: format!("{}_{}", name_in_uppercase, FarcasterOp::ChannelFollow),
+            unfollow: format!("{}_{}", name_in_uppercase, FarcasterOp::ChannelUnfollow),
         };
         table.set(
             "channel",
@@ -389,6 +369,7 @@ impl GameModePlugin for FarcasterPlugin {
 
         Ok(Some(table))
     }
+
     fn handle_op(
         &self,
         lua: &mlua::Lua,
@@ -396,681 +377,72 @@ impl GameModePlugin for FarcasterPlugin {
         args: mlua::Value,
     ) -> eyre::Result<Option<AsyncTask>> {
         let plugin_name = self.name();
+        let op = FarcasterOp::from_str(op)
+            .wrap_err_with(|| format!("{plugin_name}: unknown plugin op `{op}`"))?;
         let default_app_fid = self
             .config
             .as_ref()
             .and_then(|config| config.default_app_fid);
-
-        let fc_api = self.fc_api.clone();
-        let meta_db = self.meta_db.clone();
         let client_api: Arc<dyn GameModeClientApi> = get_app_data::<app_data::ClientApi>(lua)
             .wrap_err("App data is not initialized")?
             .0
             .clone();
+        let ctx = dispatch::DispatchContext {
+            fc_api: self.fc_api.clone(),
+            meta_db: self.meta_db.clone(),
+            client_api,
+            default_app_fid,
+            plugin_name: plugin_name.to_string(),
+        };
 
-        let op = FarcasterOp::from_str(op)
-            .wrap_err_with(|| format!("{plugin_name}: unknown plugin op `{op}`"))?;
         match op {
-            FarcasterOp::CastGet => {
-                let params: GetCastParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.cast [get method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let cast = fc_api.get_cast(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(cast)?))
-                });
-                Ok(Some(future))
+            FarcasterOp::CastGet
+            | FarcasterOp::CastBulkFetch
+            | FarcasterOp::CastConvo
+            | FarcasterOp::CastReactions
+            | FarcasterOp::CastSend
+            | FarcasterOp::CastDelete
+            | FarcasterOp::CastReactionPublish
+            | FarcasterOp::CastReactionDelete => dispatch::cast::handle(&ctx, lua, op, args),
+            FarcasterOp::UserGetByUsername
+            | FarcasterOp::UserGetByFids
+            | FarcasterOp::UserSearchByUsername
+            | FarcasterOp::GetUserCasts
+            | FarcasterOp::UserFollow
+            | FarcasterOp::UserUnfollow
+            | FarcasterOp::UserFollowers
+            | FarcasterOp::UserRelevantFollowers
+            | FarcasterOp::UserReciprocalFollowers
+            | FarcasterOp::UserFollowing
+            | FarcasterOp::UserFollowSuggestions
+            | FarcasterOp::UserBestFriends
+            | FarcasterOp::UserChannels
+            | FarcasterOp::UserActiveChannels
+            | FarcasterOp::UserChannelMemberships
+            | FarcasterOp::UserRepliesAndRecasts
+            | FarcasterOp::UserPopularCasts
+            | FarcasterOp::UserReactions => dispatch::user::handle(&ctx, lua, op, args),
+            FarcasterOp::UserNotifications | FarcasterOp::UserNotificationsSeen => {
+                dispatch::notifications::handle(&ctx, lua, op, args)
             }
-            FarcasterOp::CastBulkFetch => {
-                let params: BulkFetchCastsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.cast [bulk fetch method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let casts = fc_api.bulk_fetch_casts(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(casts)?))
-                });
-                Ok(Some(future))
+            FarcasterOp::ChannelList
+            | FarcasterOp::ChannelSearch
+            | FarcasterOp::ChannelBulk
+            | FarcasterOp::ChannelGet
+            | FarcasterOp::ChannelMembers
+            | FarcasterOp::ChannelFollowers
+            | FarcasterOp::ChannelRelevantFollowers
+            | FarcasterOp::ChannelTrending
+            | FarcasterOp::ChannelFollow
+            | FarcasterOp::ChannelUnfollow => dispatch::channel::handle(&ctx, lua, op, args),
+            FarcasterOp::SignerRequest | FarcasterOp::SignerGet | FarcasterOp::SignerRefresh => {
+                dispatch::signer::handle(&ctx, lua, op, args)
             }
-            FarcasterOp::CastConvo => {
-                let params: GetCastConversationParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.cast [convo method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let convo = fc_api.get_convo(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(convo)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::CastReactions => {
-                let params: GetReactionsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.cast [reactions method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let reactions = fc_api.get_reactions(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(reactions)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::CastSend => {
-                let payload: WriteAsOp<SendCastOpParams> = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.cast [send method]: incorrect cast body"),
-                )?;
-
-                let future = Box::pin(async move {
-                    let signer_uuid = resolve_write_signer(
-                        &meta_db,
-                        client_api.as_ref(),
-                        default_app_fid,
-                        payload.pk(),
-                        payload.write_args,
-                    )
-                    .await?;
-                    let params = SendCastParams {
-                        signer_uuid,
-                        text: payload.params.text,
-                        parent: payload.params.parent,
-                        channel_id: payload.params.channel_id,
-                        embeds: Some(payload.params.embeds),
-                    };
-                    let cast = fc_api.send_cast(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(cast)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::CastDelete => {
-                let payload: WriteAsOp<DeleteCastOpParams> = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.cast [delete method]: incorrect params"),
-                )?;
-
-                let future = Box::pin(async move {
-                    let signer_uuid = resolve_write_signer(
-                        &meta_db,
-                        client_api.as_ref(),
-                        default_app_fid,
-                        payload.pk(),
-                        payload.write_args,
-                    )
-                    .await?;
-                    let params = DeleteCastParams {
-                        signer_uuid,
-                        target_hash: payload.params.target_hash,
-                    };
-                    let res = fc_api.delete_cast(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::CastReactionPublish => {
-                let payload: WriteAsOp<PublishReactionOpParams> = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.cast [publish reaction method]: incorrect params"),
-                )?;
-
-                let future = Box::pin(async move {
-                    let signer_uuid = resolve_write_signer(
-                        &meta_db,
-                        client_api.as_ref(),
-                        default_app_fid,
-                        payload.pk(),
-                        payload.write_args,
-                    )
-                    .await?;
-                    let params = PublishReactionParams {
-                        signer_uuid,
-                        reaction_type: payload.params.reaction_type,
-                        target: payload.params.target,
-                        idem: None,
-                        target_author_fid: None,
-                    };
-                    let res = fc_api.publish_reaction(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::CastReactionDelete => {
-                let payload: WriteAsOp<DeleteReactionOpParams> = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.cast [delete reaction method]: incorrect params"),
-                )?;
-
-                let future = Box::pin(async move {
-                    let signer_uuid = resolve_write_signer(
-                        &meta_db,
-                        client_api.as_ref(),
-                        default_app_fid,
-                        payload.pk(),
-                        payload.write_args,
-                    )
-                    .await?;
-                    let params = DeleteReactionParams {
-                        signer_uuid,
-                        reaction_type: payload.params.reaction_type,
-                        target: payload.params.target,
-                        idem: None,
-                        target_author_fid: None,
-                    };
-                    let res = fc_api.delete_reaction(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserGetByUsername => {
-                let params: GetUserByUsernameParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [get method]: incorrect params for 'GetUserByUsername'"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let user = fc_api.get_user_by_username(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(user)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserGetByFids => {
-                let params: GetUsersByFidsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [get method]: incorrect params for 'GetUsersByFids'"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let users = fc_api.get_users_by_fids(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(users)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserSearchByUsername => {
-                let params: SearchUsersParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [search method]: incorrect args for 'SearchUsersByUsername'"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let res = fc_api.search_users(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::GetUserCasts => {
-                let params: GetUserCastsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [get casts method]: incorrect args for 'GetUserCastsParams'"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let res = fc_api.get_user_casts(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserFollow => {
-                let payload: WriteAsOp<FollowUserOpParams> = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.user [follow method]: incorrect params"),
-                )?;
-
-                let future = Box::pin(async move {
-                    let signer_uuid = resolve_write_signer(
-                        &meta_db,
-                        client_api.as_ref(),
-                        default_app_fid,
-                        payload.pk(),
-                        payload.write_args,
-                    )
-                    .await?;
-                    let params = FollowUserParams {
-                        signer_uuid,
-                        target_fids: payload.params.target_fids,
-                    };
-                    let res = fc_api.follow_user(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserUnfollow => {
-                let payload: WriteAsOp<UnfollowUserOpParams> = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.user [unfollow method]: incorrect params"),
-                )?;
-
-                let future = Box::pin(async move {
-                    let signer_uuid = resolve_write_signer(
-                        &meta_db,
-                        client_api.as_ref(),
-                        default_app_fid,
-                        payload.pk(),
-                        payload.write_args,
-                    )
-                    .await?;
-                    let params = UnfollowUserParams {
-                        signer_uuid,
-                        target_fids: payload.params.target_fids,
-                    };
-                    let res = fc_api.unfollow_user(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserNotifications => {
-                let params: GetNotificationsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [notifications method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let res = fc_api.get_notifications(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserFollowers => {
-                let params: GetFollowersParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [followers method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let res = fc_api.get_followers(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserRelevantFollowers => {
-                let params: GetRelevantFollowersParams = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.user [relevant followers method]: incorrect params"),
-                )?;
-
-                let future = Box::pin(async move {
-                    let res = fc_api.get_relevant_followers(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserReciprocalFollowers => {
-                let params: GetReciprocalFollowersParams = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.user [reciprocal followers method]: incorrect params"),
-                )?;
-
-                let future = Box::pin(async move {
-                    let res = fc_api.get_reciprocal_followers(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserFollowing => {
-                let params: GetFollowingParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [following method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let res = fc_api.get_following(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserFollowSuggestions => {
-                let params: GetFollowSuggestionsParams = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.user [follow suggestions method]: incorrect params"),
-                )?;
-
-                let future = Box::pin(async move {
-                    let res = fc_api.get_follow_suggestions(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserBestFriends => {
-                let params: GetBestFriendsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [best friends method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let res = fc_api.get_best_friends(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::UserChannels => {
-                let p: GetUserChannelsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [channels method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_user_channels(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::UserChannelMemberships => {
-                let p: GetUserChannelMembershipsParams = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.user [channel memberships method]: incorrect params"),
-                )?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_user_channel_memberships(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::UserRepliesAndRecasts => {
-                let p: GetUserRepliesAndRecastsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [replies/recasts method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_user_replies_and_recasts(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::UserPopularCasts => {
-                let p: GetUserPopularCastsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [popular casts method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_user_popular_casts(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::UserReactions => {
-                let p: GetUserReactionsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.user [reactions method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_user_reactions(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::UserNotificationsSeen => {
-                let payload: WriteAsOp<MarkNotificationsSeenOpParams> =
-                    lua.from_value(args).wrap_err(&format!(
-                        "{plugin_name}.user [notifications seen method]: incorrect params"
-                    ))?;
-
-                let future = Box::pin(async move {
-                    let signer_uuid = resolve_write_signer(
-                        &meta_db,
-                        client_api.as_ref(),
-                        default_app_fid,
-                        payload.pk(),
-                        payload.write_args,
-                    )
-                    .await?;
-
-                    let res = fc_api
-                        .mark_notifications_seen(&MarkNotificationsSeenParams {
-                            signer_uuid,
-                            kind: payload.params.kind,
-                        })
-                        .await?;
-
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(res)?))
-                });
-
-                Ok(Some(future))
-            }
-
-            FarcasterOp::ChannelList => {
-                let p: ListChannelsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.channel [list method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.list_channels(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::ChannelSearch => {
-                let p: SearchChannelsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.channel [search method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.search_channels(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::ChannelBulk => {
-                let p: BulkChannelsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.channel [bulk method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.bulk_channels(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::ChannelGet => {
-                let p: GetChannelParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.channel [get method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_channel(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::ChannelMembers => {
-                let p: GetChannelMembersParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.channel [members method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_channel_members(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::ChannelFollowers => {
-                let p: GetChannelFollowersParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.channel [followers method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_channel_followers(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::ChannelRelevantFollowers => {
-                let p: GetRelevantChannelFollowersParams = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.channel [relevant followers method]: incorrect params"),
-                )?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_relevant_channel_followers(&p).await?,
-                    )?))
-                })))
-            }
-            FarcasterOp::ChannelTrending => {
-                let p: GetTrendingChannelsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.channel [trending method]: incorrect params"
-                ))?;
-
-                Ok(Some(Box::pin(async move {
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(
-                        fc_api.get_trending_channels(&p).await?,
-                    )?))
-                })))
-            }
-
-            FarcasterOp::SignerRequest => {
-                let opts: SignerRequestOptions = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.signer [request method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let key = MetaDb::farcaster_signer_key(opts.app_fid, opts.player_fid);
-                    let (existing, _) = meta_db.get_or_ensure_key(&key).await?;
-                    if !existing.is_null() {
-                        let stored: StoredSigner = serde_json::from_value(existing.clone())?;
-
-                        match stored.signer.status {
-                            SignerStatus::PendingApproval | SignerStatus::Approved => {
-                                return Ok(AsyncTaskResult::JsonValue(existing));
-                            }
-                            SignerStatus::Generated => {
-                                let value = register_and_store_signer(
-                                    &fc_api,
-                                    &meta_db,
-                                    &key,
-                                    opts,
-                                    stored.signer,
-                                )
-                                .await?;
-                                return Ok(AsyncTaskResult::JsonValue(value));
-                            }
-                            SignerStatus::Revoked => {}
-                        }
-                    }
-
-                    let signer = fc_api.create_signer().await?;
-                    let generated_value = serde_json::to_value(StoredSigner {
-                        app_fid: opts.app_fid,
-                        player_fid: opts.player_fid,
-                        signer: signer.clone(),
-                    })?;
-                    meta_db
-                        .update_key(&key, Some(generated_value.clone()))
-                        .await?;
-
-                    let value =
-                        register_and_store_signer(&fc_api, &meta_db, &key, opts, signer).await?;
-                    Ok(AsyncTaskResult::JsonValue(value))
-                });
-
-                Ok(Some(future))
-            }
-            FarcasterOp::ChannelFollow | FarcasterOp::ChannelUnfollow => {
-                let payload: WriteAsOp<FollowChannelOpParams> = lua.from_value(args).wrap_err(
-                    &format!("{plugin_name}.channel [follow/unfollow method]: incorrect params"),
-                )?;
-                let future = Box::pin(async move {
-                    let signer_uuid = resolve_write_signer(
-                        &meta_db,
-                        client_api.as_ref(),
-                        default_app_fid,
-                        payload.pk(),
-                        payload.write_args,
-                    )
-                    .await?;
-                    let params = FollowChannelParams {
-                        channel_id: payload.params.channel_id,
-                        signer_uuid,
-                    };
-                    let response = if matches!(op, FarcasterOp::ChannelFollow) {
-                        fc_api.follow_channel(&params).await?
-                    } else {
-                        fc_api.unfollow_channel(&params).await?
-                    };
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(response)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::SignerGet => {
-                let SignerGetOptions {
-                    app_fid,
-                    player_fid,
-                } = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.signer [get method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let key = MetaDb::farcaster_signer_key(app_fid, player_fid);
-                    let (existing, _) = meta_db.get_or_ensure_key(&key).await?;
-
-                    if existing.is_null() {
-                        return Ok(AsyncTaskResult::Nil);
-                    }
-
-                    Ok(AsyncTaskResult::JsonValue(existing))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::SignerRefresh => {
-                let SignerGetOptions {
-                    app_fid,
-                    player_fid,
-                } = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.signer [status method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let key = MetaDb::farcaster_signer_key(app_fid, player_fid);
-                    let (existing, _) = meta_db.get_or_ensure_key(&key).await?;
-
-                    if existing.is_null() {
-                        return Ok(AsyncTaskResult::Nil);
-                    }
-
-                    let mut stored: StoredSigner = serde_json::from_value(existing)?;
-                    let signer = fc_api.lookup_signer(&stored.signer.signer_uuid).await?;
-                    stored.signer = signer;
-
-                    let value = serde_json::to_value(stored)?;
-                    meta_db.update_key(&key, Some(value.clone())).await?;
-
-                    Ok(AsyncTaskResult::JsonValue(value))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::FeedForYou => {
-                let params: GetForYouFeedParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.feed [for you method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let feed = fc_api.get_for_you_feed(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(feed)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::FeedFollowing => {
-                let params: GetFollowingFeedParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.feed [following method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let feed = fc_api.get_following_feed(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(feed)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::FeedByFilters => {
-                let params: GetFeedByFiltersParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.feed [by filters method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let feed = fc_api.get_feed_by_filters(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(feed)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::FeedTrending => {
-                let params: GetTrendingFeedParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.feed [trending method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let feed = fc_api.get_trending_feed(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(feed)?))
-                });
-                Ok(Some(future))
-            }
-            FarcasterOp::FeedByChannelIds => {
-                let params: GetFeedByChannelIdsParams = lua.from_value(args).wrap_err(&format!(
-                    "{plugin_name}.feed [by channel IDs method]: incorrect params"
-                ))?;
-
-                let future = Box::pin(async move {
-                    let feed = fc_api.get_feed_by_channel_ids(&params).await?;
-                    Ok(AsyncTaskResult::JsonValue(serde_json::to_value(feed)?))
-                });
-                Ok(Some(future))
-            }
+            FarcasterOp::FeedForYou
+            | FarcasterOp::FeedFollowing
+            | FarcasterOp::FeedByFilters
+            | FarcasterOp::FeedTrending
+            | FarcasterOp::FeedByChannelIds => dispatch::feed::handle(&ctx, lua, op, args),
         }
     }
 }

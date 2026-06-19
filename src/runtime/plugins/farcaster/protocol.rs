@@ -8,6 +8,16 @@ use rock_wire::{
 };
 use serde::{Deserialize, Serialize};
 
+pub(crate) fn parse_lua_fid(fid: i64, context: &str) -> mlua::Result<Fid> {
+    if fid < 1 {
+        return Err(mlua::Error::runtime(format!(
+            "{context}: fid must be a positive integer"
+        )));
+    }
+
+    Ok(fid as Fid)
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum CastIdentifier {
     Hash(String),
@@ -80,8 +90,19 @@ impl SignerRequestArgs {
 impl FromLua for SignerRequestArgs {
     fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
         match value {
-            mlua::Value::Integer(fid) => Ok(SignerRequestArgs::new(fid as Fid)),
-            mlua::Value::Table(_) => lua.from_value(value),
+            mlua::Value::Integer(fid) => Ok(SignerRequestArgs::new(parse_lua_fid(
+                fid,
+                "signer request",
+            )?)),
+            mlua::Value::Table(_) => {
+                let args: SignerRequestArgs = lua.from_value(value)?;
+                if args.app_fid == Some(0) {
+                    return Err(mlua::Error::runtime(
+                        "signer request: app_fid must be a positive integer",
+                    ));
+                }
+                Ok(args)
+            }
             _ => Err(mlua::Error::FromLuaConversionError {
                 from: value.type_name(),
                 to: "SignerRequestOptions".to_string(),
@@ -183,7 +204,6 @@ pub(crate) struct PublishReactionOpParams {
     pub reaction_type: ReactionKind,
     pub target: String,
 }
-pub(crate) type DeleteReactionOpParams = PublishReactionOpParams;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct DeleteCastOpParams {
@@ -194,13 +214,11 @@ pub(crate) struct DeleteCastOpParams {
 pub(crate) struct FollowUserOpParams {
     pub target_fids: Vec<Fid>,
 }
-pub(crate) type UnfollowUserOpParams = FollowUserOpParams;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct FollowChannelOpParams {
     pub channel_id: String,
 }
-pub(crate) type UnfollowChannelOpParams = FollowChannelOpParams;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct MarkNotificationsSeenOpParams {
     pub kind: Option<NotificationFilterKind>,

@@ -26,6 +26,7 @@ pub(crate) struct UserRxOpcodes {
     pub follow_suggestions: String,
     pub best_friends: String,
     pub channels: String,
+    pub active_channels: String,
     pub channel_memberships: String,
     pub replies_and_recasts: String,
     pub popular_casts: String,
@@ -279,6 +280,18 @@ impl UserData for UserRx {
                 Ok(CursorRx::new(build_plugin_op(
                     &lua,
                     this.opcodes.channels.clone(),
+                    mlua::Value::Table(args),
+                )?))
+            },
+        );
+        methods.add_async_method(
+            "active_channels",
+            async |lua, this, params: Option<mlua::Table>| {
+                let args = params.unwrap_or(lua.create_table()?);
+                args.set("fid", this.single_fid("active_channels")?)?;
+                Ok(CursorRx::new(build_plugin_op(
+                    &lua,
+                    this.opcodes.active_channels.clone(),
                     mlua::Value::Table(args),
                 )?))
             },
