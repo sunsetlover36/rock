@@ -194,4 +194,10 @@ pub(crate) struct FollowUserOpParams {
     pub target_fids: Vec<Fid>,
 }
 pub(crate) type UnfollowUserOpParams = FollowUserOpParams;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FollowChannelOpParams {
+    pub channel_id: String,
+}
+pub(crate) type UnfollowChannelOpParams = FollowChannelOpParams;
 // --

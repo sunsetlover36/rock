@@ -9,3 +9,6 @@ pub(crate) use signer::{SignerRx, SignerRxOpcodes, SignerRxParams};
 
 mod feed;
 pub(crate) use feed::{FeedRx, FeedRxOpcodes, FeedRxParams};
+
+mod channel;
+pub(crate) use channel::{ChannelRx, ChannelRxOpcodes, ChannelRxParams};

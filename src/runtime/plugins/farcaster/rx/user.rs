@@ -26,6 +26,8 @@ pub(crate) struct UserRxOpcodes {
     pub following: String,
     pub follow_suggestions: String,
     pub best_friends: String,
+    pub channels: String,
+    pub channel_memberships: String,
 }
 
 pub(crate) struct UserRxParams {
@@ -284,5 +286,14 @@ impl UserData for UserRx {
                 Ok(CursorRx::new(op))
             },
         );
+
+        methods.add_async_method("channels", async |lua, this, params: Option<mlua::Table>| {
+            let args = params.unwrap_or(lua.create_table()?); args.set("fid", this.single_fid("channels")?)?;
+            Ok(CursorRx::new(build_plugin_op(&lua, this.opcodes.channels.clone(), mlua::Value::Table(args))?))
+        });
+        methods.add_async_method("channel_memberships", async |lua, this, params: Option<mlua::Table>| {
+            let args = params.unwrap_or(lua.create_table()?); args.set("fid", this.single_fid("channel_memberships")?)?;
+            Ok(CursorRx::new(build_plugin_op(&lua, this.opcodes.channel_memberships.clone(), mlua::Value::Table(args))?))
+        });
     }
 }

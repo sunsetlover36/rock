@@ -8,24 +8,8 @@ use reqwest::{
     Client,
     header::{self, HeaderMap, HeaderName, HeaderValue},
 };
-use rock_wire::farcaster::{
-    BestFriendsResponse, BulkFetchCastsParams, BulkFetchCastsRawQuery, BulkFetchCastsResponse,
-    Cast, CastConversationResponse, CreatedCast, DeleteCastParams, DeleteCastResponse,
-    DeleteReactionParams, Fid, FollowSuggestionsResponse, FollowUserParams, FollowUserResponse,
-    FollowersResponse, FollowingFeedResponse, FollowingResponse, ForYouFeedResponse,
-    GetBestFriendsParams, GetCastConversationParams, GetCastParams, GetCastResponse,
-    GetFeedByChannelIdsParams, GetFeedByChannelIdsRawQuery, GetFeedByFiltersParams,
-    GetFeedByFiltersRawQuery, GetFollowSuggestionsParams, GetFollowersParams,
-    GetFollowingFeedParams, GetFollowingParams, GetForYouFeedParams, GetNotificationsParams,
-    GetNotificationsRawQuery, GetReactionsParams, GetReactionsRawQuery,
-    GetReciprocalFollowersParams, GetRelevantFollowersParams, GetSignerStatusParams,
-    GetTrendingFeedParams, GetUserByUsernameParams, GetUserByUsernameResponse, GetUserCastsParams,
-    GetUsersByFidsParams, GetUsersByFidsRawQuery, GetUsersByFidsResponse, NotificationsResponse,
-    PublishReactionParams, ReactionResponse, ReactionsResponse, ReciprocalFollowersResponse,
-    RegisterSignedKeyParams, RelevantFollowersResponse, SearchUsersParams, SearchUsersResponse,
-    SearchUsersResult, SendCastParams, SendCastResponse, SignedKeyRequestSponsor, SignerResponse,
-    TrendingFeedResponse, UnfollowUserParams, UnfollowUserResponse, User, UserCastsResponse,
-};
+use rock_wire::farcaster::*;
+use serde::{Serialize, de::DeserializeOwned};
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
@@ -53,6 +37,26 @@ pub(crate) struct FarcasterApi {
     app_signers: HashMap<Fid, SignerConfig>,
 }
 impl FarcasterApi {
+    async fn get<T: DeserializeOwned, Q: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        query: &Q,
+        experimental: bool,
+    ) -> eyre::Result<T> {
+        let mut request = self
+            .client
+            .get(format!("{}/farcaster/{path}", self.base_url))
+            .query(query);
+        if experimental {
+            request = request.header("x-neynar-experimental", "true");
+        }
+        Ok(request
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<T>()
+            .await?)
+    }
     pub fn new(api_key: &str, app_signers: HashMap<Fid, SignerConfig>) -> eyre::Result<Self> {
         let mut headers = HeaderMap::new();
 
@@ -303,6 +307,87 @@ impl FarcasterApi {
             .await?;
 
         Ok(response)
+    }
+
+    pub async fn list_channels(&self, p: &ListChannelsParams) -> eyre::Result<ChannelsResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("channel/list", p, false).await
+    }
+    pub async fn get_users_active_channels(
+        &self,
+        p: &GetUsersActiveChannelsParams,
+    ) -> eyre::Result<ActiveChannelsResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("channel/user", p, false).await
+    }
+    pub async fn search_channels(
+        &self,
+        p: &SearchChannelsParams,
+    ) -> eyre::Result<ChannelSearchResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("channel/search", p, false).await
+    }
+    pub async fn bulk_channels(
+        &self,
+        p: &BulkChannelsParams,
+    ) -> eyre::Result<BulkChannelsResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("channel/bulk", &BulkChannelsRawQuery::from(p), false)
+            .await
+    }
+    pub async fn get_channel(&self, p: &GetChannelParams) -> eyre::Result<ChannelResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("channel", p, false).await
+    }
+    pub async fn get_channel_members(
+        &self,
+        p: &GetChannelMembersParams,
+    ) -> eyre::Result<ChannelMembersResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("channel/member/list", p, p.experimental).await
+    }
+    pub async fn get_channel_followers(
+        &self,
+        p: &GetChannelFollowersParams,
+    ) -> eyre::Result<ChannelFollowersResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("channel/followers", p, p.experimental).await
+    }
+
+    pub async fn follow_channel(&self, params: &FollowChannelParams) -> eyre::Result<FollowChannelResponse> {
+        Ok(self.client.post(format!("{}/farcaster/channel/follow", self.base_url)).json(params).send().await?.error_for_status()?.json().await?)
+    }
+    pub async fn unfollow_channel(&self, params: &UnfollowChannelParams) -> eyre::Result<UnfollowChannelResponse> {
+        Ok(self.client.delete(format!("{}/farcaster/channel/follow", self.base_url)).json(params).send().await?.error_for_status()?.json().await?)
+    }
+    pub async fn get_relevant_channel_followers(
+        &self,
+        p: &GetRelevantChannelFollowersParams,
+    ) -> eyre::Result<RelevantChannelFollowersResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("channel/followers/relevant", p, p.experimental)
+            .await
+    }
+    pub async fn get_user_channels(
+        &self,
+        p: &GetUserChannelsParams,
+    ) -> eyre::Result<UserChannelsResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("user/channels", p, false).await
+    }
+    pub async fn get_user_channel_memberships(
+        &self,
+        p: &GetUserChannelMembershipsParams,
+    ) -> eyre::Result<ChannelMembersResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("user/memberships/list", p, false).await
+    }
+    pub async fn get_trending_channels(
+        &self,
+        p: &GetTrendingChannelsParams,
+    ) -> eyre::Result<TrendingChannelsResponse> {
+        p.validate().map_err(|e| eyre::eyre!(e))?;
+        self.get("channel/trending", p, false).await
     }
 
     pub async fn get_followers(
