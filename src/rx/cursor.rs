@@ -3,9 +3,6 @@ use std::cell::RefCell;
 
 use crate::runtime::plugins::yield_op;
 
-// TODO: Neynar API thing ({ next: { cursor: String }? })
-// Might support more structures?
-
 struct CursorState {
     exhausted: bool,
     op: mlua::Table,
