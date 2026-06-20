@@ -63,15 +63,14 @@ type IERC20Instance = IERC20::IERC20Instance<AlloyProvider>;
 
 #[derive(Clone)]
 pub(crate) struct Crypto {
-    provider: AlloyProvider,
     token: IERC20Instance,
 }
 impl Crypto {
     pub fn new(rpc_url: &str) -> eyre::Result<Self> {
         let provider = ProviderBuilder::new().connect_http(rpc_url.parse()?);
-        let token = IERC20::new(ROCK_TOKEN, provider.clone());
+        let token = IERC20::new(ROCK_TOKEN, provider);
 
-        Ok(Self { provider, token })
+        Ok(Self { token })
     }
 
     pub async fn rock_decimals(&self) -> eyre::Result<u8> {
