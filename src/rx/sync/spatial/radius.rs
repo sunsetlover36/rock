@@ -5,6 +5,7 @@ use crate::{
         EyreResultExt, app_data, get_app_data,
         network_replicator::protocol::{
             AreaShape, PolicyFieldUpdate, RadialArea, ReplicationTarget, SpatialFilter,
+            SpatialPolicyUpdate,
         },
     },
     rx::sync::{HasPolicy, PolicyHandle},
@@ -38,16 +39,17 @@ where
     T: UserData + PolicyHandle,
     M: UserDataMethods<T>,
 {
-    methods.add_method("radius", |lua, this, (radius, shape): (f32, AreaShape)| {
-        get_app_data::<app_data::NetworkReplicator>(lua)?
-            .0
-            .update_policy(
-                this.policy_id(),
-                PolicyFieldUpdate::Spatial {
-                    filter: SpatialFilter::Radius(RadialArea { radius, shape }),
-                },
-            )
-            .wrap_eyre_err()?;
-        Ok(())
-    });
+    methods.add_method(
+        "radius",
+        |lua, this, (radius, shape): (f32, Option<AreaShape>)| {
+            get_app_data::<app_data::NetworkReplicator>(lua)?
+                .0
+                .update_policy(
+                    this.policy_id(),
+                    PolicyFieldUpdate::Spatial(SpatialPolicyUpdate::Radius { radius, shape }),
+                )
+                .wrap_eyre_err()?;
+            Ok(())
+        },
+    );
 }

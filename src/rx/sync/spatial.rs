@@ -3,7 +3,9 @@ use mlua::{LuaSerdeExt, UserData, UserDataMethods};
 use crate::{
     runtime::{
         EyreResultExt, app_data, get_app_data,
-        network_replicator::protocol::{Area, PolicyFieldUpdate, SpatialFilter},
+        network_replicator::protocol::{
+            Area, PolicyFieldUpdate, SpatialFilter, SpatialPolicyUpdate,
+        },
     },
     rx::sync::{HasPolicy, PolicyHandle},
 };
@@ -40,9 +42,7 @@ where
             .0
             .update_policy(
                 this.policy_id(),
-                PolicyFieldUpdate::Spatial {
-                    filter: SpatialFilter::Global,
-                },
+                PolicyFieldUpdate::Spatial(SpatialPolicyUpdate::Set(SpatialFilter::Global)),
             )
             .wrap_eyre_err()?;
         Ok(())
@@ -54,9 +54,7 @@ where
             .0
             .update_policy(
                 this.policy_id(),
-                PolicyFieldUpdate::Spatial {
-                    filter: SpatialFilter::Area(area),
-                },
+                PolicyFieldUpdate::Spatial(SpatialPolicyUpdate::Set(SpatialFilter::Area(area))),
             )
             .wrap_eyre_err()?;
         Ok(())

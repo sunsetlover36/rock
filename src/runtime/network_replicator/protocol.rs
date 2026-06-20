@@ -56,6 +56,23 @@ pub(crate) enum SpatialFilter {
     Radius(RadialArea),
     Area(Area),
 }
+impl SpatialFilter {
+    pub(crate) fn radius_shape_or_circle(self) -> AreaShape {
+        match self {
+            Self::Radius(area) => area.shape,
+            Self::Global | Self::Area(_) => AreaShape::Circle,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum SpatialPolicyUpdate {
+    Set(SpatialFilter),
+    Radius {
+        radius: f32,
+        shape: Option<AreaShape>,
+    },
+}
 
 pub(crate) type RoomId = u64;
 
@@ -120,6 +137,6 @@ impl ReplicationPolicy {
 
 #[derive(Debug, Clone)]
 pub(crate) enum PolicyFieldUpdate {
-    Spatial { filter: SpatialFilter },
+    Spatial(SpatialPolicyUpdate),
     Room { id: RoomId },
 }

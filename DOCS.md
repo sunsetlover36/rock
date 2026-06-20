@@ -1599,10 +1599,11 @@ local policy = entity:sync()
 -- change spatial filter dynamically
 policy:global()
 policy:area({ position = { x = 10, y = 5 }, radius = 10 })
-policy:radius(25)
+policy:radius(25) -- retains the previous radius shape (or defaults to Circle)
+policy:radius(25, Const.AreaShape.Square) -- change both radius and shape
 
--- update room routing
-policy:room("new_room")
+-- entity and blueprint policies always follow their target's room
+entity:room("new_room")
 
 -- remove the policy entirely
 policy:revoke()
@@ -1623,13 +1624,16 @@ You can also replicate database values to clients reactively:
 
 ```lua
 -- replicate a memory node to clients in an area
-memory.node("player/37")
+local policy = memory.node("player/37")
   :where(function(p) return p.hp > 30 end)
   :select(function(p) return p.name end)
   :area({ position = { x = 42, y = 42 }, radius = 20 })
   :throttle(0.1)
   :room("lobby")
   :commit()
+
+-- memory policies own their routing and can be re-routed after commit
+policy:room("other_lobby")
 ```
 
 ---

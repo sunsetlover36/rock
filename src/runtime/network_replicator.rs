@@ -337,8 +337,17 @@ impl NetworkReplicator {
 
         if let Some(policy) = policies.get_mut(updated_id) {
             match field {
-                PolicyFieldUpdate::Spatial { filter } => {
-                    if matches!(filter, SpatialFilter::Radius { .. }) {
+                PolicyFieldUpdate::Spatial(update) => {
+                    let filter = match update {
+                        SpatialPolicyUpdate::Set(filter) => filter,
+                        SpatialPolicyUpdate::Radius { radius, shape } => {
+                            let shape =
+                                shape.unwrap_or_else(|| policy.spatial.radius_shape_or_circle());
+                            SpatialFilter::Radius(RadialArea { radius, shape })
+                        }
+                    };
+
+                    if matches!(filter, SpatialFilter::Radius(_)) {
                         match policy.target {
                             ReplicationTarget::Blueprint(_) | ReplicationTarget::Entity(_) => {}
                             _ => {
