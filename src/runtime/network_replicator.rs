@@ -23,8 +23,7 @@ use crate::{
         GameModeClientApi, LuaResultExt, app_data, get_app_data, get_app_data_mut,
         plugins::{
             entity::components::{
-                Blueprint, ComponentData, ComponentKey, Control, Name, OwnedBy, Position, Room,
-                Rotation, Sprite2D, SpriteChar,
+                Blueprint, ComponentData, ComponentKey, Name, OwnedBy, Position, Room, Rotation,
             },
             on::protocol::{EventScope, GameModeEvent, GameModeEventData, PlayerEventData},
             player::PlayerHandle,
@@ -635,15 +634,6 @@ impl NetworkReplicator {
                         ComponentData::Rotation(rotation) => {
                             entity_data.rotation = Some(rotation.0);
                         }
-                        ComponentData::Control(control) => {
-                            entity_data.speed = Some(control.speed);
-                        }
-                        ComponentData::Sprite2D(sprite_2d) => {
-                            entity_data.sprite = Some(sprite_2d.0.clone());
-                        }
-                        ComponentData::SpriteChar(sprite_char) => {
-                            entity_data.char = Some(sprite_char.0.clone());
-                        }
                         ComponentData::OwnedBy(owned_by) => {
                             entity_data.owned_by = Some(owned_by.0);
                         }
@@ -704,21 +694,6 @@ impl NetworkReplicator {
                                 data.rotation = Some(rotation_comp.0);
                             }
                         }
-                        ComponentKey::Control => {
-                            if let Ok(control_comp) = world.get::<&Control>(entity) {
-                                data.speed = Some(control_comp.speed);
-                            }
-                        }
-                        ComponentKey::Sprite2D => {
-                            if let Ok(sprite_2d_comp) = world.get::<&Sprite2D>(entity) {
-                                data.sprite = Some(sprite_2d_comp.0.clone());
-                            }
-                        }
-                        ComponentKey::SpriteChar => {
-                            if let Ok(sprite_char_comp) = world.get::<&SpriteChar>(entity) {
-                                data.char = Some(sprite_char_comp.0.clone());
-                            }
-                        }
                         ComponentKey::OwnedBy => {
                             if let Ok(owned_by_comp) = world.get::<&OwnedBy>(entity) {
                                 data.owned_by = Some(owned_by_comp.0);
@@ -747,10 +722,7 @@ impl NetworkReplicator {
     }
     fn append_entity_data(&self, from: &EntityData, to: &mut EntityData) {
         to.name = from.name.clone().or(to.name.take());
-        to.speed = from.speed.or(to.speed.take());
         to.owned_by = from.owned_by.or(to.owned_by.take());
-        to.sprite = from.sprite.clone().or(to.sprite.take());
-        to.char = from.char.clone().or(to.char.take());
         to.position = from.position.or(to.position.take());
         to.rotation = from.rotation.or(to.rotation.take());
         to.custom.extend(from.custom.clone());

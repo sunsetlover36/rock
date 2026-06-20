@@ -7,15 +7,6 @@ pub(crate) use position::Position;
 mod rotation;
 pub(crate) use rotation::Rotation;
 
-mod control;
-pub(crate) use control::Control;
-
-mod sprite_2d;
-pub(crate) use sprite_2d::Sprite2D;
-
-mod sprite_char;
-pub(crate) use sprite_char::SpriteChar;
-
 mod owned_by;
 pub(crate) use owned_by::OwnedBy;
 
@@ -36,12 +27,6 @@ pub(crate) use room::Room;
 pub(crate) enum ComponentData {
     Position(Position),
     Rotation(Rotation),
-    Control(Control),
-
-    #[strum_discriminants(strum(serialize = "sprite_2d"))]
-    Sprite2D(Sprite2D),
-
-    SpriteChar(SpriteChar),
     OwnedBy(OwnedBy),
     Blueprint(Blueprint),
     Name(Name),

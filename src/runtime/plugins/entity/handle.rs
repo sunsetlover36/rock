@@ -2,9 +2,7 @@ use mlua::{LuaSerdeExt, UserData};
 use smallvec::smallvec;
 
 use super::{
-    components::{
-        ComponentData, Control, Name, OwnedBy, Position, Room, Rotation, Sprite2D, SpriteChar,
-    },
+    components::{ComponentData, Name, OwnedBy, Position, Room, Rotation},
     event_descriptors::ENTITY_EVENT_DESCRIPTORS,
     macros::{add_handle_methods, for_each_handle},
     rx::SyncRx,

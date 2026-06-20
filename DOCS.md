@@ -471,9 +471,6 @@ Creates a new blueprint (template). Returns an `EntityBlueprint`.
 local bp = entity.blueprint()
   :position({ x = 0, y = 0 })
   :rotation(0)
-  :control({ speed = 5 })
-  :sprite({ texture = "zombie.png", scale = { x = 1, y = 1 }, layer = 0, visible = true })
-  :char({ char = "Z", color = "#FF0000", bg_color = nil, visible = true })
   :custom({ health = 100, alive = true })
   :name("zombie")
 ```
@@ -484,9 +481,6 @@ local bp = entity.blueprint()
 |--------|------|---------|-------------|
 | `:position(t)` | `{ x, y }` | self | Set default position |
 | `:rotation(r)` | `number (u8)` | self | Set default rotation |
-| `:control(t)` | `{ speed }` | self | Set control component |
-| `:sprite(t)` | `{ texture, scale, layer, visible }` | self | Set 2D sprite |
-| `:char(t)` | `{ char, color, bg_color, visible }` | self | Set character sprite |
 | `:owned_by(pid)` | `PlayerId` | self | Set owner |
 | `:name(s)` | `string` | self | Set display name |
 | `:room(s)` | `string` | self | Set room |
@@ -517,9 +511,6 @@ ent:position({ x = 20, y = 10 }):rotation(90)
 |--------|-----|-----|
 | `:position([t])` | `{ x, y }` or nil | Sets position |
 | `:rotation([r])` | `number` or nil | Sets rotation |
-| `:control([t])` | `{ speed }` or nil | Sets control |
-| `:sprite([t])` | sprite table or nil | Sets sprite |
-| `:char([t])` | char table or nil | Sets char sprite |
 | `:owned_by([pid])` | `PlayerId` or nil | Sets owner |
 | `:name([s])` | `string` or nil | Sets name |
 
@@ -1566,9 +1557,9 @@ secret_bp:sync()
   :commit()
 ```
 
-Field selectors accept both **component keys** (`c.position`, `c.rotation`, `c.name`, `c.owned_by`, `c.control`, `c.sprite_2d`, `c.sprite_char`) and **custom field names** as strings.
+Field selectors accept both **component keys** (`c.position`, `c.rotation`, `c.name`, `c.owned_by`) and **custom field names** as strings.
 
-Replication fields use a compact 64-bit mask. Built-in entity fields reserve part of that budget (`position`, `rotation`, `control`, `sprite_2d`, `sprite_char`, `owned_by`, `blueprint`, `name`, `room`), so the current practical limit is **55 custom top-level fields** per entity. If more engine components are added later, this custom field budget gets smaller.
+Replication fields use a compact 64-bit mask. Built-in entity fields reserve part of that budget (`position`, `rotation`, `owned_by`, `blueprint`, `name`, `room`), so the current practical limit is **58 custom top-level fields** per entity. If more engine components are added later, this custom field budget gets smaller.
 
 ### Spatial Filters
 
@@ -1651,9 +1642,6 @@ Built-in entity components and their fields:
 |-----------|--------|--------|------|
 | Position | `:position()` | `{ x, y }` | `f32, f32` |
 | Rotation | `:rotation()` | single value | `u8` (0-255) |
-| Control | `:control()` | `{ speed }` | `u32` |
-| Sprite2D | `:sprite()` | `{ texture, scale, layer, visible }` | `string, {x,y}, u32, bool` |
-| SpriteChar | `:char()` | `{ char, color, bg_color, visible }` | `string, string, string?, bool` |
 | OwnedBy | `:owned_by()` | single value | `PlayerId (number)` |
 | Name | `:name()` | single value | `string` |
 | Room | `:room()` | set/get room name | `string` |

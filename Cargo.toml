@@ -2,11 +2,11 @@
 name = "rock"
 description = "Programmable runtime for multiplayer worlds"
 authors = ["ruburi"]
-version = "0.2.21"
+version = "0.2.22"
 edition = "2024"
 
 [dependencies]
-rock-wire = { git = "https://github.com/sunsetlover36/rock-wire", tag = "v0.1.8" }
+rock-wire = { git = "https://github.com/sunsetlover36/rock-wire", tag = "v0.1.9" }
 axum = { version = "0.8.7", features = ["ws", "query"] } 
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

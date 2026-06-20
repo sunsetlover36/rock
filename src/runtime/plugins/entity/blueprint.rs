@@ -3,9 +3,7 @@ use std::collections::{HashMap, hash_map};
 use mlua::{LuaSerdeExt, UserData};
 
 use super::{
-    components::{
-        Blueprint, ComponentData, Control, OwnedBy, Position, Room, Rotation, Sprite2D, SpriteChar,
-    },
+    components::{Blueprint, ComponentData, OwnedBy, Position, Room, Rotation},
     event_descriptors::ENTITY_EVENT_DESCRIPTORS,
     handle::EntityHandle,
     macros::{add_blueprint_methods, for_each_blueprint},
@@ -149,15 +147,6 @@ impl UserData for EntityBlueprint {
                     }
                     ComponentData::Rotation(c) => {
                         builder.add(*c);
-                    }
-                    ComponentData::Control(c) => {
-                        builder.add(c.clone());
-                    }
-                    ComponentData::Sprite2D(c) => {
-                        builder.add(c.clone());
-                    }
-                    ComponentData::SpriteChar(c) => {
-                        builder.add(c.clone());
                     }
                     ComponentData::OwnedBy(c) => {
                         builder.add(*c);

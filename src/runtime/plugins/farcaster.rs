@@ -245,11 +245,7 @@ impl GameModePlugin for FarcasterPlugin {
             ),
             best_friends: format!("{}_{}", name_in_uppercase, FarcasterOp::UserBestFriends),
             channels: format!("{}_{}", name_in_uppercase, FarcasterOp::UserChannels),
-            active_channels: format!(
-                "{}_{}",
-                name_in_uppercase,
-                FarcasterOp::UserActiveChannels
-            ),
+            active_channels: format!("{}_{}", name_in_uppercase, FarcasterOp::UserActiveChannels),
             channel_memberships: format!(
                 "{}_{}",
                 name_in_uppercase,

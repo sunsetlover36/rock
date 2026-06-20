@@ -3,9 +3,6 @@ macro_rules! for_each_blueprint {
     ($methods:ident, $callback:ident) => {
         $callback!($methods, "position", Position, Position);
         $callback!($methods, "rotation", Rotation, Rotation);
-        $callback!($methods, "control", Control, Control);
-        $callback!($methods, "sprite", Sprite2D, Sprite2D);
-        $callback!($methods, "char", SpriteChar, SpriteChar);
         $callback!($methods, "owned_by", OwnedBy, OwnedBy);
     };
 }
@@ -15,9 +12,6 @@ macro_rules! for_each_handle {
     ($methods:ident, $callback:ident) => {
         $callback!($methods, "position", Position, Position);
         $callback!($methods, "rotation", Rotation, Rotation);
-        $callback!($methods, "control", Control, Control);
-        $callback!($methods, "sprite", Sprite2D, Sprite2D);
-        $callback!($methods, "char", SpriteChar, SpriteChar);
         $callback!($methods, "owned_by", OwnedBy, OwnedBy);
         $callback!($methods, "name", Name, Name);
     };
