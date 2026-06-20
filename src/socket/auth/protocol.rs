@@ -31,6 +31,5 @@ pub(crate) struct Jwk {
 pub(crate) struct FarcasterClaims {
     pub sub: u64,
     pub exp: usize,
-    pub iss: String,
     pub aud: String,
 }
