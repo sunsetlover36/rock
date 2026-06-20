@@ -1,5 +1,5 @@
 use color_eyre::eyre::{self, Context};
-use rock_wire::farcaster::SignerStatus;
+use rock_wire::farcaster::{GetSignerStatusParams, SignerStatus};
 
 use crate::{
     meta_db::{MetaDb, MetaDbError},
@@ -83,11 +83,12 @@ pub(crate) fn handle(
                 Ok(AsyncTaskResult::JsonValue(value))
             })))
         }
-        FarcasterOp::SignerGet | FarcasterOp::SignerRefresh => {
-            let method = if matches!(op, FarcasterOp::SignerGet) {
-                "get"
-            } else {
-                "refresh"
+        FarcasterOp::SignerGet | FarcasterOp::SignerStatus | FarcasterOp::SignerRefresh => {
+            let method = match op {
+                FarcasterOp::SignerGet => "get",
+                FarcasterOp::SignerStatus => "status",
+                FarcasterOp::SignerRefresh => "refresh",
+                _ => unreachable!("signer dispatch only receives signer operations"),
             };
             let SignerGetOptions {
                 app_fid,
@@ -111,7 +112,9 @@ pub(crate) fn handle(
                 let mut stored: StoredSigner =
                     serde_json::from_value(existing).wrap_err(storage_error.clone())?;
                 let signer = fc_api
-                    .lookup_signer(&stored.signer.signer_uuid)
+                    .get_signer_status(&GetSignerStatusParams {
+                        signer_uuid: stored.signer.signer_uuid,
+                    })
                     .await
                     .wrap_err(request_error)?;
                 stored.signer = signer;

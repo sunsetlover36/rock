@@ -67,6 +67,7 @@ pub(crate) enum FarcasterOp {
     UserNotificationsSeen,
     SignerRequest,
     SignerGet,
+    SignerStatus,
     SignerRefresh,
     FeedForYou,
     FeedFollowing,
@@ -308,6 +309,7 @@ impl GameModePlugin for FarcasterPlugin {
         let signer_opcodes = SignerRxOpcodes {
             request: format!("{}_{}", name_in_uppercase, FarcasterOp::SignerRequest),
             get: format!("{}_{}", name_in_uppercase, FarcasterOp::SignerGet),
+            status: format!("{}_{}", name_in_uppercase, FarcasterOp::SignerStatus),
             refresh: format!("{}_{}", name_in_uppercase, FarcasterOp::SignerRefresh),
         };
         let signer_fn = lua.create_function(move |_, ud: mlua::AnyUserData| {
@@ -431,9 +433,10 @@ impl GameModePlugin for FarcasterPlugin {
             | FarcasterOp::ChannelTrending
             | FarcasterOp::ChannelFollow
             | FarcasterOp::ChannelUnfollow => dispatch::channel::handle(&ctx, lua, op, args),
-            FarcasterOp::SignerRequest | FarcasterOp::SignerGet | FarcasterOp::SignerRefresh => {
-                dispatch::signer::handle(&ctx, lua, op, args)
-            }
+            FarcasterOp::SignerRequest
+            | FarcasterOp::SignerGet
+            | FarcasterOp::SignerStatus
+            | FarcasterOp::SignerRefresh => dispatch::signer::handle(&ctx, lua, op, args),
             FarcasterOp::FeedForYou
             | FarcasterOp::FeedFollowing
             | FarcasterOp::FeedByFilters

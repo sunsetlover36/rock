@@ -69,6 +69,8 @@ impl TryFrom<String> for CastIdentifier {
 }
 
 pub(crate) trait WithDefaultAppFid {
+    fn app_fid(&self) -> Option<Fid>;
+
     fn with_default_app_fid(self, default_app_fid: Fid) -> Self;
 }
 
@@ -112,6 +114,10 @@ impl FromLua for SignerRequestArgs {
     }
 }
 impl WithDefaultAppFid for SignerRequestArgs {
+    fn app_fid(&self) -> Option<Fid> {
+        self.app_fid
+    }
+
     fn with_default_app_fid(mut self, default_app_fid: Fid) -> Self {
         if self.app_fid.is_none() {
             self.app_fid = Some(default_app_fid);
@@ -148,6 +154,10 @@ impl FromLua for WriteAsArgs {
     }
 }
 impl WithDefaultAppFid for WriteAsArgs {
+    fn app_fid(&self) -> Option<Fid> {
+        self.app_fid
+    }
+
     fn with_default_app_fid(mut self, default_app_fid: Fid) -> Self {
         if self.app_fid.is_none() {
             self.app_fid = Some(default_app_fid);

@@ -1152,6 +1152,26 @@ scene.run(function()
 end)
 ```
 
+#### `fc.signer(player)`
+
+Returns the signer manager for a connected player. Signer operations run inside a scene and use the configured default app FID, or an explicit `{ app_fid = ... }` argument.
+
+| Method | Args | Returns | Description |
+|--------|------|---------|-------------|
+| `:request([args])` | `table?` | `StoredSigner` | Create or resume the player's signer approval request |
+| `:get([args])` | `table?` | `StoredSigner?` | Read the locally stored signer without requesting Neynar |
+| `:status([args])` | `table?` | `StoredSigner?` | Fetch the current signer status from Neynar and persist it |
+| `:refresh([args])` | `table?` | `StoredSigner?` | Alias for fetching and persisting the current signer status |
+
+```lua
+scene.run(function()
+  local signer = fc.signer(player):status()
+  if signer then
+    print("signer status:", signer.status)
+  end
+end)
+```
+
 #### `fc.channel([id])`
 
 Creates a channel builder. Omit `id` for discovery methods; pass a channel ID for lookup, member/follower, and follow actions.

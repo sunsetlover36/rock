@@ -14,6 +14,7 @@ use crate::runtime::{
 pub(crate) struct SignerRxOpcodes {
     pub request: String,
     pub get: String,
+    pub status: String,
     pub refresh: String,
 }
 
@@ -71,6 +72,9 @@ impl SignerRx {
         A: Default + WithDefaultAppFid,
     {
         let args = args.unwrap_or_default();
+        if args.app_fid().is_some() {
+            return Ok(args);
+        }
 
         let fid = self.default_app_fid.ok_or_else(|| {
             mlua::Error::runtime(format!(
@@ -97,6 +101,12 @@ impl UserData for SignerRx {
             let args = this.args_or_default(args, "get")?;
             let op = this.build_signer_op(&lua, this.opcodes.get.clone(), args, "get")?;
             yield_op(&lua, "fc.signer.get", op).await
+        });
+
+        methods.add_async_method("status", async |lua, this, args: Option<WriteAsArgs>| {
+            let args = this.args_or_default(args, "status")?;
+            let op = this.build_signer_op(&lua, this.opcodes.status.clone(), args, "status")?;
+            yield_op(&lua, "fc.signer.status", op).await
         });
 
         methods.add_async_method("refresh", async |lua, this, args: Option<WriteAsArgs>| {

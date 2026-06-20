@@ -662,21 +662,6 @@ impl FarcasterApi {
         Ok(response)
     }
 
-    pub async fn lookup_signer(&self, signer_uuid: &str) -> eyre::Result<SignerResponse> {
-        let url = format!("{}/farcaster/signer", self.base_url);
-
-        let response = self
-            .client
-            .get(url)
-            .query(&[("signer_uuid", signer_uuid)])
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<SignerResponse>()
-            .await?;
-        Ok(response)
-    }
-
     pub async fn get_for_you_feed(
         &self,
         params: &GetForYouFeedParams,
