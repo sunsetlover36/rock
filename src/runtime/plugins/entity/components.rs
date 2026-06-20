@@ -32,3 +32,26 @@ pub(crate) enum ComponentData {
     Name(Name),
     Room(Room),
 }
+impl ComponentData {
+    pub(crate) fn add_to_builder(&self, builder: &mut hecs::EntityBuilder) {
+        match self {
+            Self::Position(component) => {
+                builder.add(*component);
+            }
+            Self::Rotation(component) => {
+                builder.add(*component);
+            }
+            Self::OwnedBy(component) => {
+                builder.add(*component);
+            }
+            Self::Name(component) => {
+                builder.add(component.clone());
+            }
+            Self::Room(component) => {
+                builder.add(*component);
+            }
+            // The blueprint marker is assigned by `EntityBlueprint::spawn`.
+            Self::Blueprint(_) => {}
+        }
+    }
+}

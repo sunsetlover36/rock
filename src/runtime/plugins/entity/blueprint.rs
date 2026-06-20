@@ -102,7 +102,10 @@ impl UserData for EntityBlueprint {
         });
 
         methods.add_method("from", |lua, this, name: String| {
-            let has_customs = this.customs.as_ref().is_none_or(|v| v.is_empty());
+            let has_customs = this
+                .customs
+                .as_ref()
+                .is_some_and(|customs| !customs.is_empty());
             if !this.components.is_empty() || has_customs {
                 return Err(mlua::Error::runtime(format!("Cannot call `from(\"{}\")`: blueprint already contains components or custom data", name)));
             }
@@ -139,27 +142,8 @@ impl UserData for EntityBlueprint {
 
         methods.add_method_mut("spawn", |lua, this, _: ()| {
             let mut builder = hecs::EntityBuilder::new();
-            // TODO: repeated code
             for component in this.components.values() {
-                match component {
-                    ComponentData::Position(c) => {
-                        builder.add(*c);
-                    }
-                    ComponentData::Rotation(c) => {
-                        builder.add(*c);
-                    }
-                    ComponentData::OwnedBy(c) => {
-                        builder.add(*c);
-                    }
-                    ComponentData::Name(c) => {
-                        builder.add(c.clone());
-                    }
-                    ComponentData::Room(c) => {
-                        builder.add(*c);
-                    }
-                    // Blueprint component cannot be attached manually
-                    ComponentData::Blueprint(_) => {}
-                };
+                component.add_to_builder(&mut builder);
             }
             builder.add(Blueprint(this.id));
 
