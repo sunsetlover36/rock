@@ -196,7 +196,7 @@ Layers group resources (entities, event listeners) so you can clean them all up 
 
 ```lua
 local world = layer.create():with(function()
-  -- everything created here belongs to this layer
+  -- entities and listeners created during initialization belong to this layer
   on.world.awake():each(function() print("world ready") end)
   entity.blueprint():name("tree"):spawn()
 
@@ -950,7 +950,7 @@ on.timer.fire()
 
 ### `layer`
 
-Layers group resources (entities, event listeners, timers) so you can clean them all up at once. Useful for organizing game logic into composable blocks.
+Layers own entities, event listeners, and nested layers created synchronously during their initialization. Clearing a layer removes these resources together.
 
 #### `layer.create()`
 
@@ -958,7 +958,7 @@ Create a new layer builder. Returns `LayerRx`.
 
 ```lua
 local world = layer.create():with(function()
-  -- everything created here is tracked by this layer
+  -- entities and listeners created during initialization are tracked
 
   on.world.awake():each(function()
     print("world ready")
@@ -972,9 +972,35 @@ local world = layer.create():with(function()
   end
 end):commit()
 
--- later: destroy everything
+-- later: remove the resources owned by this layer
 world:clear()
 ```
+
+#### Initialization and Cleanup Rules
+
+- Each builder identity can initialize only once. Builders returned by `with` and `name` share that identity. A second `commit()` is an error, including after clearing the layer or rolling back a failed initialization. Use `layer.create()` for a fresh instance.
+- Names are unique among active layers. A name collision is rejected before callbacks run and does not consume the new builder. Clearing a layer or rolling back initialization releases its name.
+- If any initialization callback fails (including returning an invalid cleanup value), `commit()` rolls back the resources already owned by that layer and its descendants. Cleanup functions returned by earlier successful callbacks also run. The original error is returned; any cleanup errors are included too.
+- Rollback covers owned resources, not arbitrary side effects such as global variable changes, database writes, or external requests.
+- Nested layers belong to the layer whose initialization committed them. Clearing a child detaches it from the parent without clearing the parent.
+- Children are cleared before the parent's own cleanup functions. Sibling layers and cleanup functions are processed in reverse registration order. **Migration:** cleanup callbacks previously ran in registration order.
+- One cleanup failure does not stop the remaining cleanup. Errors are reported together after cleanup completes. A cleared layer stays cleared even if cleanup reports an error; repeated `clear()` calls are harmless and do not repeat cleanup.
+- A layer cannot be cleared while it or one of its descendants is initializing; that call returns a Lua error. This prevents initialization from continuing without an owner.
+
+```lua
+local world = layer.create():name("world"):with(function()
+  local forest = layer.create():name("forest"):with(function()
+    entity.blueprint():name("tree"):spawn()
+  end):commit()
+
+  -- forest:clear() would remove just the forest.
+end):commit()
+
+world:clear() -- also clears the forest
+world:clear() -- safe; cleanup is not repeated
+```
+
+**Current boundary:** ownership is captured during synchronous initialization only. Resources created later from event callbacks do not yet inherit the listener's layer. Timers and async scenes are not yet automatically cancelled by layer cleanup; return an explicit cleanup function where cancellation is available. Player-disconnect cancellation is separate follow-up work, not a current layer guarantee.
 
 #### `layer.clear(name)`
 
@@ -995,13 +1021,13 @@ layer.clear("combat")
 |--------|------|---------|-------------|
 | `:with(fn)` | `function() -> function?` | self | Add a callback; optionally return a cleanup function |
 | `:name(s)` | `string` | self | Name this layer (for `layer.clear(name)`) |
-| `:commit()` | -- | `LayerHandle` | Activate the layer, run all callbacks |
+| `:commit()` | -- | `LayerHandle` | Initialize once; roll back owned resources if initialization fails |
 
 #### LayerHandle
 
 | Method | Description |
 |--------|-------------|
-| `:clear()` | Destroy this layer and run all cleanup functions |
+| `:clear()` | Clear descendants and owned resources; report errors after attempting all cleanup |
 
 ---
 

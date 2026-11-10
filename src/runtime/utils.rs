@@ -87,6 +87,9 @@ pub fn despawn_entity(lua: &mlua::Lua, entity: hecs::Entity) -> mlua::Result<boo
 
     match world.despawn(entity) {
         Ok(()) => {
+            get_app_data_mut::<app_data::EntityCustoms>(lua)?
+                .0
+                .remove(&entity);
             if let Some(room_id) = room_id {
                 let replicator_tx = get_app_data::<app_data::ReplicatorMarkTx>(lua)?;
                 let _ = replicator_tx.0.send(ReplicationMark::Entity {

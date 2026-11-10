@@ -1,9 +1,12 @@
-use std::collections::hash_map;
+use std::{cell::Cell, rc::Rc};
 
-use mlua::UserData;
+use mlua::{ErrorContext, UserData};
 
-use super::{LayerEntry, LayerId, handle::LayerHandle};
-use crate::runtime::{app_data, utils::get_app_data_mut};
+use super::{LayerEntry, LayerId, clear_layer_by_id, handle::LayerHandle};
+use crate::runtime::{
+    app_data,
+    utils::{get_app_data, get_app_data_mut},
+};
 
 struct LayerGuard<'lua> {
     lua: &'lua mlua::Lua,
@@ -21,6 +24,7 @@ pub(super) struct LayerRx {
     id: LayerId,
     name: Option<String>,
     callbacks: Vec<mlua::Function>,
+    commit_started: Rc<Cell<bool>>,
 }
 impl LayerRx {
     pub fn new(id: LayerId) -> Self {
@@ -28,6 +32,7 @@ impl LayerRx {
             id,
             name: None,
             callbacks: Vec::new(),
+            commit_started: Rc::new(Cell::new(false)),
         }
     }
 }
@@ -48,42 +53,65 @@ impl UserData for LayerRx {
         });
 
         methods.add_method("commit", |lua, this, _: ()| {
+            if this.commit_started.get() {
+                return Err(mlua::Error::runtime(
+                    "Layer builder has already been committed; create a new layer to initialize it again"
+                ));
+            }
+
+            let parent = get_app_data::<app_data::ActiveLayers>(lua)?.0.last().copied();
             {
                 let mut registry = get_app_data_mut::<app_data::LayerRegistry>(lua)?;
                 if let Some(name) = &this.name {
-                    match registry.aliases.entry(name.to_owned()) {
-                        hash_map::Entry::Occupied(e) => {
-                            if *e.get() != this.id {
-                                return Err(mlua::Error::runtime(format!(
-                                    "Failed to commit a new layer with the same name {}: layer already exists",
-                                    name
-                                )));
-                            }
-                        }
-                        hash_map::Entry::Vacant(e) => {
-                            e.insert(this.id);
-                        }
+                    if registry.aliases.contains_key(name) {
+                        return Err(mlua::Error::runtime(format!(
+                            "Failed to commit a new layer with the same name {name}: layer already exists"
+                        )));
+                    }
+                }
+                if let Some(parent) = parent {
+                    if !registry.layers.contains_key(&parent) {
+                        return Err(mlua::Error::runtime("Parent layer is no longer active"));
                     }
                 }
 
-                registry.layers.entry(this.id).or_insert(LayerEntry {
+                registry.layers.insert(this.id, LayerEntry {
                     name: this.name.clone(),
                     cleaners: Vec::new(),
+                    parent,
+                    children: Vec::new(),
                 });
-            }
-
-            get_app_data_mut::<app_data::ActiveLayers>(lua)?.0.push(this.id);
-            let _guard = LayerGuard { lua };
-
-            for cb in &this.callbacks {
-                let cleaner = cb.call::<Option<mlua::Function>>(())?;
-                if let Some(cleaner) = cleaner {
-                    let mut registry = get_app_data_mut::<app_data::LayerRegistry>(lua)?;
-                    registry
-                        .layers
-                        .entry(this.id)
-                        .and_modify(|l| l.cleaners.push(cleaner));
+                if let Some(name) = &this.name {
+                    registry.aliases.insert(name.clone(), this.id);
                 }
+                if let Some(parent) = parent {
+                    registry.layers.get_mut(&parent).unwrap().children.push(this.id);
+                }
+            }
+            // Cloned builders share this flag; reentrant commits are rejected too.
+            this.commit_started.set(true);
+
+            let result = (|| -> mlua::Result<()> {
+                get_app_data_mut::<app_data::ActiveLayers>(lua)?.0.push(this.id);
+                let _guard = LayerGuard { lua };
+
+                for cb in &this.callbacks {
+                    if let Some(cleaner) = cb.call::<Option<mlua::Function>>(())? {
+                        get_app_data_mut::<app_data::LayerRegistry>(lua)?
+                            .layers.get_mut(&this.id).unwrap().cleaners.push(cleaner);
+                    }
+                }
+                Ok(())
+            })();
+
+            if let Err(err) = result {
+                // The initialization guard is gone before rollback starts.
+                return match clear_layer_by_id(lua, this.id) {
+                    Ok(()) => Err(err),
+                    Err(cleanup_err) => Err(err.context(format!(
+                        "Layer initialization failed; rollback also reported: {cleanup_err}"
+                    ))),
+                };
             }
 
             Ok(LayerHandle::new(this.id))

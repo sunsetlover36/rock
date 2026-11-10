@@ -279,7 +279,7 @@ when.player.enters_zone("my_pickup_37", function(p)
 end)
 ```
 
-implicit async with entity-scoped execution. the scene will be interrupted if player disconnects.
+The intended model is implicit async with entity-scoped execution. Automatic cancellation on player disconnect is not implemented yet; a captured player handle alone does not provide that lifetime guarantee.
 
 `memory` is a plugin. every injected namespace/table is a plugin that defines `create_api`.
 
@@ -301,6 +301,17 @@ for plugin operations, manager parses opcode and gets two elements: prefix and s
 each plugin has a `handle_op` method that returns `Result<Option<AsyncTask>>` where `AsyncTask` is a `BoxFuture`. basically, a work that needs to be done. so manager synchronously calls `handle_op` method of the parsed plugin (manager stores plugins as a `HashMap<PluginName, Box<dyn GameModePlugin>>`). it returns a `BoxFuture` and manager spawns a tokio task using a handle where it executes and awaits for the task to complete. after that, it uses its own channel to wake up a task or alert about an error.
 
 scene manager and plugins are initialized as part of runtime setup.
+
+### layer lifetimes
+
+Layers currently track entities, event listeners, and child layers created during synchronous initialization. A builder can initialize once; a failed initialization rolls back its owned resources. Cleanup detaches the layer first, clears descendants, and then runs all local cleaners in reverse registration order, collecting errors. The active initialization stack is restored before rollback. Clearing an initializing layer or ancestor is rejected.
+
+Pending lifetime work (not current guarantees):
+
+* Capture and restore a listener's owning layer during later callbacks, and suppress pending callbacks after that owner is cleared.
+* Bind timers and scene tasks to their owner; cancellation must also prevent queued or late async results from resuming cleared work.
+* Give player-dependent work a player lifetime in addition to any layer lifetime. On disconnect, cancel dependent scene tasks, subscriptions, and waits without clearing unrelated world resources. Ownership must use the full generation-aware `PlayerKey`, so reusing a player slot cannot revive old work. Global connection listeners must remain active for future players.
+* Define how player dependence is attached and propagated. Capturing `p` inside an arbitrary Lua closure is not sufficient for the runtime to infer this automatically.
 
 ### axum
 web app framework. public API: HTTP and WebSockets. not much to describe.
