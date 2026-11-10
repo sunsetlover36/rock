@@ -15,9 +15,20 @@ pub(super) struct TimerRx {
     data: Option<mlua::Value>,
     schedule: Option<Schedule>,
     seconds: Option<u64>,
+    players: Vec<rock_wire::PlayerKey>,
 }
 impl UserData for TimerRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method(
+            "while_connected",
+            |_, this, p: mlua::UserDataRef<crate::runtime::plugins::player::PlayerHandle>| {
+                let mut next = this.clone();
+                if !next.players.contains(&p.key()) {
+                    next.players.push(p.key());
+                }
+                Ok(next)
+            },
+        );
         methods.add_method("timeout", |_, this, seconds: u64| {
             let mut next = this.clone();
             next.kind = Some(TimerKind::Timeout);
@@ -53,8 +64,7 @@ impl UserData for TimerRx {
         });
 
         methods.add_method("register", |lua, this, id: String| {
-            let timer_manager_data = get_app_data::<app_data::TimerManager>(lua)?;
-            let timer_manager = &timer_manager_data.0;
+            let timer_manager = get_app_data::<app_data::TimerManager>(lua)?.0.clone();
 
             let cloned_id = id.clone();
             let seconds = this.seconds.unwrap_or(0);
@@ -63,18 +73,18 @@ impl UserData for TimerRx {
                 .as_ref()
                 .and_then(|data| lua.from_value(data.clone()).ok());
 
-            let result = match this.kind {
+            let timer = match this.kind {
                 Some(kind) => match kind {
-                    TimerKind::Timeout => timer_manager.create_timer(TimerData::Timeout {
+                    TimerKind::Timeout => TimerData::Timeout {
                         id: cloned_id,
                         seconds,
                         data,
-                    }),
-                    TimerKind::Interval => timer_manager.create_timer(TimerData::Interval {
+                    },
+                    TimerKind::Interval => TimerData::Interval {
                         id: cloned_id,
                         seconds,
                         data,
-                    }),
+                    },
                     TimerKind::Cron => {
                         let schedule = this
                             .schedule
@@ -85,11 +95,11 @@ impl UserData for TimerRx {
                                 )
                             })?
                             .clone();
-                        timer_manager.create_timer(TimerData::Cron {
+                        TimerData::Cron {
                             id: cloned_id,
                             schedule,
                             data,
-                        })
+                        }
                     }
                 },
                 None => {
@@ -98,9 +108,15 @@ impl UserData for TimerRx {
                     ));
                 }
             };
-            result.map_err(|e| mlua::Error::runtime(e.to_string()))?;
+            let context = crate::runtime::lifetime::WorkContext::capture(lua, &this.players)?;
+            let work = crate::runtime::lifetime::OwnedWork::register(lua, context)?;
+            let cancel = work.cancel.clone();
+            timer_manager.create_timer(timer, work).map_err(|e| {
+                cancel.cancel();
+                mlua::Error::runtime(e.to_string())
+            })?;
 
-            Ok(TimerHandle { id })
+            Ok(TimerHandle { cancel })
         });
     }
 }

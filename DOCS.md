@@ -405,6 +405,7 @@ on.player.online()
 | `:bind_action(name)` | `string` | **Input only.** Filter to a specific input action and remap args to `(PlayerHandle, data)` |
 | `:named(name)` | `string` | **Timer only.** Filter to a specific timer ID and remap args to just `(data)` |
 | `:each(fn)` | `function(...)` | Subscribe the handler. Returns a `ListenerHandle` |
+| `:while_connected(p)` | `PlayerHandle` | Add a player lifetime condition; does not filter event arguments |
 
 #### ListenerHandle
 
@@ -626,13 +627,16 @@ player.broadcast()
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `:id()` | `number` | The player's ID (slot index) |
+| `:id()` | `number` | Generation-aware packed player ID; remains readable after disconnect |
+| `:is_online()` | `boolean` | Whether this exact player connection is still active |
 | `:kick()` | -- | Disconnect the player |
 | `:signal([name])` | `SignalRx` | Create a signal targeted to this player |
 | `:presence()` | `PlayerPresence` | Access presence management |
 | `:vision()` | `PlayerVision` | Access vision/anchor management |
-| `:who()` | `string?` | Auth identity, e.g. `fc:423406`, or `nil` for anon sessions |
+| `:who()` | `string?` | Auth identity, e.g. `fc:423406`, or `nil` for anonymous/disconnected sessions |
 | `:fid()` | `number?` | Farcaster ID parsed from `:who()`, or `nil` for anon/non-Farcaster sessions |
+
+Live actions (`kick`, signal `send`, presence changes, vision attach/detach) validate the full player key and return a Lua error if that connection has ended. A cached signal/presence/vision builder is checked when the action executes, so it cannot target a new player reusing the old slot. `id` and `is_online` remain safe after disconnect; `who` and `fid` return `nil` for a disconnected handle. Inside an async scene, such a Lua error ends and logs only that scene; unrelated scenes and the gamemode keep running. This does not change the existing error policy of ordinary synchronous event handlers.
 
 **Connection params.** When a client connects via `ws://host:port/?room=0xabc&name=Bob`, the query string is captured at handshake time and passed as the second `on.player.online()` argument:
 
@@ -656,7 +660,7 @@ All values are strings (or `nil` if the param is absent). Use `tonumber()` to co
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `:who()` | `string?` | Auth identity, e.g. `fc:423406`, or `nil` for anon sessions |
+| `:who()` | `string?` | Auth identity, e.g. `fc:423406`, or `nil` for anonymous/disconnected sessions |
 | `:fid()` | `number?` | Farcaster ID parsed from `:who()`, or `nil` for anon/non-Farcaster sessions |
 
 #### PlayerPresence
@@ -839,7 +843,7 @@ Scenes let you run async code (database calls, network requests) inside what loo
 
 #### `scene.run(fn)`
 
-Immediately run a function as a scene:
+Queue a function as a scene. Returns a `SceneHandle`; the function starts when the scene manager processes the queue:
 
 ```lua
 scene.run(function()
@@ -866,15 +870,61 @@ scene.play("load_data")
 
 #### `scene.play(name)`
 
-Play a previously registered scene by name.
+Queue a previously registered scene by name. Returns a `SceneHandle`.
 
 #### SceneRx
 
 | Method | Args | Returns | Description |
 |--------|------|---------|-------------|
 | `:script(fn)` | `function` | self | Add a script function to this scene |
-| `:play()` | -- | -- | Immediately run the scene |
+| `:play()` | -- | `SceneHandle` | Queue this scene with the current ownership context |
+| `:while_connected(p)` | `PlayerHandle` | self | Add an explicit player lifetime dependency |
 | `:register(name)` | `string` | -- | Register by name for later playback |
+
+#### SceneHandle
+
+`handle:cancel()` cancels this execution, including a queued start or an in-flight wait. It is safe to call more than once. Cancelling an execution does not unregister its named template.
+
+```lua
+local p = player.get(42)
+if p then
+  local task = scene.create()
+    :while_connected(p)
+    :script(function(ctx)
+      ctx:sleep(10)
+      p:signal("Ready"):send()
+    end)
+    :play()
+
+  -- task:cancel() -- optional explicit cancellation
+end
+```
+
+#### Work Lifetimes
+
+Scenes, timers, and event subscriptions can depend on both a layer and one or more live player connections. Ending any dependency cancels that work. Entity lifetime remains controlled by its layer; player disconnect alone does not despawn entities.
+
+Inside events carrying a live `PlayerHandle` (`online`, `input`, `signal`, `enter`, `exit`), the event player is automatically added to the execution context **before** Rx operators run, even if `select` later removes the player argument. Scenes launched, timers registered, and subscriptions added from that invocation inherit the dependency. The original global connection listener is not bound to each player it receives and remains available for future connections.
+
+```lua
+on.player.online():each(function(p)
+  scene.run(function(ctx)
+    local profile = memory.fetch("profile/" .. p:who())
+    ctx:sleep(1)
+    p:signal("ProfileLoaded"):data(profile):send()
+  end)
+end)
+```
+
+If the player disconnects before the queued scene starts or during an await, the scene does not start/resume. Layer, player, and execution contexts are restored on **every** coroutine resume, including after multiple yields. Work created after an await inherits the same dependencies. Disconnect cleanup uses the full generation-aware key, so reusing a slot does not revive old work. Queued events for disconnected live-player handles are skipped.
+
+Outside a player context, use `:while_connected(p)` on scene builders, timer builders, or event builders. This adds to inherited dependencies rather than replacing them. Repeated calls can add multiple players: all must remain connected. It is a lifetime condition, **not** a filter selecting events from that player. An arbitrary Lua closure capturing `p` is not inspected automatically.
+
+Automatic dependencies are captured at **execution/registration time**: scene `run`/`play`, timer `register`, listener `each`. Defining or registering a scene template does not capture the current player or layer; explicit `while_connected` conditions are part of the template. Playing it later adds the launch context.
+
+`on.player.offline()` receives a read-only snapshot, so the disconnected player is not added as a live dependency. Work started there can finish saving data; it still inherits its listener's layer and any other explicit dependencies.
+
+Cancellation aborts the current async worker and rejects queued/late wakeups and errors. It cannot undo completed writes or external requests, and it does not preempt a synchronous Lua function already executing. Ordinary scene errors are isolated to that execution. New scene requests use a nonblocking queue operation; a full queue produces a Lua error rather than blocking the runtime.
 
 ---
 
@@ -905,7 +955,7 @@ timer.create()
 
 #### `timer.cancel(id)`
 
-Cancel a timer by its ID.
+Cancel all timer instances with this ID, including pending starts and queued events. This explicit name-based cancellation can affect instances belonging to different owners; automatic owner cleanup cancels only its own instances.
 
 #### TimerRx
 
@@ -915,13 +965,20 @@ Cancel a timer by its ID.
 | `:interval(secs)` | `number` | self | Fire every N seconds |
 | `:cron(expr)` | `string` | self | Fire on a cron schedule |
 | `:data(value)` | any | self | Attach data payload (passed to the handler) |
-| `:register(id)` | `string` | `TimerHandle` | Start the timer with this ID |
+| `:register(id)` | `string` | `TimerHandle` | Register an owned timer; activation occurs on the next timer tick |
+| `:while_connected(p)` | `PlayerHandle` | self | Add an explicit player lifetime dependency |
 
 #### TimerHandle
 
 | Method | Description |
 |--------|-------------|
-| `:cancel()` | Cancel this timer |
+| `:cancel()` | Cancel this exact instance, including its queued events; safe to repeat |
+
+**Migration:** `TimerHandle:cancel()` now cancels only its own instance; use `timer.cancel(id)` to cancel all instances sharing a name. Duplicate interval/cron names are rejected at registration rather than after activation.
+
+Each timer instance has a generation-aware internal identity in addition to its public name. Reusing a name does not accept an old instance's queued events, and an old handle cannot cancel the replacement. Timeout instances may share a name; registering an interval or cron with a name already in use is rejected, including before activation. Intervals must be greater than zero; `timeout(0)` is allowed.
+
+Layer cleanup and player disconnect abort owned timers, including timers not yet activated. Timer events carry their source lifetime; clearing that owner or explicitly cancelling the timer suppresses events already queued for delivery. A global timer listener inherits the source layer when it has no layer of its own, and adds source player dependencies, so work it creates remains owned. A listener with its own layer keeps that layer; source cancellation still gates delivery. A completed timeout is retired after its event dispatch.
 
 #### Listening to Timers
 
@@ -950,7 +1007,7 @@ on.timer.fire()
 
 ### `layer`
 
-Layers own entities, event listeners, and nested layers created during initialization or synchronously by their event callbacks. Clearing a layer removes these resources together.
+Layers own entities, event listeners, nested layers, timers, and async scenes created in their execution context, including resumed scenes. Clearing a layer removes these resources together.
 
 #### `layer.create()`
 
@@ -1022,7 +1079,7 @@ A live handler may clear its own layer. Its currently executing Lua function con
 
 Event dispatch snapshots the registered listeners and never holds the listener registry borrowed while executing Lua. Subscriptions created during dispatch do not receive the event already being processed. Existing dispatch order is preserved: matching Rx chains are evaluated first, then accepted handlers run in priority order with cancellation checked again before each call.
 
-**Current boundary:** ownership propagates through synchronous event callbacks. Timers and async scenes are not yet automatically cancelled by layer cleanup, and code resumed after an async yield does not yet inherit this lifetime; return an explicit cleanup function where cancellation is available. Player-disconnect cancellation is separate follow-up work, not a current layer guarantee.
+Layer ownership also applies to registered timers and launched async scenes, including work created after an async yield. Clearing the layer cancels pending starts, current waits, and queued/late results. Player-dependent subscriptions, timers, and scenes additionally stop on disconnect; entities remain owned by the layer. See [Work Lifetimes](#work-lifetimes).
 
 #### `layer.clear(name)`
 

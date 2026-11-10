@@ -5,9 +5,10 @@ use mlua::{IntoLuaMulti, Lua};
 
 use crate::runtime::{
     app_data::{self, ExecutionContext},
-    plugins::{
-        layer::{LayerContextGuard, layer_is_alive},
-        on::{GameModeListener, protocol::GameModeEvent},
+    lifetime::{Cancellation, OwnedWork, WorkContext, WorkContextGuard},
+    plugins::on::{
+        GameModeListener,
+        protocol::{GameModeEvent, GameModeEventData, PlayerEventData},
     },
     utils::LuaResultExt,
 };
@@ -17,42 +18,44 @@ pub type SequenceId = u64;
 struct QueuedEvent {
     created_at_seq: SequenceId,
     event: GameModeEvent,
+    source: Option<(OwnedWork, bool)>,
 }
 struct PendingHandle {
     listener: GameModeListener,
     args: mlua::MultiValue,
+    context: WorkContext,
 }
 
-struct ListenerContextGuard<'lua> {
-    lua: &'lua Lua,
-    previous_context: ExecutionContext,
-    _layer: LayerContextGuard<'lua>,
-}
-impl<'lua> ListenerContextGuard<'lua> {
-    fn enter(lua: &'lua Lua, listener: &GameModeListener) -> mlua::Result<Self> {
-        let previous_context = *crate::runtime::get_app_data::<ExecutionContext>(lua)?;
-        let layer = LayerContextGuard::enter(lua, listener.owner)?;
-        lua.set_app_data(listener.context);
-        Ok(Self {
-            lua,
-            previous_context,
-            _layer: layer,
-        })
-    }
-}
-impl Drop for ListenerContextGuard<'_> {
+struct FinishEvent(Option<Cancellation>);
+impl Drop for FinishEvent {
     fn drop(&mut self) {
-        self.lua.set_app_data(self.previous_context);
+        if let Some(cancel) = &self.0 {
+            cancel.cancel();
+        }
     }
 }
 
-fn listener_is_active(lua: &Lua, listener: &GameModeListener) -> mlua::Result<bool> {
-    if !listener.active.get() {
-        return Ok(false);
+fn listener_context(
+    listener: &GameModeListener,
+    player: Option<rock_wire::PlayerKey>,
+    source: Option<&OwnedWork>,
+) -> WorkContext {
+    let mut players = listener.players.clone();
+    for pk in source
+        .into_iter()
+        .flat_map(|s| s.context.players.iter().copied())
+        .chain(player)
+    {
+        if !players.contains(&pk) {
+            players.push(pk);
+        }
     }
-    match listener.owner {
-        Some(owner) => layer_is_alive(lua, owner),
-        None => Ok(true),
+    WorkContext {
+        layer: listener
+            .owner
+            .or_else(|| source.and_then(|s| s.context.layer)),
+        players,
+        execution: listener.context,
     }
 }
 
@@ -86,11 +89,52 @@ impl EventBus {
         inner.queue.push(QueuedEvent {
             created_at_seq,
             event,
+            source: None,
+        });
+    }
+
+    pub(crate) fn schedule_owned_event(
+        &self,
+        event: GameModeEvent,
+        source: OwnedWork,
+        finish: bool,
+    ) {
+        let created_at_seq = self.increment_sequence();
+        self.inner.borrow_mut().queue.push(QueuedEvent {
+            created_at_seq,
+            event,
+            source: Some((source, finish)),
         });
     }
 
     fn emit(&self, q_event: QueuedEvent, lua: &Lua) -> eyre::Result<()> {
+        let source = q_event.source.as_ref().map(|(work, _)| work);
+        let _finish = FinishEvent(
+            q_event
+                .source
+                .as_ref()
+                .filter(|(_, finish)| *finish)
+                .map(|(work, _)| work.cancel.clone()),
+        );
+        if let Some(source) = source {
+            if !source
+                .is_alive(lua)
+                .wrap_err("Failed to check event lifetime")?
+            {
+                return Ok(());
+            }
+        }
         let event = q_event.event;
+        let player = match &event.data {
+            GameModeEventData::Player(
+                PlayerEventData::Online { player, .. }
+                | PlayerEventData::Input { player, .. }
+                | PlayerEventData::Enter { player, .. }
+                | PlayerEventData::Exit { player, .. }
+                | PlayerEventData::Signal { player, .. },
+            ) => Some(player.key()),
+            _ => None,
+        };
         let scopes = event.scopes.clone();
         let key = event.data.key();
 
@@ -119,15 +163,22 @@ impl EventBus {
         let result = (|| -> eyre::Result<()> {
             let mut pending_handles = Vec::new();
             for listener in listeners_for_event {
-                if !listener_is_active(lua, &listener).wrap_err("Failed to check listener owner")? {
+                let context = listener_context(&listener, player, source);
+                let active = || {
+                    listener.active.get()
+                        && context.is_alive(lua).unwrap_or(false)
+                        && source.is_none_or(|source| source.cancel.get())
+                };
+                if !active() {
                     continue;
                 }
-                let _guard = ListenerContextGuard::enter(lua, &listener)
+                let _guard = WorkContextGuard::enter(lua, &context)
                     .wrap_err("Failed to enter listener context")?;
-                if let Some(args) = listener.call(q_event.created_at_seq, args.clone())? {
+                if let Some(args) = listener.call(q_event.created_at_seq, args.clone(), active)? {
                     pending_handles.push(PendingHandle {
                         listener: listener.clone(),
                         args,
+                        context: context.clone(),
                     });
                 }
             }
@@ -137,17 +188,21 @@ impl EventBus {
             // layer cleanup and ListenerHandle::off even after this removal.
             if let Some(mut listeners) = lua.app_data_mut::<app_data::EventListeners>() {
                 if let Some(listeners) = listeners.0.get_mut(&key) {
-                    listeners.retain(|listener| !listener.is_exhausted());
+                    listeners.retain(|listener| listener.active.get() && !listener.is_exhausted());
                 }
             }
 
             for handle in pending_handles {
-                if !listener_is_active(lua, &handle.listener)
-                    .wrap_err("Failed to check listener owner")?
+                if !handle.listener.active.get()
+                    || !handle
+                        .context
+                        .is_alive(lua)
+                        .wrap_err("Failed to check listener context")?
+                    || source.is_some_and(|source| !source.cancel.get())
                 {
                     continue;
                 }
-                let _guard = ListenerContextGuard::enter(lua, &handle.listener)
+                let _guard = WorkContextGuard::enter(lua, &handle.context)
                     .wrap_err("Failed to enter listener context")?;
                 let result = handle.listener.handle.call::<Option<bool>>(handle.args);
                 match handle.listener.context {
@@ -179,7 +234,7 @@ impl EventBus {
         // Also retire exhausted chains when a later operator/handler failed.
         if let Some(mut listeners) = lua.app_data_mut::<app_data::EventListeners>() {
             if let Some(listeners) = listeners.0.get_mut(&key) {
-                listeners.retain(|listener| !listener.is_exhausted());
+                listeners.retain(|listener| listener.active.get() && !listener.is_exhausted());
             }
         }
         result

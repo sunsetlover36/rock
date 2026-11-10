@@ -12,6 +12,7 @@ pub(crate) enum SceneManagerMessage {
     AddTask {
         thread_rk: mlua::RegistryKey,
         label: String,
+        work: crate::runtime::lifetime::OwnedWork,
     },
     Wake {
         task_id: TaskId,

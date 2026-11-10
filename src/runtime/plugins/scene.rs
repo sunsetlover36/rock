@@ -19,7 +19,6 @@ fn get_scene_env(lua: &Lua) -> mlua::Result<mlua::Table> {
     let mt = lua.create_table()?;
     mt.set("__index", lua.globals())?;
     env.set_metatable(Some(mt))?;
-
     Ok(env)
 }
 fn function_location(function: &mlua::Function) -> String {
@@ -57,7 +56,6 @@ fn to_coroutine(lua: &Lua, functions: &[mlua::Function]) -> mlua::Result<mlua::R
     for function in functions {
         function.set_environment(env.clone())?;
     }
-
     let iter: mlua::Function = lua
         .load(
             r#"
@@ -74,6 +72,47 @@ fn to_coroutine(lua: &Lua, functions: &[mlua::Function]) -> mlua::Result<mlua::R
     Ok(rk)
 }
 
+#[derive(Clone)]
+pub(crate) struct SceneDefinition {
+    pub scripts: Vec<mlua::Function>,
+    pub players: Vec<rock_wire::PlayerKey>,
+}
+
+pub(super) struct SceneHandle {
+    cancel: crate::runtime::lifetime::Cancellation,
+}
+impl mlua::UserData for SceneHandle {
+    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("cancel", |_, this, ()| {
+            this.cancel.cancel();
+            Ok(())
+        });
+    }
+}
+
+fn launch(
+    lua: &Lua,
+    tx: &flume::Sender<SceneManagerMessage>,
+    scripts: &[mlua::Function],
+    players: &[rock_wire::PlayerKey],
+    label: String,
+) -> mlua::Result<SceneHandle> {
+    let context = crate::runtime::lifetime::WorkContext::capture(lua, players)?;
+    let thread_rk = to_coroutine(lua, scripts)?;
+    let work = crate::runtime::lifetime::OwnedWork::register(lua, context)?;
+    let cancel = work.cancel.clone();
+    tx.try_send(SceneManagerMessage::AddTask {
+        thread_rk,
+        label,
+        work,
+    })
+    .map_err(|e| {
+        cancel.cancel();
+        mlua::Error::runtime(format!("scene: failed to queue task: {e}"))
+    })?;
+    Ok(SceneHandle { cancel })
+}
+
 pub struct ScenePlugin {
     pub manager_tx: flume::Sender<SceneManagerMessage>,
 }
@@ -83,7 +122,6 @@ impl GameModePlugin for ScenePlugin {
     }
 
     fn create_api(&self, lua: &Lua) -> mlua::Result<Option<mlua::Table>> {
-        let plugin_name = self.name();
         let table = lua.create_table()?;
 
         let manager_tx = self.manager_tx.clone();
@@ -92,46 +130,39 @@ impl GameModePlugin for ScenePlugin {
         table.set("create", create_fn)?;
 
         let manager_tx = self.manager_tx.clone();
-        let scene_run_fn = lua.create_function(move |lua, script: mlua::Function| {
-            let scripts = vec![script];
-            let label = format!("scene.run ({})", script_chain_label(&scripts));
-            manager_tx
-                .send(SceneManagerMessage::AddTask {
-                    thread_rk: to_coroutine(lua, &scripts)?,
-                    label,
-                })
-                .map_err(|e| {
-                    mlua::Error::runtime(format!("{}.run: Failed to add task ({})", plugin_name, e))
-                })?;
-            Ok(())
-        })?;
-        table.set("run", scene_run_fn)?;
+        table.set(
+            "run",
+            lua.create_function(move |lua, script: mlua::Function| {
+                let scripts = vec![script];
+                let label = format!("scene.run ({})", script_chain_label(&scripts));
+                launch(lua, &manager_tx, &scripts, &[], label)
+            })?,
+        )?;
 
         let manager_tx = self.manager_tx.clone();
-        let scene_play_fn = lua.create_function(move |lua, name: String| {
-            let coroutine = {
-                let scenes = get_app_data::<app_data::Scenes>(lua)?;
-                let scripts = scenes.0.get(&name).ok_or_else(|| {
-                    mlua::Error::runtime(format!("{}.play: scene {} not found", plugin_name, name))
-                })?;
-
-                let label = format!("scene.play(\"{}\") ({})", name, script_chain_label(scripts));
-                let thread_rk = to_coroutine(lua, scripts)?;
-                (thread_rk, label)
-            };
-            let (thread_rk, label) = coroutine;
-
-            manager_tx
-                .send(SceneManagerMessage::AddTask { thread_rk, label })
-                .map_err(|e| {
-                    mlua::Error::runtime(format!(
-                        "{}.play: Failed to add task ({})",
-                        plugin_name, e
-                    ))
-                })?;
-            Ok(())
-        })?;
-        table.set("play", scene_play_fn)?;
+        table.set(
+            "play",
+            lua.create_function(move |lua, name: String| {
+                let definition = get_app_data::<app_data::Scenes>(lua)?
+                    .0
+                    .get(&name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        mlua::Error::runtime(format!("scene.play: scene {name} not found"))
+                    })?;
+                let label = format!(
+                    "scene.play({name:?}) ({})",
+                    script_chain_label(&definition.scripts)
+                );
+                launch(
+                    lua,
+                    &manager_tx,
+                    &definition.scripts,
+                    &definition.players,
+                    label,
+                )
+            })?,
+        )?;
 
         Ok(Some(table))
     }

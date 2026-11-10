@@ -14,6 +14,7 @@ impl PlayerPresence {
 impl UserData for PlayerPresence {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("enter", |lua, this, name: String| {
+            super::PlayerHandle::ensure_online(lua, this.pk)?;
             get_app_data::<app_data::NetworkReplicator>(lua)?
                 .0
                 .add_player_to_room(lua, this.pk, room_str_to_id(lua, &name)?)?;
@@ -21,6 +22,7 @@ impl UserData for PlayerPresence {
         });
 
         methods.add_method("exit", |lua, this, name: Option<String>| {
+            super::PlayerHandle::ensure_online(lua, this.pk)?;
             let replicator_data = get_app_data::<app_data::NetworkReplicator>(lua)?;
             let replicator = &replicator_data.0;
 

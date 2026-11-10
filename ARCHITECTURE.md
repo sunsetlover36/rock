@@ -279,7 +279,7 @@ when.player.enters_zone("my_pickup_37", function(p)
 end)
 ```
 
-The intended model is implicit async with entity-scoped execution. Automatic cancellation on player disconnect is not implemented yet; a captured player handle alone does not provide that lifetime guarantee.
+Scenes capture execution ownership when launched and restore it on every resume. Work started in a live-player event automatically depends on that connection; explicit `while_connected(p)` handles work launched elsewhere. Capturing a player handle in an arbitrary Lua closure alone does not add a dependency.
 
 `memory` is a plugin. every injected namespace/table is a plugin that defines `create_api`.
 
@@ -308,11 +308,13 @@ Layers track entities, event listeners, and child layers created during initiali
 
 Listeners capture their owner and execution context at registration. Dispatch snapshots cloneable listener records with shared Rx state and cancellation tokens, then releases the registry before running Lua operators or handlers. Context guards restore the listener's owner for both phases and restore the previous context on return or error. Layer cleanup and explicit `off()` cancel pending handlers even after a completed `take` has retired the subscription. Cancellation is also checked between Rx operators. An owning layer and all its ancestors must still exist; resources cannot be created into a cleared owner. Unowned listeners do not inherit a dispatcher's layer.
 
-Pending lifetime work (not current guarantees):
+Timers and scene executions use shared cancellation handles with abortable Tokio workers. Their captured `WorkContext` contains a layer, generation-aware player keys, and Lua execution context. Layer cleanup cancels its own work; player disconnect cancels indexed work for that exact connection. Player registry entries and async cleanup registrations use weak references so completed async tasks are not kept alive solely by ownership metadata.
 
-* Bind timers and scene tasks to their owner; cancellation must also prevent queued or late async results from resuming cleared work.
-* Give player-dependent work a player lifetime in addition to any layer lifetime. On disconnect, cancel dependent scene tasks, subscriptions, and waits without clearing unrelated world resources. Ownership must use the full generation-aware `PlayerKey`, so reusing a player slot cannot revive old work. Global connection listeners must remain active for future players.
-* Define how player dependence is attached and propagated. Capturing `p` inside an arbitrary Lua closure is not sufficient for the runtime to infer this automatically.
+Timer instances and coroutine tasks have generation-aware internal IDs. Pending starts and queued/late results are checked against cancellation and current owners before executing. Timer events carry their source lifetime; a listener without its own layer inherits the timer's layer, and source player dependencies are added to listener dependencies. Finishing a timeout retires its lifetime after dispatch. Name-based timer cancellation cancels all matching instances; handle cancellation targets one instance. Timer-name duplication is checked before activation too.
+
+Live-player event payloads establish player context before Lua filters and mappings. Nested work adds explicit `while_connected` conditions to inherited dependencies. Global connection listeners stay active for later connections. Offline snapshots do not establish a live dependency, allowing disconnect persistence to finish. Entity ownership is still layer-based, independently of player lifetime.
+
+A scene's coroutine and its current worker are cancelled together; scene failures remain isolated. Queueing a scene cannot synchronously block the game thread, and worker result delivery uses asynchronous sends. Cancellation does not preempt an executing Lua function or undo external side effects already committed. Player handles retain generation-aware keys, offer `is_online`, and validate live actions (including cached signal/presence/vision builders).
 
 ### axum
 web app framework. public API: HTTP and WebSockets. not much to describe.

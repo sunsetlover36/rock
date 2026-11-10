@@ -2,19 +2,21 @@ use std::collections::hash_map;
 
 use mlua::UserData;
 
-use super::{script_chain_label, to_coroutine};
+use super::{SceneDefinition, launch, script_chain_label};
 use crate::runtime::{SceneManagerMessage, app_data, utils::get_app_data_mut};
 
 #[derive(Clone)]
 pub(super) struct SceneRx {
     manager_tx: flume::Sender<SceneManagerMessage>,
     scripts: Vec<mlua::Function>,
+    players: Vec<rock_wire::PlayerKey>,
 }
 impl SceneRx {
     pub fn new(manager_tx: flume::Sender<SceneManagerMessage>) -> Self {
         Self {
             manager_tx,
             scripts: Vec::new(),
+            players: Vec::new(),
         }
     }
 }
@@ -31,17 +33,19 @@ impl UserData for SceneRx {
                 "scene.create(...).play ({})",
                 script_chain_label(&this.scripts)
             );
-            this.manager_tx
-                .send(SceneManagerMessage::AddTask {
-                    thread_rk: to_coroutine(lua, &this.scripts)?,
-                    label,
-                })
-                .map_err(|e| {
-                    mlua::Error::runtime(format!("scene.play: Failed to add task ({})", e))
-                })?;
-
-            Ok(())
+            launch(lua, &this.manager_tx, &this.scripts, &this.players, label)
         });
+
+        methods.add_method(
+            "while_connected",
+            |_, this, p: mlua::UserDataRef<crate::runtime::plugins::player::PlayerHandle>| {
+                let mut next = this.clone();
+                if !next.players.contains(&p.key()) {
+                    next.players.push(p.key());
+                }
+                Ok(next)
+            },
+        );
 
         methods.add_method("register", |lua, this, name: String| {
             let mut scenes = get_app_data_mut::<app_data::Scenes>(lua)?;
@@ -53,7 +57,10 @@ impl UserData for SceneRx {
                     )));
                 }
                 hash_map::Entry::Vacant(e) => {
-                    e.insert(this.scripts.clone());
+                    e.insert(SceneDefinition {
+                        scripts: this.scripts.clone(),
+                        players: this.players.clone(),
+                    });
                 }
             }
 

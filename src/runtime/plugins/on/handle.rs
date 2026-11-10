@@ -1,5 +1,3 @@
-use std::{cell::Cell, rc::Rc};
-
 use mlua::UserData;
 
 use super::protocol::GameModeEventKey;
@@ -9,7 +7,7 @@ pub(super) struct ListenerHandle {
     pub event_key: GameModeEventKey,
     pub name: Option<String>,
     pub seq: u64,
-    pub active: Rc<Cell<bool>>,
+    pub active: crate::runtime::lifetime::Cancellation,
 }
 impl UserData for ListenerHandle {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
@@ -18,7 +16,7 @@ impl UserData for ListenerHandle {
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("off", |lua, this, _: ()| {
-            this.active.set(false);
+            this.active.cancel();
             get_app_data_mut::<app_data::EventListeners>(lua)?
                 .0
                 .entry(this.event_key)

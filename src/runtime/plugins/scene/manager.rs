@@ -18,6 +18,7 @@ struct SceneTask {
     thread_rk: mlua::RegistryKey,
     label: String,
     waiting_on: Option<String>,
+    work: crate::runtime::lifetime::OwnedWork,
 }
 
 pub struct SceneManagerParams {
@@ -50,11 +51,20 @@ impl SceneManager {
         lua: &mlua::Lua,
         thread_rk: mlua::RegistryKey,
         label: String,
+        work: crate::runtime::lifetime::OwnedWork,
     ) -> eyre::Result<()> {
+        if !work
+            .is_alive(lua)
+            .wrap_err("Failed to check scene lifetime")?
+        {
+            work.cancel.cancel();
+            return Ok(());
+        }
         let task_id = self.threads.insert(SceneTask {
             thread_rk,
             label,
             waiting_on: None,
+            work,
         });
         if let Err(e) = self.advance_task(lua, task_id, SceneCtx {}) {
             self.log_task_error(task_id, "starting scene", &format!("{:#}", e));
@@ -71,6 +81,18 @@ impl SceneManager {
         task_id: TaskId,
         args: impl mlua::IntoLuaMulti,
     ) -> eyre::Result<()> {
+        let Some(work) = self.threads.get(task_id).map(|task| task.work.clone()) else {
+            return Ok(());
+        };
+        if !work
+            .is_alive(lua)
+            .wrap_err("Failed to check scene lifetime")?
+        {
+            self.threads.remove(task_id);
+            return Ok(());
+        }
+        let _guard = crate::runtime::lifetime::WorkContextGuard::enter(lua, &work.context)
+            .wrap_err("Failed to enter scene context")?;
         let thread: mlua::Thread = {
             let task = match self.threads.get(task_id) {
                 Some(task) => task,
@@ -81,6 +103,13 @@ impl SceneManager {
         };
 
         let resume_result = thread.resume::<mlua::Value>(args);
+        if !work
+            .is_alive(lua)
+            .wrap_err("Failed to check scene lifetime")?
+        {
+            self.threads.remove(task_id);
+            return Ok(());
+        }
         match resume_result {
             Err(e) => {
                 return Err(eyre::eyre!("Lua scene function failed: {}", e));
@@ -177,19 +206,27 @@ impl SceneManager {
                     ));
                 };
                 let tx = self.tx.clone();
-                self.tokio_handle.spawn(async move {
+                let handle = self.tokio_handle.spawn(async move {
                     match task.await {
                         Ok(result) => {
-                            let _ = tx.send(SceneManagerMessage::Wake { task_id, result });
+                            let _ = tx
+                                .send_async(SceneManagerMessage::Wake { task_id, result })
+                                .await;
                         }
                         Err(err) => {
-                            let _ = tx.send(SceneManagerMessage::Error {
-                                task_id,
-                                err: format!("{:#}", err),
-                            });
+                            let _ = tx
+                                .send_async(SceneManagerMessage::Error {
+                                    task_id,
+                                    err: format!("{:#}", err),
+                                })
+                                .await;
                         }
                     }
                 });
+                self.threads[task_id]
+                    .work
+                    .cancel
+                    .set_abort(handle.abort_handle());
             }
             None => {
                 return Err(eyre::eyre!(
@@ -217,14 +254,26 @@ impl SceneManager {
                 let seconds: u64 = op
                     .get("args")
                     .wrap_err("handle_scene_yield: cannot find `args` in the yield output")?;
+                if std::time::Instant::now()
+                    .checked_add(Duration::from_secs(seconds))
+                    .is_none()
+                {
+                    return Err(eyre::eyre!("scene.sleep: duration is too large"));
+                }
                 let tx = self.tx.clone();
-                self.tokio_handle.spawn(async move {
+                let handle = self.tokio_handle.spawn(async move {
                     tokio::time::sleep(Duration::from_secs(seconds)).await;
-                    let _ = tx.send(SceneManagerMessage::Wake {
-                        task_id,
-                        result: AsyncTaskResult::Nil,
-                    });
+                    let _ = tx
+                        .send_async(SceneManagerMessage::Wake {
+                            task_id,
+                            result: AsyncTaskResult::Nil,
+                        })
+                        .await;
                 });
+                self.threads[task_id]
+                    .work
+                    .cancel
+                    .set_abort(handle.abort_handle());
             }
         }
 
@@ -259,15 +308,29 @@ impl SceneManager {
     }
 
     pub fn tick(&mut self, lua: &mlua::Lua) {
+        self.threads
+            .retain(|_, task| task.work.is_alive(lua).unwrap_or(false));
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                SceneManagerMessage::AddTask { thread_rk, label } => {
-                    let _ = self.add_task(lua, thread_rk, label);
+                SceneManagerMessage::AddTask {
+                    thread_rk,
+                    label,
+                    work,
+                } => {
+                    let _ = self.add_task(lua, thread_rk, label, work);
                 }
                 SceneManagerMessage::Cancel(task_id) => {
                     self.threads.remove(task_id);
                 }
                 SceneManagerMessage::Wake { task_id, result } => {
+                    let Some(task) = self.threads.get(task_id) else {
+                        continue;
+                    };
+                    if !task.work.is_alive(lua).unwrap_or(false) {
+                        self.threads.remove(task_id);
+                        continue;
+                    }
+                    task.work.cancel.clear_abort();
                     let lua_val = match result {
                         AsyncTaskResult::JsonValue(v) => match json_to_lua(lua, v) {
                             mlua::Result::Ok(v) => v,
@@ -307,6 +370,14 @@ impl SceneManager {
                     };
                 }
                 SceneManagerMessage::Error { task_id, err } => {
+                    if !self
+                        .threads
+                        .get(task_id)
+                        .is_some_and(|task| task.work.is_alive(lua).unwrap_or(false))
+                    {
+                        self.threads.remove(task_id);
+                        continue;
+                    }
                     self.log_task_error(
                         task_id,
                         &self.waiting_phase(task_id, "running async scene operation"),
@@ -318,3 +389,12 @@ impl SceneManager {
         }
     }
 }
+
+impl Drop for SceneTask {
+    fn drop(&mut self) {
+        self.work.cancel.cancel();
+    }
+}
+
+#[cfg(test)]
+mod tests;

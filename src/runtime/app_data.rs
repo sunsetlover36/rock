@@ -19,7 +19,7 @@ use crate::runtime::{
 };
 
 pub struct EventListeners(pub HashMap<GameModeEventKey, Vec<GameModeListener>>);
-pub struct Scenes(pub HashMap<String, Vec<mlua::Function>>);
+pub struct Scenes(pub HashMap<String, crate::runtime::plugins::scene::SceneDefinition>);
 pub struct World(pub hecs::World);
 pub struct EventBus(pub Rc<event_bus::EventBus>);
 

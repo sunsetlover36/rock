@@ -69,6 +69,9 @@ impl UserData for SignalRx {
         });
 
         methods.add_method("send", |lua, this, _: ()| {
+            if let SignalScope::Player(pk) = this.scope {
+                crate::runtime::plugins::player::PlayerHandle::ensure_online(lua, pk)?;
+            }
             let client_api_data = get_app_data::<app_data::ClientApi>(lua)?;
             let client_api = &client_api_data.0;
 

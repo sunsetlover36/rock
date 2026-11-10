@@ -19,6 +19,7 @@ impl UserData for PlayerVision {
         methods.add_method(
             "attach",
             |lua, this, handle: mlua::UserDataRef<EntityHandle>| {
+                super::PlayerHandle::ensure_online(lua, this.pk)?;
                 let world = get_app_data::<app_data::World>(lua)?;
                 let room_id = world
                     .0
@@ -36,6 +37,7 @@ impl UserData for PlayerVision {
         methods.add_method(
             "detach",
             |lua, this, handle: Option<mlua::UserDataRef<EntityHandle>>| {
+                super::PlayerHandle::ensure_online(lua, this.pk)?;
                 let nr_data = get_app_data::<app_data::NetworkReplicator>(lua)?;
                 let nr = &nr_data.0;
 

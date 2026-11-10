@@ -1,5 +1,3 @@
-use std::{cell::Cell, rc::Rc};
-
 use mlua::UserData;
 
 use super::{
@@ -26,7 +24,8 @@ struct NewListenerParams {
     seq: SequenceId,
     context: ExecutionContext,
     owner: Option<crate::runtime::plugins::layer::LayerId>,
-    active: Rc<Cell<bool>>,
+    active: crate::runtime::lifetime::Cancellation,
+    players: Vec<rock_wire::PlayerKey>,
 }
 
 #[derive(Clone)]
@@ -36,6 +35,7 @@ pub(super) struct OnRx {
     name: Option<String>,
     priority: u32,
     pipeline: RxPipeline,
+    players: Vec<rock_wire::PlayerKey>,
 }
 impl OnRx {
     pub fn new(event_key: GameModeEventKey, scope: EventScope) -> Self {
@@ -45,6 +45,7 @@ impl OnRx {
             name: None,
             priority: 0,
             pipeline: RxPipeline::default(),
+            players: Vec::new(),
         }
     }
 
@@ -60,6 +61,7 @@ impl OnRx {
             rx_sentry: RxSentry::new(builder.pipeline),
             owner: params.owner,
             active: params.active,
+            players: params.players,
         })
     }
 
@@ -67,10 +69,11 @@ impl OnRx {
         &self,
         lua: &mlua::Lua,
         handle: mlua::Function,
-    ) -> mlua::Result<(SequenceId, Rc<Cell<bool>>)> {
+    ) -> mlua::Result<(SequenceId, crate::runtime::lifetime::Cancellation)> {
         let event_key = self.event_key;
         let owner = crate::runtime::plugins::layer::current_layer(lua)?;
-        let active = Rc::new(Cell::new(true));
+        let work_context = crate::runtime::lifetime::WorkContext::capture(lua, &self.players)?;
+        let active = crate::runtime::lifetime::Cancellation::new();
 
         let current_seq = get_app_data::<app_data::EventBus>(lua)?
             .0
@@ -95,6 +98,7 @@ impl OnRx {
                 context,
                 owner,
                 active: active.clone(),
+                players: work_context.players.clone(),
             }));
             entry.sort_by(|a, b| b.priority.cmp(&a.priority));
         }
@@ -103,7 +107,7 @@ impl OnRx {
         if let Some(layer) = owner {
             let active = active.clone();
             let cleaner = lua.create_function(move |lua, _: ()| {
-                active.set(false);
+                active.cancel();
                 get_app_data_mut::<app_data::EventListeners>(lua)?
                     .0
                     .entry(event_key)
@@ -118,6 +122,7 @@ impl OnRx {
                 .and_modify(|l| l.cleaners.push(cleaner));
         }
 
+        crate::runtime::lifetime::register_players(lua, &work_context.players, &active);
         Ok((current_seq, active))
     }
 }
@@ -135,6 +140,17 @@ impl UserData for OnRx {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         add_core_pipeline_methods(methods);
         add_op_pipeline_methods(methods);
+
+        methods.add_method(
+            "while_connected",
+            |_, this, player: mlua::UserDataRef<PlayerHandle>| {
+                let mut next = this.clone();
+                if !next.players.contains(&player.key()) {
+                    next.players.push(player.key());
+                }
+                Ok(next)
+            },
+        );
 
         methods.add_method("name", |_, this, name: String| {
             let mut next = this.clone();

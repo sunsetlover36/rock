@@ -37,6 +37,9 @@ use plugins::{
 };
 
 pub(crate) mod app_data;
+pub(crate) mod lifetime;
+#[cfg(test)]
+pub(crate) mod test_support;
 use app_data::{BlueprintRegistry, ExecutionContext, InputEventRegistry, LayerRegistry};
 
 pub(crate) mod network_replicator;
@@ -93,6 +96,8 @@ impl Runtime {
         let replicator = Rc::new(NetworkReplicator::new(client_api.clone()));
 
         // App data
+        lua.set_app_data(lifetime::ActivePlayers::default());
+        lua.set_app_data(lifetime::PlayerWorkRegistry::default());
         lua.set_app_data::<app_data::EventListeners>(app_data::EventListeners(HashMap::new()));
         lua.set_app_data::<app_data::Scenes>(app_data::Scenes(HashMap::new()));
         lua.set_app_data::<app_data::World>(app_data::World(hecs::World::new()));
@@ -210,7 +215,7 @@ impl Runtime {
             }
 
             self.scene_manager.tick(&self.lua);
-            self.timer_manager.tick();
+            self.timer_manager.tick(&self.lua);
             self.event_bus.flush(&self.lua)?;
             self.replicator.replicate(&self.lua, self.tick)?;
 
@@ -272,6 +277,7 @@ impl Runtime {
                 });
             }
             SystemCallback::PlayerDisconnect { pk, identity } => {
+                lifetime::cancel_player(&self.lua, pk);
                 if let Err(err) = self.replicator.clear_player_state(&self.lua, pk) {
                     eprintln!("Failed to clear player state after disconnect: {err}");
                 }
