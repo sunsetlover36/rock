@@ -983,7 +983,7 @@ impl NetworkReplicator {
                             ().into_lua_multi(lua)
                                 .wrap_err("Failed to convert an empty value `()` to Lua")?,
                         ) {
-                            Ok(_) => {
+                            Ok(Some(_)) => {
                                 let updates = self.compose_dirty_entity_data(
                                     lua,
                                     &policy.fields_mask,
@@ -1009,14 +1009,13 @@ impl NetworkReplicator {
                                     );
                                 }
                             }
+                            Ok(None) => {}
                             Err(err) => match err {
                                 RxSentryError::Core(CoreSentryError::LimitReached(_)) => {
                                     if !matches!(policy.target, ReplicationTarget::Blueprint(_)) {
                                         policies_to_remove.insert(policy_id);
                                     }
                                 }
-                                RxSentryError::Core(CoreSentryError::Skipping)
-                                | RxSentryError::Core(CoreSentryError::Throttled) => {}
                                 RxSentryError::Op(err) => {
                                     return Err(eyre::eyre!(
                                         "Failed to process Rx sentry for entity with ID '{}': operator error ({})",
@@ -1172,8 +1171,6 @@ impl NetworkReplicator {
                             RxSentryError::Core(CoreSentryError::LimitReached(_)) => {
                                 policies_to_remove.insert(policy_id);
                             }
-                            RxSentryError::Core(CoreSentryError::Skipping)
-                            | RxSentryError::Core(CoreSentryError::Throttled) => {}
                             RxSentryError::Op(err) => {
                                 return Err(eyre::eyre!(
                                     "Failed to process Rx sentry for memory node with key '{}': operator error ({})",
@@ -1242,3 +1239,6 @@ impl NetworkReplicator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

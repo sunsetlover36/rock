@@ -148,6 +148,8 @@ on.player.online()
 
 ## Core Ideas
 
+Rx operators run left to right. For example, `:skip(2):take(1)` handles only the third event and then completes; it does not repeat. See [Reactive Operators](DOCS.md#reactive-operators) for ordering, throttling, and migration notes.
+
 - **Entities and components**: build world objects from position, sprites, ownership, custom data, and more.
 - **Rooms and vision**: players receive only the world slice visible through their attached vision anchors.
 - **Reactive events**: chain `:where`, `:select`, `:take`, `:throttle`, and friends over runtime events.

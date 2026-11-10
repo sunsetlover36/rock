@@ -105,9 +105,7 @@ impl QueryRx {
                     processed_entities.push(entity);
                 }
 
-                Ok(None)
-                | Err(RxSentryError::Core(CoreSentryError::Skipping))
-                | Err(RxSentryError::Core(CoreSentryError::Throttled)) => {
+                Ok(None) => {
                     continue;
                 }
 

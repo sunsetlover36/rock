@@ -394,9 +394,9 @@ on.player.online()
 
 | Method | Args | Description |
 |--------|------|-------------|
-| `:take(n)` | `number` | Only fire for the first N events, then stop |
-| `:skip(n)` | `number` | Skip the first N events before firing |
-| `:throttle(secs)` | `number` | Minimum seconds between fires |
+| `:take(n)` | `number` | Pass the first N events reaching this operator, then complete |
+| `:skip(n)` | `number` | Skip the first N events reaching this operator |
+| `:throttle(secs)` | `number` | Minimum seconds between events passed by this operator |
 | `:where(fn)` | `function(...) -> bool` | Only fire if predicate returns true |
 | `:select(fn)` | `function(...) -> ...` | Transform the handler arguments |
 | `:changed()` | -- | Only fire when the value differs from last time |
@@ -1480,56 +1480,75 @@ local obj = entity.query()
 
 Many builders in ROCK support **reactive operators** -- chainable methods that control *when* and *how* events fire.
 
-### Core Pipeline
+### Execution Order
+
+Operators execute **left to right, in the order written**. Each operator sees only the events passed by the operators before it. A filtered, skipped, throttled, or duplicate event does not reach later operators.
+
+```lua
+-- Take the first 3 matching events.
+on.player.online()
+  :where(function(p) return p:id() < 10 end)
+  :take(3)
+  :each(function(p) print(p:id()) end)
+
+-- Examine only the first 3 events; some may be filtered out.
+on.player.online()
+  :take(3)
+  :where(function(p) return p:id() < 10 end)
+  :each(function(p) print(p:id()) end)
+```
+
+Builders are reusable descriptions. Every subscription, query execution, and replication sentry gets independent operator state. Appending an operator returns a new builder without changing the original.
+
+### Count and Time Operators
 
 | Operator | Description |
 |----------|-------------|
-| `:take(n)` | Fire for the first N events, then stop |
-| `:skip(n)` | Ignore the first N events, then fire for all |
-| `:throttle(secs)` | Minimum time between fires |
+| `:take(n)` | Pass the first N events reaching this operator, then complete the chain |
+| `:skip(n)` | Drop the first N events reaching this operator, then pass subsequent events |
+| `:throttle(secs)` | Pass the first event immediately; drop events reaching this operator before the interval expires |
 
-These compose. The combination of `:take` and `:skip` creates repeating patterns:
+Counts must be integers from 0 through 4,294,967,295. `take(0)` starts completed; `skip(0)` passes everything. A chain completes as soon as any `take` uses its limit, even if a later operator drops the last event. Completed chains do not execute earlier operators again.
 
 ```lua
--- fire once, then done
-:take(1)
-
--- skip 5, then fire forever
-:skip(5)
-
--- skip 2, take 1, repeat (fires on 3rd, 6th, 9th, ...)
+-- Pass only event 3, then complete.
 :skip(2):take(1)
 
--- take 3, skip 1, repeat (skips every 4th)
+-- Pass events 2 and 3, then complete.
 :take(3):skip(1)
 
--- take(1) + take(1) = take(2) (fires twice, then done)
+-- Pass only event 1, then complete (limits are not added).
 :take(1):take(1)
 
--- skip(1) + skip(1) = skip(2) (skip first 2, then fire forever)
+-- Skip events 1 and 2, then pass all subsequent events.
 :skip(1):skip(1)
 ```
 
-### Operator Pipeline
+**Migration:** combinations of `take` and `skip` no longer repeat. Consecutive `take` operators no longer add their limits. Core and transformation operators are no longer evaluated in separate phases. Existing gamemodes relying on the old behavior must update their chains.
+
+Throttle uses monotonic time and is leading-edge only: it drops events, does not queue them, and does not emit a delayed trailing event. An event exactly at the interval boundary is allowed. Each throttle tracks the last event it passed, even if a later operator drops that event. Multiple throttles have independent state at their written positions.
+
+Seconds must be finite, non-negative, and representable as a Rust `Duration`; invalid durations produce a Lua error. `throttle(0)` passes everything. For compatibility, `throttle(nil)` (or no argument) removes all earlier throttles from the returned builder; it does not change an existing subscription.
+
+### Transformation Operators
 
 | Operator | Description |
 |----------|-------------|
-| `:where(fn)` | Filter -- only fire if the predicate returns true |
-| `:select(fn)` | Map -- transform the arguments passed to the handler |
-| `:changed()` | Deduplicate -- only fire when the value differs from last time |
+| `:where(fn)` | Pass arguments only if the predicate returns true |
+| `:select(fn)` | Transform the arguments, preserving multiple Lua return values |
+| `:changed()` | Pass the first argument tuple, then only tuples different from the previous tuple this operator passed |
+
+Each `changed()` has its own previous value. All arguments and their count participate in comparison. Lua tables, functions, and userdata are compared by identity, not by contents; changing a table in place does not make it a new value. Select scalar fields before `changed()` to track their values:
 
 ```lua
--- filter: only handle players with id < 10
-on.player.online()
-  :where(function(p) return p:id() < 10 end)
-  :each(function(p) print("early player") end)
-
--- map: extract just the x coordinate
 on.player.input()
   :bind_action("Move")
-  :select(function(p, data) return data.x end)
-  :each(function(x) print("x =", x) end)
+  :select(function(p, data) return p:id(), data.x end)
+  :changed()
+  :each(function(id, x) print(id, x) end)
 ```
+
+Input `bind_action` and timer `named` helpers insert their filters and mappings at the point where they are called. Put them before `take` or `throttle` to count or throttle only matching events. Routing, query selectors, and replication field masks are builder configuration rather than Rx operators.
 
 ### Where They Apply
 
@@ -1598,11 +1617,13 @@ bp:sync():area({ position = { x = 10, y = 5 }, radius = 10 }):commit()
 
 ### Throttling Replication
 
+Entity spawn snapshots are sent on first visibility independently of these operators. Entity sync chains gate later dirty updates, with sentry state per entity and policy (shared across recipients). A dropped update is not queued for trailing delivery; later dirty updates are evaluated again. Memory sync chains instead process the node value before sending it to eligible recipients.
+
 ```lua
 -- send updates at most every 0.5 seconds
 bp:sync():throttle(0.5):commit()
 
--- send only once (snapshot on first sight)
+-- send the initial visibility snapshot, then at most one dirty update per entity
 bp:sync():take(1):commit()
 ```
 
