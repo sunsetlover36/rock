@@ -2,11 +2,8 @@ use std::{cell::Cell, rc::Rc};
 
 use mlua::{ErrorContext, UserData};
 
-use super::{LayerEntry, LayerId, clear_layer_by_id, handle::LayerHandle};
-use crate::runtime::{
-    app_data,
-    utils::{get_app_data, get_app_data_mut},
-};
+use super::{LayerEntry, LayerId, clear_layer_by_id, current_layer, handle::LayerHandle};
+use crate::runtime::{app_data, utils::get_app_data_mut};
 
 struct LayerGuard<'lua> {
     lua: &'lua mlua::Lua,
@@ -59,7 +56,7 @@ impl UserData for LayerRx {
                 ));
             }
 
-            let parent = get_app_data::<app_data::ActiveLayers>(lua)?.0.last().copied();
+            let parent = current_layer(lua)?;
             {
                 let mut registry = get_app_data_mut::<app_data::LayerRegistry>(lua)?;
                 if let Some(name) = &this.name {
@@ -80,6 +77,7 @@ impl UserData for LayerRx {
                     cleaners: Vec::new(),
                     parent,
                     children: Vec::new(),
+                    initializing: true,
                 });
                 if let Some(name) = &this.name {
                     registry.aliases.insert(name.clone(), this.id);
@@ -103,6 +101,9 @@ impl UserData for LayerRx {
                 }
                 Ok(())
             })();
+
+            get_app_data_mut::<app_data::LayerRegistry>(lua)?
+                .layers.get_mut(&this.id).unwrap().initializing = false;
 
             if let Err(err) = result {
                 // The initialization guard is gone before rollback starts.

@@ -1,7 +1,12 @@
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
+
 use color_eyre::eyre;
 
 use crate::{
-    runtime::app_data::ExecutionContext,
+    runtime::{app_data::ExecutionContext, plugins::layer::LayerId},
     rx::{RxSentry, RxSentryError},
 };
 
@@ -16,8 +21,11 @@ pub(crate) struct GameModeListenerParams {
     pub handle: mlua::Function,
     pub priority: u32,
     pub rx_sentry: RxSentry,
+    pub owner: Option<LayerId>,
+    pub active: Rc<Cell<bool>>,
 }
 
+#[derive(Clone)]
 pub(crate) struct GameModeListener {
     pub name: Option<String>,
     pub scope: EventScope,
@@ -25,7 +33,9 @@ pub(crate) struct GameModeListener {
     pub handle: mlua::Function,
     pub priority: u32,
     created_at_seq: u64,
-    rx_sentry: RxSentry,
+    rx_sentry: Rc<RefCell<RxSentry>>,
+    pub owner: Option<LayerId>,
+    pub active: Rc<Cell<bool>>,
 }
 impl GameModeListener {
     pub fn new(params: GameModeListenerParams) -> Self {
@@ -36,24 +46,27 @@ impl GameModeListener {
             handle: params.handle,
             priority: params.priority,
             created_at_seq: params.created_at_seq,
-            rx_sentry: params.rx_sentry,
+            rx_sentry: Rc::new(RefCell::new(params.rx_sentry)),
+            owner: params.owner,
+            active: params.active,
         }
     }
 
     pub fn is_exhausted(&self) -> bool {
-        self.rx_sentry.is_exhausted()
+        self.rx_sentry
+            .try_borrow()
+            .is_ok_and(|sentry| sentry.is_exhausted())
     }
 
-    pub fn call(
-        &mut self,
-        seq: u64,
-        args: mlua::MultiValue,
-    ) -> eyre::Result<Option<mlua::MultiValue>> {
+    pub fn call(&self, seq: u64, args: mlua::MultiValue) -> eyre::Result<Option<mlua::MultiValue>> {
         if self.created_at_seq >= seq {
             return Ok(None);
         }
 
-        match self.rx_sentry.process(args) {
+        let mut sentry = self.rx_sentry.try_borrow_mut().map_err(|_| {
+            eyre::eyre!("Cannot re-enter an event chain while its operators are running")
+        })?;
+        match sentry.process_while(args, || self.active.get()) {
             Err(RxSentryError::Core(_)) => Ok(None),
             res => res.map_err(|e| {
                 eyre::eyre!(

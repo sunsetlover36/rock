@@ -304,11 +304,12 @@ scene manager and plugins are initialized as part of runtime setup.
 
 ### layer lifetimes
 
-Layers currently track entities, event listeners, and child layers created during synchronous initialization. A builder can initialize once; a failed initialization rolls back its owned resources. Cleanup detaches the layer first, clears descendants, and then runs all local cleaners in reverse registration order, collecting errors. The active initialization stack is restored before rollback. Clearing an initializing layer or ancestor is rejected.
+Layers track entities, event listeners, and child layers created during initialization and synchronous event callbacks. A builder can initialize once; a failed initialization rolls back its owned resources. Cleanup detaches the layer first, clears descendants, and then runs all local cleaners in reverse registration order, collecting errors. The ownership stack is restored before rollback. Initializing state is stored separately from the current owner, so live callbacks can clear their own layer while clearing an initializing subtree is still rejected.
+
+Listeners capture their owner and execution context at registration. Dispatch snapshots cloneable listener records with shared Rx state and cancellation tokens, then releases the registry before running Lua operators or handlers. Context guards restore the listener's owner for both phases and restore the previous context on return or error. Layer cleanup and explicit `off()` cancel pending handlers even after a completed `take` has retired the subscription. Cancellation is also checked between Rx operators. An owning layer and all its ancestors must still exist; resources cannot be created into a cleared owner. Unowned listeners do not inherit a dispatcher's layer.
 
 Pending lifetime work (not current guarantees):
 
-* Capture and restore a listener's owning layer during later callbacks, and suppress pending callbacks after that owner is cleared.
 * Bind timers and scene tasks to their owner; cancellation must also prevent queued or late async results from resuming cleared work.
 * Give player-dependent work a player lifetime in addition to any layer lifetime. On disconnect, cancel dependent scene tasks, subscriptions, and waits without clearing unrelated world resources. Ownership must use the full generation-aware `PlayerKey`, so reusing a player slot cannot revive old work. Global connection listeners must remain active for future players.
 * Define how player dependence is attached and propagated. Capturing `p` inside an arbitrary Lua closure is not sufficient for the runtime to infer this automatically.

@@ -196,7 +196,7 @@ Layers group resources (entities, event listeners) so you can clean them all up 
 
 ```lua
 local world = layer.create():with(function()
-  -- entities and listeners created during initialization belong to this layer
+  -- entities and listeners created here or by these listeners belong to this layer
   on.world.awake():each(function() print("world ready") end)
   entity.blueprint():name("tree"):spawn()
 
@@ -950,7 +950,7 @@ on.timer.fire()
 
 ### `layer`
 
-Layers own entities, event listeners, and nested layers created synchronously during their initialization. Clearing a layer removes these resources together.
+Layers own entities, event listeners, and nested layers created during initialization or synchronously by their event callbacks. Clearing a layer removes these resources together.
 
 #### `layer.create()`
 
@@ -958,7 +958,7 @@ Create a new layer builder. Returns `LayerRx`.
 
 ```lua
 local world = layer.create():with(function()
-  -- entities and listeners created during initialization are tracked
+  -- entities and listeners created here or by these listeners are tracked
 
   on.world.awake():each(function()
     print("world ready")
@@ -1000,7 +1000,29 @@ world:clear() -- also clears the forest
 world:clear() -- safe; cleanup is not repeated
 ```
 
-**Current boundary:** ownership is captured during synchronous initialization only. Resources created later from event callbacks do not yet inherit the listener's layer. Timers and async scenes are not yet automatically cancelled by layer cleanup; return an explicit cleanup function where cancellation is available. Player-disconnect cancellation is separate follow-up work, not a current layer guarantee.
+#### Event Callback Ownership
+
+A listener captures its layer when `each` registers it. Its Rx operators (`where`, `select`, and so on) and handler run with that owner restored. Entities, listeners, and layers created synchronously inside them inherit that owner. The previous ownership and execution context are restored after every invocation, including errors. An unowned listener remains unowned even if its event is dispatched from another layer's context.
+
+```lua
+local zombie = entity.blueprint():name("zombie")
+
+local world = layer.create():with(function()
+  on.player.online():each(function(p)
+    zombie:spawn() -- still belongs to world, although it is created later
+  end)
+end):commit()
+
+world:clear() -- removes the subscription and zombies spawned by it
+```
+
+Clearing a layer suppresses its pending handlers, including a final `take(1)` handler already accepted for the current event. If a layer is cleared inside an Rx operator, remaining operators and the handler of that subscription are skipped. `ListenerHandle:off()` also cancels a prepared handler. Reusing the same layer name does not revive old callbacks.
+
+A live handler may clear its own layer. Its currently executing Lua function continues until it returns, but attempts to spawn entities, register listeners, or commit child layers into the cleared owner return a Lua error. It cannot clear a subtree while a descendant is initializing. An ordinary callback error does not roll back a live layer; resources created before the error remain owned and are removed by its eventual `clear()`.
+
+Event dispatch snapshots the registered listeners and never holds the listener registry borrowed while executing Lua. Subscriptions created during dispatch do not receive the event already being processed. Existing dispatch order is preserved: matching Rx chains are evaluated first, then accepted handlers run in priority order with cancellation checked again before each call.
+
+**Current boundary:** ownership propagates through synchronous event callbacks. Timers and async scenes are not yet automatically cancelled by layer cleanup, and code resumed after an async yield does not yet inherit this lifetime; return an explicit cleanup function where cancellation is available. Player-disconnect cancellation is separate follow-up work, not a current layer guarantee.
 
 #### `layer.clear(name)`
 

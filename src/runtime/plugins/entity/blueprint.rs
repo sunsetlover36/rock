@@ -141,6 +141,7 @@ impl UserData for EntityBlueprint {
         );
 
         methods.add_method_mut("spawn", |lua, this, _: ()| {
+            let owner = crate::runtime::plugins::layer::current_layer(lua)?;
             let mut builder = hecs::EntityBuilder::new();
             for component in this.components.values() {
                 component.add_to_builder(&mut builder);
@@ -155,13 +156,12 @@ impl UserData for EntityBlueprint {
             }
 
             // Layer garbage collection
-            let layers = get_app_data::<app_data::ActiveLayers>(lua)?;
-            if let Some(layer_id) = layers.0.last() {
+            if let Some(layer_id) = owner {
                 let cleaner = lua.create_function(move |lua, _: ()| despawn_entity(lua, entity))?;
 
                 get_app_data_mut::<app_data::LayerRegistry>(lua)?
                     .layers
-                    .entry(layer_id.to_owned())
+                    .entry(layer_id)
                     .and_modify(|layer| layer.cleaners.push(cleaner));
             }
 

@@ -95,7 +95,7 @@ impl LayerRegistry {
     }
 }
 
-// -- Active layers at initialization phase
+// -- Current synchronous ownership context (initialization or event callback)
 pub struct ActiveLayers(pub Vec<LayerId>);
 pub struct ClientApi(pub Arc<dyn GameModeClientApi>);
 pub struct TimerManager(pub Rc<timer_manager::TimerManager>);

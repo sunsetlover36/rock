@@ -1,3 +1,5 @@
+use std::{cell::Cell, rc::Rc};
+
 use mlua::UserData;
 
 use super::{
@@ -23,6 +25,8 @@ struct NewListenerParams {
     handle: mlua::Function,
     seq: SequenceId,
     context: ExecutionContext,
+    owner: Option<crate::runtime::plugins::layer::LayerId>,
+    active: Rc<Cell<bool>>,
 }
 
 #[derive(Clone)]
@@ -54,6 +58,8 @@ impl OnRx {
             handle: params.handle,
             priority: self.priority,
             rx_sentry: RxSentry::new(builder.pipeline),
+            owner: params.owner,
+            active: params.active,
         })
     }
 
@@ -61,8 +67,10 @@ impl OnRx {
         &self,
         lua: &mlua::Lua,
         handle: mlua::Function,
-    ) -> mlua::Result<SequenceId> {
+    ) -> mlua::Result<(SequenceId, Rc<Cell<bool>>)> {
         let event_key = self.event_key;
+        let owner = crate::runtime::plugins::layer::current_layer(lua)?;
+        let active = Rc::new(Cell::new(true));
 
         let current_seq = get_app_data::<app_data::EventBus>(lua)?
             .0
@@ -85,14 +93,17 @@ impl OnRx {
                 handle,
                 seq: current_seq,
                 context,
+                owner,
+                active: active.clone(),
             }));
             entry.sort_by(|a, b| b.priority.cmp(&a.priority));
         }
 
         // Layer garbage collection
-        let layers = get_app_data::<app_data::ActiveLayers>(lua)?;
-        if let Some(layer) = layers.0.last() {
+        if let Some(layer) = owner {
+            let active = active.clone();
             let cleaner = lua.create_function(move |lua, _: ()| {
+                active.set(false);
                 get_app_data_mut::<app_data::EventListeners>(lua)?
                     .0
                     .entry(event_key)
@@ -103,11 +114,11 @@ impl OnRx {
 
             get_app_data_mut::<app_data::LayerRegistry>(lua)?
                 .layers
-                .entry(layer.to_owned())
+                .entry(layer)
                 .and_modify(|l| l.cleaners.push(cleaner));
         }
 
-        Ok(current_seq)
+        Ok((current_seq, active))
     }
 }
 
@@ -189,11 +200,12 @@ impl UserData for OnRx {
         });
 
         methods.add_method("each", |lua, this, handle| {
-            let seq = this.add_event_listener(lua, handle)?;
+            let (seq, active) = this.add_event_listener(lua, handle)?;
             Ok(ListenerHandle {
                 event_key: this.event_key,
                 name: this.name.clone(),
                 seq,
+                active,
             })
         });
     }

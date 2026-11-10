@@ -116,16 +116,36 @@ impl RxSentry {
         self.process_at(args, Instant::now())
     }
 
+    pub fn process_while(
+        &mut self,
+        args: mlua::MultiValue,
+        active: impl FnMut() -> bool,
+    ) -> Result<Option<mlua::MultiValue>, RxSentryError> {
+        self.process_at_while(args, Instant::now(), active)
+    }
+
     fn process_at(
+        &mut self,
+        args: mlua::MultiValue,
+        now: Instant,
+    ) -> Result<Option<mlua::MultiValue>, RxSentryError> {
+        self.process_at_while(args, now, || true)
+    }
+
+    fn process_at_while(
         &mut self,
         mut args: mlua::MultiValue,
         now: Instant,
+        mut active: impl FnMut() -> bool,
     ) -> Result<Option<mlua::MultiValue>, RxSentryError> {
         if let Some(limit) = self.exhausted_limit() {
             return Err(RxSentryError::Core(CoreSentryError::LimitReached(limit)));
         }
 
         for op in &mut self.operators {
+            if !active() {
+                return Ok(None);
+            }
             match op {
                 OperatorState::Take { remaining, .. } => *remaining -= 1,
                 OperatorState::Skip { remaining } => {
@@ -167,7 +187,7 @@ impl RxSentry {
             }
         }
 
-        Ok(Some(args))
+        Ok(active().then_some(args))
     }
 }
 

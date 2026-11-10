@@ -16,16 +16,75 @@ pub(crate) struct LayerEntry {
     pub cleaners: Vec<mlua::Function>,
     pub parent: Option<LayerId>,
     pub children: Vec<LayerId>,
+    pub initializing: bool,
 }
 pub(crate) type LayerId = u64;
 
+// Ownership contexts also apply to callbacks, independently of initialization.
+pub(crate) fn layer_is_alive(lua: &mlua::Lua, id: LayerId) -> mlua::Result<bool> {
+    let registry = get_app_data::<app_data::LayerRegistry>(lua)?;
+    let mut current = Some(id);
+    while let Some(id) = current {
+        let Some(layer) = registry.layers.get(&id) else {
+            return Ok(false);
+        };
+        current = layer.parent;
+    }
+    Ok(true)
+}
+
+pub(crate) fn current_layer(lua: &mlua::Lua) -> mlua::Result<Option<LayerId>> {
+    let owner = get_app_data::<app_data::ActiveLayers>(lua)?
+        .0
+        .last()
+        .copied();
+    if let Some(id) = owner {
+        if !layer_is_alive(lua, id)? {
+            return Err(mlua::Error::runtime(
+                "Cannot create resources: owning layer has been cleared",
+            ));
+        }
+    }
+    Ok(owner)
+}
+
+pub(crate) struct LayerContextGuard<'lua> {
+    lua: &'lua mlua::Lua,
+    previous: Vec<LayerId>,
+}
+impl<'lua> LayerContextGuard<'lua> {
+    pub fn enter(lua: &'lua mlua::Lua, owner: Option<LayerId>) -> mlua::Result<Self> {
+        let previous = std::mem::replace(
+            &mut get_app_data_mut::<app_data::ActiveLayers>(lua)?.0,
+            owner.into_iter().collect(),
+        );
+        Ok(Self { lua, previous })
+    }
+}
+impl Drop for LayerContextGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(mut layers) = self.lua.app_data_mut::<app_data::ActiveLayers>() {
+            layers.0 = std::mem::take(&mut self.previous);
+        }
+    }
+}
+
 fn clear_layer_by_id(lua: &mlua::Lua, id: LayerId) -> mlua::Result<()> {
-    // Removing an initializing ancestor would orphan resources created by the
-    // remainder of its callbacks. Rollback calls this only after leaving it.
-    if get_app_data::<app_data::ActiveLayers>(lua)?.0.contains(&id) {
-        return Err(mlua::Error::runtime(format!(
-            "Cannot clear layer {id} while it is initializing"
-        )));
+    // A live callback may clear its own owner, but no subtree may be removed
+    // while any descendant is still initializing.
+    {
+        let registry = get_app_data::<app_data::LayerRegistry>(lua)?;
+        let mut pending = vec![id];
+        while let Some(child) = pending.pop() {
+            if let Some(layer) = registry.layers.get(&child) {
+                if layer.initializing {
+                    return Err(mlua::Error::runtime(format!(
+                        "Cannot clear layer {id} while it is initializing or has an initializing descendant"
+                    )));
+                }
+                pending.extend(&layer.children);
+            }
+        }
     }
 
     let layer = {
