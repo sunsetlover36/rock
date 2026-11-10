@@ -1,10 +1,10 @@
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Path, Query, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode, header::ORIGIN},
     response::{IntoResponse, Response},
-    routing::{any, post},
+    routing::{any, get, post},
 };
 use color_eyre::eyre;
 use hmac::{Hmac, KeyInit, Mac};
@@ -108,10 +108,12 @@ struct AppState {
     runtime_callback_tx: flume::Sender<RuntimeCallback>,
     config: Arc<Config>,
     fc_verifier: Option<Arc<FarcasterVerifier>>,
+    diagnostics: Arc<crate::runtime::diagnostics::DiagnosticStore>,
     allowed_origins: Arc<Vec<String>>,
 }
 
 pub struct ApiParams {
+    pub diagnostics: Arc<crate::runtime::diagnostics::DiagnosticStore>,
     pub session_registrar: SessionRegistrar,
     pub runtime_callback_tx: flume::Sender<RuntimeCallback>,
     pub config: Config,
@@ -124,6 +126,7 @@ impl Api {
     pub fn new(params: ApiParams) -> Self {
         let state = AppState {
             session_registrar: params.session_registrar,
+            diagnostics: params.diagnostics,
             runtime_callback_tx: params.runtime_callback_tx.clone(),
             config: Arc::new(params.config),
             fc_verifier: params.fc_verifier.map(Arc::new),
@@ -136,6 +139,7 @@ impl Api {
                 "/impromptu",
                 post(Api::process_impromptu).layer(DefaultBodyLimit::max(IMPROMPTU_BODY_LIMIT)),
             )
+            .route("/impromptu/{id}", get(Api::impromptu_report))
             .route(
                 "/farcaster-webhook",
                 post(Api::process_webhook).layer(DefaultBodyLimit::max(WEBHOOK_BODY_LIMIT)),
@@ -231,18 +235,23 @@ impl Api {
         headers: HeaderMap,
         State(state): State<AppState>,
         Json(payload): Json<ImpromptuRequest>,
-    ) -> Result<&'static str, StatusCode> {
+    ) -> Result<(StatusCode, Json<crate::runtime::diagnostics::RequestReport>), StatusCode> {
         verify_impromptu_token(&headers)?;
+        enqueue_impromptu(&state.runtime_callback_tx, &state.diagnostics, payload)
+    }
 
+    async fn impromptu_report(
+        headers: HeaderMap,
+        State(state): State<AppState>,
+        Path(id): Path<String>,
+        Query(query): Query<DiagnosticQuery>,
+    ) -> Result<Json<crate::runtime::diagnostics::RequestReport>, StatusCode> {
+        verify_impromptu_token(&headers)?;
         state
-            .runtime_callback_tx
-            .send_async(RuntimeCallback::System(SystemCallback::ImpromptuRequest {
-                name: payload.name,
-                code: payload.code,
-            }))
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        Ok("ok")
+            .diagnostics
+            .report(&id, query.after)
+            .map(Json)
+            .ok_or(StatusCode::NOT_FOUND)
     }
 
     async fn process_webhook(
@@ -299,5 +308,115 @@ impl Api {
             .map_err(|err| eyre::eyre!("Server error: {err}"))?;
 
         Ok(())
+    }
+}
+
+#[derive(Default, serde::Deserialize)]
+struct DiagnosticQuery {
+    #[serde(default)]
+    after: u64,
+}
+
+fn enqueue_impromptu(
+    tx: &flume::Sender<RuntimeCallback>,
+    store: &crate::runtime::diagnostics::DiagnosticStore,
+    payload: ImpromptuRequest,
+) -> Result<(StatusCode, Json<crate::runtime::diagnostics::RequestReport>), StatusCode> {
+    use crate::runtime::diagnostics::{Phase, RequestStatus};
+    let source = store
+        .submit(payload.name.clone())
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut report = crate::runtime::diagnostics::RequestReport {
+        request_id: source.request_id.clone(),
+        name: source.name.clone(),
+        status: RequestStatus::Queued,
+        diagnostics: std::collections::VecDeque::new(),
+        next_cursor: 0,
+        dropped_diagnostics: 0,
+    };
+    let status = match tx.try_send(RuntimeCallback::System(SystemCallback::ImpromptuRequest {
+        source: source.clone(),
+        request: payload,
+    })) {
+        Ok(()) => StatusCode::ACCEPTED,
+        Err(error) => {
+            let message = if matches!(error, flume::TrySendError::Full(_)) {
+                "Runtime queue is full"
+            } else {
+                "Runtime is unavailable"
+            };
+            let diagnostic = store.error(&source, Phase::Queue, message.into(), None);
+            report.next_cursor = diagnostic.cursor;
+            report.diagnostics.push_back(diagnostic);
+            report.status = RequestStatus::Failed;
+            store.finish(&source, RequestStatus::Failed);
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+    };
+    Ok((status, Json(report)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::diagnostics::{DiagnosticStore, Phase, RequestStatus};
+
+    #[test]
+    fn submission_is_accepted_not_reported_as_executed() {
+        let (tx, rx) = flume::bounded(1);
+        let store = DiagnosticStore::default();
+        let (status, Json(report)) = enqueue_impromptu(
+            &tx,
+            &store,
+            ImpromptuRequest {
+                name: Some("test".into()),
+                code: "print(1)".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(report.status, RequestStatus::Queued);
+        assert!(!report.request_id.is_empty());
+        assert!(
+            matches!(rx.recv().unwrap(), RuntimeCallback::System(SystemCallback::ImpromptuRequest { source, .. }) if source.request_id == report.request_id)
+        );
+    }
+
+    #[test]
+    fn full_or_disconnected_runtime_produces_english_queue_diagnostic() {
+        let (tx, _rx) = flume::bounded(0);
+        let store = DiagnosticStore::default();
+        let (status, Json(report)) = enqueue_impromptu(
+            &tx,
+            &store,
+            ImpromptuRequest {
+                name: None,
+                code: String::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(report.status, RequestStatus::Failed);
+        assert!(matches!(report.diagnostics[0].phase, Phase::Queue));
+        assert_eq!(report.diagnostics[0].message, "Runtime queue is full");
+        drop(_rx);
+        let (_, Json(report)) = enqueue_impromptu(
+            &tx,
+            &store,
+            ImpromptuRequest {
+                name: None,
+                code: String::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(report.diagnostics[0].message, "Runtime is unavailable");
+    }
+
+    #[test]
+    fn missing_auth_header_is_rejected() {
+        assert_eq!(
+            verify_impromptu_token(&HeaderMap::new()),
+            Err(StatusCode::NOT_FOUND)
+        );
     }
 }

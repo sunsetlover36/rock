@@ -109,6 +109,7 @@ pub(crate) struct WorkContext {
     pub layer: Option<LayerId>,
     pub players: Vec<PlayerKey>,
     pub execution: ExecutionContext,
+    pub origin: Option<super::diagnostics::SnippetSource>,
 }
 impl WorkContext {
     pub fn capture(lua: &mlua::Lua, explicit: &[PlayerKey]) -> mlua::Result<Self> {
@@ -122,6 +123,7 @@ impl WorkContext {
             layer: current_layer(lua)?,
             players,
             execution: *get_app_data::<ExecutionContext>(lua)?,
+            origin: super::diagnostics::current_source(lua),
         };
         if !context.is_alive(lua)? {
             return Err(mlua::Error::runtime(
@@ -175,19 +177,23 @@ pub(crate) struct WorkContextGuard<'lua> {
     lua: &'lua mlua::Lua,
     previous_players: Vec<PlayerKey>,
     previous_execution: ExecutionContext,
+    previous_origin: Option<super::diagnostics::SnippetSource>,
     _layer: LayerContextGuard<'lua>,
 }
 impl<'lua> WorkContextGuard<'lua> {
     pub fn enter(lua: &'lua mlua::Lua, context: &WorkContext) -> mlua::Result<Self> {
         let previous_execution = *get_app_data::<ExecutionContext>(lua)?;
         let previous_players = current_players(lua);
+        let previous_origin = super::diagnostics::current_source(lua);
         let layer = LayerContextGuard::enter(lua, context.layer)?;
         lua.set_app_data(ActivePlayers(context.players.clone()));
         lua.set_app_data(context.execution);
+        lua.set_app_data(super::diagnostics::ActiveSnippet(context.origin.clone()));
         Ok(Self {
             lua,
             previous_players,
             previous_execution,
+            previous_origin,
             _layer: layer,
         })
     }
@@ -197,6 +203,9 @@ impl Drop for WorkContextGuard<'_> {
         self.lua
             .set_app_data(ActivePlayers(std::mem::take(&mut self.previous_players)));
         self.lua.set_app_data(self.previous_execution);
+        self.lua.set_app_data(super::diagnostics::ActiveSnippet(
+            self.previous_origin.take(),
+        ));
     }
 }
 

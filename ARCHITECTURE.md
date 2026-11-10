@@ -316,5 +316,11 @@ Live-player event payloads establish player context before Lua filters and mappi
 
 A scene's coroutine and its current worker are cancelled together; scene failures remain isolated. Queueing a scene cannot synchronously block the game thread, and worker result delivery uses asynchronous sends. Cancellation does not preempt an executing Lua function or undo external side effects already committed. Player handles retain generation-aware keys, offer `is_online`, and validate live actions (including cached signal/presence/vision builders).
 
+### live-code diagnostics
+
+A shared bounded `DiagnosticStore` connects the HTTP API and runtime without introducing WebSocket protocol changes. Submission allocates a snippet ID and queues its source metadata with the code; HTTP 202 acknowledges acceptance only. The runtime records compilation/execution outcome, and an authenticated GET endpoint exposes the report with cursor-based diagnostic polling. Pending requests are retained; completed reports may expire within the bounded window.
+
+Snippet origin is separate from the execution/error-policy enum and from resource ownership. It is captured by listeners, propagated by work context guards, and restored for every coroutine resume. Deferred live-code operator and handler failures are collected without failing the event bus; ordinary gamemode errors retain their existing semantics. Scene error paths report through the same store. Generated chunk names include the unique request ID so line locations and tracebacks can be correlated even when display names repeat. No code or database state is persisted by the diagnostics store.
+
 ### axum
 web app framework. public API: HTTP and WebSockets. not much to describe.

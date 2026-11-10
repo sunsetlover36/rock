@@ -67,7 +67,7 @@ impl SceneManager {
             work,
         });
         if let Err(e) = self.advance_task(lua, task_id, SceneCtx {}) {
-            self.log_task_error(task_id, "starting scene", &format!("{:#}", e));
+            self.log_task_error(lua, task_id, "starting scene", &format!("{:#}", e));
             self.threads.remove(task_id);
             return Err(e);
         }
@@ -152,8 +152,15 @@ impl SceneManager {
             .join("\n")
     }
 
-    fn log_task_error(&self, task_id: TaskId, phase: &str, err: &str) {
+    fn log_task_error(&self, lua: &mlua::Lua, task_id: TaskId, phase: &str, err: &str) {
         if let Some(task) = self.threads.get(task_id) {
+            crate::runtime::diagnostics::record_error(
+                lua,
+                task.work.context.origin.as_ref(),
+                crate::runtime::diagnostics::Phase::Scene,
+                format!("{}: {err}", phase),
+                None,
+            );
             let waiting = task
                 .waiting_on
                 .as_ref()
@@ -336,6 +343,7 @@ impl SceneManager {
                             mlua::Result::Ok(v) => v,
                             mlua::Result::Err(err) => {
                                 self.log_task_error(
+                                    lua,
                                     task_id,
                                     &self.waiting_phase(task_id, "materializing async result"),
                                     &format!("{:#}", err),
@@ -348,6 +356,7 @@ impl SceneManager {
                             mlua::Result::Ok(s) => mlua::Value::String(s),
                             mlua::Result::Err(err) => {
                                 self.log_task_error(
+                                    lua,
                                     task_id,
                                     &self.waiting_phase(task_id, "materializing async result"),
                                     &format!("{:#}", err),
@@ -362,6 +371,7 @@ impl SceneManager {
 
                     if let Err(e) = self.advance_task(lua, task_id, lua_val) {
                         self.log_task_error(
+                            lua,
                             task_id,
                             &self.waiting_phase(task_id, "resuming scene"),
                             &format!("{:#}", e),
@@ -379,6 +389,7 @@ impl SceneManager {
                         continue;
                     }
                     self.log_task_error(
+                        lua,
                         task_id,
                         &self.waiting_phase(task_id, "running async scene operation"),
                         &err,

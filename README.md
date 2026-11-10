@@ -181,6 +181,8 @@ ROCK exposes a live-code endpoint, `POST /impromptu`, for local development and 
 X-Rock-Impromptu-Token: ...
 ```
 
+Live-code submission returns HTTP 202 with a request ID. Poll the token-protected `GET /impromptu/{id}` endpoint for execution results and deferred callback/scene errors. See [Live Coding](DOCS.md#impromptu-live-coding).
+
 Cookie-authenticated WebSocket sessions should also set `ROCK_ALLOWED_ORIGINS` to prevent browser-based cross-site WebSocket hijacking.
 
 See [DOCS.md](DOCS.md) for the full security-related setup.

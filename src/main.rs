@@ -73,6 +73,9 @@ async fn run() -> eyre::Result<()> {
                 flume::bounded::<RuntimeCallback>(1024);
             let (runtime_cmd_tx, runtime_cmd_rx) = flume::bounded::<RuntimeCommand>(32);
 
+            let diagnostics = Arc::new(runtime::diagnostics::DiagnosticStore::default());
+            let runtime_diagnostics = diagnostics.clone();
+
             // Load config
             let config = Config::new()?;
             let runtime_config = config.clone();
@@ -137,6 +140,7 @@ async fn run() -> eyre::Result<()> {
                     };
 
                     let runtime_params = RuntimeParams {
+                        diagnostics: runtime_diagnostics.clone(),
                         config: runtime_config.clone(),
                         client_api: Arc::new(GameModeDefaultClientApi {
                             ws_session_sender: session_sender.clone(),
@@ -187,6 +191,7 @@ async fn run() -> eyre::Result<()> {
                     None
                 };
             Api::new(ApiParams {
+                diagnostics,
                 session_registrar,
                 runtime_callback_tx: runtime_callback_tx.clone(),
                 config: api_config,

@@ -56,6 +56,10 @@ fn listener_context(
             .or_else(|| source.and_then(|s| s.context.layer)),
         players,
         execution: listener.context,
+        origin: listener
+            .origin
+            .clone()
+            .or_else(|| source.and_then(|s| s.context.origin.clone())),
     }
 }
 
@@ -174,12 +178,24 @@ impl EventBus {
                 }
                 let _guard = WorkContextGuard::enter(lua, &context)
                     .wrap_err("Failed to enter listener context")?;
-                if let Some(args) = listener.call(q_event.created_at_seq, args.clone(), active)? {
-                    pending_handles.push(PendingHandle {
+                match listener.call(q_event.created_at_seq, args.clone(), active) {
+                    Ok(Some(args)) => pending_handles.push(PendingHandle {
                         listener: listener.clone(),
                         args,
                         context: context.clone(),
-                    });
+                    }),
+                    Ok(None) => {}
+                    Err(error) if matches!(listener.context, ExecutionContext::Impromptu) => {
+                        crate::runtime::diagnostics::record_error(
+                            lua,
+                            context.origin.as_ref(),
+                            crate::runtime::diagnostics::Phase::EventOperator,
+                            format!("{error:#}"),
+                            Some(format!("{key:?}")),
+                        );
+                        eprintln!("[IMPROMPTU] Event operator failed for {key:?}: {error:#}");
+                    }
+                    Err(error) => return Err(error),
                 }
             }
 
@@ -215,8 +231,14 @@ impl EventBus {
                         }
                     }
                     ExecutionContext::Impromptu => {
-                        // TODO: propagate listener errors to the live-code caller.
                         if let Err(err) = &result {
+                            crate::runtime::diagnostics::record_error(
+                                lua,
+                                handle.context.origin.as_ref(),
+                                crate::runtime::diagnostics::Phase::EventHandler,
+                                err.to_string(),
+                                Some(format!("{key:?}")),
+                            );
                             eprintln!(
                                 "Error in `{:?}` event listener (registered during the impromptu): {err}",
                                 &key

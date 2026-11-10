@@ -1957,20 +1957,69 @@ Systems are loaded automatically after glyphs. They are intended for event liste
 
 ## Impromptu (Live Coding)
 
-The engine exposes a `POST /impromptu` endpoint for injecting Lua code at runtime:
+`POST /impromptu` queues Lua code for execution in the running game loop:
 
 ```bash
-curl -X POST http://127.0.0.1:3000/impromptu \
+curl -i -X POST http://127.0.0.1:3000/impromptu \
   -H "Content-Type: application/json" \
   -H "X-Rock-Impromptu-Token: $ROCK_IMPROMPTU_TOKEN" \
-  -d '{"code": "print(\"hello from live code\")", "name": "test"}'
+  -d '{"code": "local rock = nil; rock:despawn()", "name": "test"}'
 ```
 
-This fires `on.world.impromptu()` events and executes the code within the running game loop. Useful for debugging and live development.
+The response is **HTTP 202 Accepted**, not an execution success:
 
-`/impromptu` is protected by `ROCK_IMPROMPTU_TOKEN`, not by client IP. This matters behind reverse proxies such as nginx or Caddy: the engine may see the proxy as a local peer, so loopback checks are not a reliable security boundary. Requests without the correct `X-Rock-Impromptu-Token` header are rejected with `404`.
+```json
+{
+  "request_id": "<request_id>",
+  "name": "test",
+  "status": "queued",
+  "diagnostics": [],
+  "next_cursor": 0,
+  "dropped_diagnostics": 0
+}
+```
 
-The request body is capped at 256 KiB. Farcaster webhook bodies are capped at 1 MiB.
+**Migration:** the endpoint previously returned HTTP 200 with the string `ok`, even if execution later failed. Clients should now retain the request ID and poll its report:
+
+```bash
+curl "http://127.0.0.1:3000/impromptu/<request_id>?after=0" \
+  -H "X-Rock-Impromptu-Token: $ROCK_IMPROMPTU_TOKEN"
+```
+
+`GET /impromptu/{request_id}` returns HTTP 200 and a report with:
+
+| Field | Meaning |
+|-------|---------|
+| `request_id` | Unique execution ID; submitting the same name creates a new request |
+| `name` | Display name, defaulting to `anonymous impromptu`; limited to 256 characters |
+| `status` | `queued`, `executed`, or `failed` |
+| `diagnostics` | Errors newer than the optional `after` cursor |
+| `next_cursor` | Cursor to use for the next poll |
+| `dropped_diagnostics` | Number of errors discarded from this report's bounded history |
+
+For the example above, execution produces status `failed` and an English Lua diagnostic similar to:
+
+```json
+{
+  "cursor": 1,
+  "phase": "execute",
+  "message": "runtime error: impromptu/<request_id>:1: attempt to index a nil value (local 'rock')\nstack traceback: ...",
+  "line": 1,
+  "event": null
+}
+```
+
+Runtime-generated messages are in English; messages supplied by scripts through `error(...)` are preserved as written. `message` includes the Lua traceback where available. `line` identifies a snippet source line when one is present in the error; otherwise it is `null`. Event diagnostics also carry the runtime event key, such as `Player(Online)`.
+
+Diagnostic phases are `compile`, `execute`, `event_operator`, `event_handler`, `scene`, and `queue`. A successful top-level execution stays `executed` even if one of its registered callbacks or scenes fails later: these failures appear as additional diagnostics on the same request. Polling after `executed` is therefore useful for live editors. Snippet source context is preserved through event callbacks, nested work, and coroutine resumes; named scene functions retain source attribution when played later while their report is retained.
+
+Errors in live-code event filters/mappings and handlers are reported without stopping other listeners. Errors in ordinary gamemode listeners keep their existing error policy. Async scene failures remain isolated to that execution. Diagnostics do not make code injection transactional: side effects performed before an error are not rolled back.
+
+Both endpoints require `ROCK_IMPROMPTU_TOKEN` in `X-Rock-Impromptu-Token`. Missing/invalid tokens, unknown IDs, and expired reports return HTTP 404. Authentication is token-based, not based on client IP, including behind reverse proxies.
+
+History is held in memory, shared by HTTP and runtime, and bounded to 64 requests with up to 32 errors per request. Completed reports may be evicted to admit new requests; pending requests are not evicted. Messages are limited to roughly 8 KiB and marked when truncated. This is diagnostic history, not saved game state. HTTP 503 means the runtime queue is full/unavailable or all report slots are pending; a queue failure after allocating an ID returns a `failed` report with a `queue` diagnostic.
+
+Code requests remain limited to 256 KiB; Farcaster webhook bodies are limited to 1 MiB. `on.world.impromptu()` notifications are still scheduled for submitted code.
 
 ---
 

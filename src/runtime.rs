@@ -7,7 +7,7 @@ use std::{
 
 use color_eyre::eyre;
 use mlua::Lua;
-use rock_wire::{ImpromptuRequest, IncomingRequest};
+use rock_wire::IncomingRequest;
 use smallvec::smallvec;
 
 use crate::{
@@ -37,6 +37,7 @@ use plugins::{
 };
 
 pub(crate) mod app_data;
+pub(crate) mod diagnostics;
 pub(crate) mod lifetime;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -59,6 +60,7 @@ pub use utils::*;
 
 #[derive(Clone)]
 pub struct RuntimeParams {
+    pub diagnostics: Arc<diagnostics::DiagnosticStore>,
     pub config: Config,
     pub client_api: Arc<dyn GameModeClientApi>,
     pub callback_rx: flume::Receiver<RuntimeCallback>,
@@ -96,6 +98,8 @@ impl Runtime {
         let replicator = Rc::new(NetworkReplicator::new(client_api.clone()));
 
         // App data
+        lua.set_app_data(params.diagnostics);
+        lua.set_app_data(diagnostics::ActiveSnippet::default());
         lua.set_app_data(lifetime::ActivePlayers::default());
         lua.set_app_data(lifetime::PlayerWorkRegistry::default());
         lua.set_app_data::<app_data::EventListeners>(app_data::EventListeners(HashMap::new()));
@@ -289,10 +293,8 @@ impl Runtime {
                     }),
                 });
             }
-            SystemCallback::ImpromptuRequest { name, code } => {
-                if let Err(err) = self.process_impromptu(ImpromptuRequest { name, code }) {
-                    eprintln!("Faile to process an impromptu: {err}");
-                }
+            SystemCallback::ImpromptuRequest { source, request } => {
+                diagnostics::execute(&self.lua, &self.event_bus, &source, &request);
             }
             SystemCallback::Webhook(event) => {
                 self.event_bus.schedule_event(GameModeEvent {
@@ -301,38 +303,5 @@ impl Runtime {
                 });
             }
         }
-    }
-
-    fn process_impromptu(&self, impromptu: ImpromptuRequest) -> mlua::Result<()> {
-        self.event_bus.schedule_event(GameModeEvent {
-            scopes: smallvec![EventScope::Global],
-            data: GameModeEventData::World(WorldEventData::Impromptu {
-                name: impromptu.name.clone(),
-            }),
-        });
-
-        let name = impromptu.name.as_deref().unwrap_or("anonymous impromptu");
-
-        let env = self.lua.create_table()?;
-        env.set("_G", env.clone())?;
-
-        let globals = self.lua.globals();
-        let mt = self.lua.create_table()?;
-        mt.set("__index", globals)?;
-        env.set_metatable(Some(mt))?;
-
-        self.lua
-            .set_app_data::<app_data::ExecutionContext>(ExecutionContext::Impromptu);
-        let result = self
-            .lua
-            .load(impromptu.code)
-            .set_name(name)
-            .set_environment(env)
-            .exec();
-        self.lua
-            .set_app_data::<app_data::ExecutionContext>(ExecutionContext::Global);
-
-        result?;
-        Ok(())
     }
 }

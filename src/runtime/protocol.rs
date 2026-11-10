@@ -26,8 +26,8 @@ pub enum SystemCallback {
         identity: Option<String>,
     },
     ImpromptuRequest {
-        name: Option<String>,
-        code: String,
+        source: super::diagnostics::SnippetSource,
+        request: rock_wire::ImpromptuRequest,
     },
     Webhook(Box<WebhookEvent>),
 }

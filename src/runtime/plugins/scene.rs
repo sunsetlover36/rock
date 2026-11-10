@@ -97,7 +97,15 @@ fn launch(
     players: &[rock_wire::PlayerKey],
     label: String,
 ) -> mlua::Result<SceneHandle> {
-    let context = crate::runtime::lifetime::WorkContext::capture(lua, players)?;
+    let mut context = crate::runtime::lifetime::WorkContext::capture(lua, players)?;
+    if context.origin.is_none() {
+        context.origin = scripts
+            .iter()
+            .find_map(|script| crate::runtime::diagnostics::function_source(lua, script));
+        if context.origin.is_some() {
+            context.execution = crate::runtime::app_data::ExecutionContext::Impromptu;
+        }
+    }
     let thread_rk = to_coroutine(lua, scripts)?;
     let work = crate::runtime::lifetime::OwnedWork::register(lua, context)?;
     let cancel = work.cancel.clone();
