@@ -1631,7 +1631,7 @@ Counts must be integers from 0 through 4,294,967,295. `take(0)` starts completed
 
 **Migration:** combinations of `take` and `skip` no longer repeat. Consecutive `take` operators no longer add their limits. Core and transformation operators are no longer evaluated in separate phases. Existing gamemodes relying on the old behavior must update their chains.
 
-Throttle uses monotonic time and is leading-edge only: it drops events, does not queue them, and does not emit a delayed trailing event. An event exactly at the interval boundary is allowed. Each throttle tracks the last event it passed, even if a later operator drops that event. Multiple throttles have independent state at their written positions.
+For event streams, throttle uses monotonic time and is leading-edge only: it drops events, does not queue them, and does not emit a delayed trailing event. An event exactly at the interval boundary is allowed. Each throttle tracks the last event it passed, even if a later operator drops that event. Multiple throttles have independent state at their written positions.
 
 Seconds must be finite, non-negative, and representable as a Rust `Duration`; invalid durations produce a Lua error. `throttle(0)` passes everything. For compatibility, `throttle(nil)` (or no argument) removes all earlier throttles from the returned builder; it does not change an existing subscription.
 
@@ -1722,7 +1722,7 @@ bp:sync():area({ position = { x = 10, y = 5 }, radius = 10 }):commit()
 
 ### Throttling Replication
 
-Entity spawn snapshots are sent on first visibility independently of these operators. Entity sync chains gate later dirty updates, with sentry state per entity and policy (shared across recipients). A dropped update is not queued for trailing delivery; later dirty updates are evaluated again. Memory sync chains instead process the node value before sending it to eligible recipients.
+Entity spawn snapshots are sent on first visibility independently of these operators. Entity sync chains gate later dirty updates, with sentry state per entity and policy (shared across recipients). A dropped update is not queued for trailing delivery; later dirty updates are evaluated again. Memory sync chains instead process source revisions and retain a published snapshot for eligible recipients; their snapshot delivery rules are described below.
 
 ```lua
 -- send updates at most every 0.5 seconds
@@ -1781,6 +1781,49 @@ local policy = memory.node("player/37")
 -- memory policies own their routing and can be re-routed after commit
 policy:room("other_lobby")
 ```
+
+Memory policies maintain a **published snapshot**, with independent Rx state per policy and client copies tracked per `(room, key)`. Only changed publications are sent. Multiple vision anchors grant visibility as a union: losing one anchor does not remove the copy while another still sees it. Destroyed anchors and anchors in a different room cannot grant visibility.
+
+`memory.node` registers a policy; it does not load the DB. `memory.fetch`, `memory.recall`, and successful writes hydrate replication, including reads that return an unchanged cached value. A leaf write refreshes watched ancestor prefixes; prefix replacement/deletion refreshes watched descendants. Direct external DB writes require `memory.fetch` to refresh the runtime.
+
+| Situation | Client copy |
+|-----------|-------------|
+| New source revision passes the chain | Insert/update the projected value |
+| `where` returns false | Remove the previous publication |
+| `skip` or `changed` suppresses a revision | Retain the previous publication |
+| `throttle` blocks a revision | Retain the previous publication; coalesce pending revisions and deliver the latest accepted one on a later replication tick after the interval |
+| `take` completes | Freeze the last publication; stop accepting source revisions |
+| Player loses visibility, policy is revoked, or policy moves to another room | Remove the copy from the old room regardless of Rx gates |
+| DB source is deleted | Remove the publication, including frozen/pending values |
+| Source/projected value is JSON `null` | Publish `null` as an ordinary value |
+
+Operators still execute left to right. Memory throttle resumes **at the blocked throttle**, without re-running upstream mappings or consuming `take`/`skip` again. `skip` counts source revisions, not ticks or viewers; an ignored revision is not retried. Repeated identical source values are not revisions. With no eligible viewers the chain pauses and evaluates the latest source when visibility returns. Filters run on source revisions, not on arbitrary changes to Lua variables captured by a predicate.
+
+Put `take(1)` after filters to freeze the first matching snapshot. New viewers and returning viewers receive the same frozen value. Exiting an area does not reset its counter. Deletion clears the frozen snapshot without restarting the chain; create a new policy to start again. One policy per `(room, key)` is allowed; rerouting into an occupied pair is rejected.
+
+### Client memory deltas
+
+Each room's `state` maps keys to **JSON-encoded strings**. Optional `state_remove` lists keys to remove from that room's client cache. This removes a client copy, not DB data. Clients must support this field to avoid retaining stale values:
+
+```json
+{
+  "t": "world",
+  "d": {
+    "tick": 42,
+    "rooms": {
+      "lobby": {
+        "spawn": {},
+        "update": {},
+        "state": { "nullable": "null", "score": "100" },
+        "state_remove": ["old_profile"]
+      }
+    },
+    "despawn": []
+  }
+}
+```
+
+Apply removals by room/key, then parse and apply `state` values. A `null` value must remain present. Clear client memory when the connection closes. The TypeScript SDK implements these rules through `rock.memory` and emits `world` after applying each delta.
 
 ---
 

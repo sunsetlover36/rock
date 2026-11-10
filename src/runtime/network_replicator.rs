@@ -40,9 +40,74 @@ struct PlayerAnchor {
     entity: hecs::Entity,
 }
 
+struct MemoryPublication {
+    sentry: RxSentry,
+    observed: Option<Arc<serde_json::Value>>,
+    published: Option<Arc<str>>,
+    pending: Option<(usize, mlua::MultiValue)>,
+}
+impl MemoryPublication {
+    fn new(policy: &ReplicationPolicy) -> Self {
+        Self {
+            sentry: RxSentry::new(policy.pipeline.clone()),
+            observed: None,
+            published: None,
+            pending: None,
+        }
+    }
+    fn update(
+        &mut self,
+        lua: &mlua::Lua,
+        value: Option<Arc<serde_json::Value>>,
+        now: std::time::Instant,
+    ) -> eyre::Result<()> {
+        use crate::rx::RxOutcome;
+        let Some(value) = value else {
+            self.observed = None;
+            self.pending = None;
+            self.published = None;
+            return Ok(());
+        };
+        let changed = self
+            .observed
+            .as_ref()
+            .is_none_or(|old| !Arc::ptr_eq(old, &value));
+        let outcome = if changed && !self.sentry.is_exhausted() {
+            self.observed = Some(value.clone());
+            self.pending = None;
+            let args = mlua::MultiValue::from_vec(vec![
+                lua.to_value(value.as_ref())
+                    .wrap_err("Failed to convert memory snapshot to Lua")?,
+            ]);
+            self.sentry.process_detailed(args, now)
+        } else if let Some((position, args)) = self.pending.take() {
+            self.sentry.resume_throttled(position, args, now)
+        } else {
+            return Ok(());
+        };
+        match outcome {
+            Ok(RxOutcome::Passed(args)) => {
+                self.published = Some(Arc::from(
+                    multivalue_to_json(lua, args)
+                        .wrap_err("Failed to serialize memory publication")?,
+                ));
+            }
+            Ok(RxOutcome::Filtered) => self.published = None,
+            Ok(RxOutcome::Throttled { position, args }) => self.pending = Some((position, args)),
+            Ok(RxOutcome::Skipped | RxOutcome::Unchanged | RxOutcome::Cancelled) => {}
+            Err(RxSentryError::Core(_)) => {}
+            Err(RxSentryError::Op(error)) => {
+                return Err(eyre::eyre!("Memory replication operator failed: {error}"));
+            }
+        }
+        Ok(())
+    }
+}
+
 struct NetworkReplicatorInner {
     updated_entities: FxHashMap<hecs::Entity, Vec<EntityDirtyComponent>>,
-    memory_snapshots: FxHashMap<String, serde_json::Value>,
+    memory_snapshots: FxHashMap<String, Arc<serde_json::Value>>,
+    memory_publications: FxHashMap<PolicyId, MemoryPublication>,
 
     policies: SlotMap<PolicyId, ReplicationPolicy>,
     by_target: FxHashMap<ReplicationTarget, HashSet<PolicyId>>,
@@ -60,7 +125,7 @@ struct NetworkReplicatorInner {
 
     entity_anchors: FxHashMap<hecs::Entity, HashSet<PlayerAnchor>>,
     anchor_visibility: FxHashMap<PlayerAnchor, HashSet<hecs::Entity>>,
-    known_memory: FxHashMap<PlayerKey, HashSet<String>>,
+    known_memory: FxHashMap<PlayerKey, HashMap<(RoomId, String), Arc<str>>>,
 
     despawn_candidates: FxHashMap<hecs::Entity, RoomId>,
     room_to_entities: FxHashMap<RoomId, HashSet<hecs::Entity>>,
@@ -81,6 +146,7 @@ impl NetworkReplicator {
             inner: RefCell::new(NetworkReplicatorInner {
                 updated_entities: FxHashMap::default(),
                 memory_snapshots: FxHashMap::default(),
+                memory_publications: FxHashMap::default(),
                 policies: SlotMap::<PolicyId, ReplicationPolicy>::with_key(),
                 by_target: FxHashMap::default(),
                 sentries: FxHashMap::default(),
@@ -98,6 +164,30 @@ impl NetworkReplicator {
             mark_tx,
             mark_rx,
         }
+    }
+
+    // Include cached nodes so revoking/re-adding a policy cannot revive stale data.
+    pub fn affected_memory_nodes(&self, key: &str) -> Vec<String> {
+        let inner = self.inner.borrow();
+        let related = |node: &str| {
+            node == key
+                || (node.ends_with('/') && key.starts_with(node))
+                || (key.ends_with('/') && node.starts_with(key))
+        };
+        let mut keys = inner
+            .memory_snapshots
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+        keys.extend(inner.policies.values().filter_map(|p| match &p.target {
+            ReplicationTarget::MemoryNode(key) => Some(key.clone()),
+            _ => None,
+        }));
+        keys.retain(|node| related(node));
+        keys.insert(key.into());
+        let mut keys = keys.into_iter().collect::<Vec<_>>();
+        keys.sort();
+        keys
     }
 
     pub fn get_mark_tx(&self) -> flume::Sender<ReplicationMark> {
@@ -175,7 +265,35 @@ impl NetworkReplicator {
                 }
             }
             ReplicationMark::Memory { key, value } => {
-                inner.memory_snapshots.insert(key, value);
+                if inner
+                    .memory_snapshots
+                    .get(&key)
+                    .is_none_or(|old| old.as_ref() != &value)
+                {
+                    inner.memory_snapshots.insert(key, Arc::new(value));
+                }
+            }
+            ReplicationMark::MemoryDelete { key } => {
+                let matches =
+                    |node: &str| node == key || (key.ends_with('/') && node.starts_with(&key));
+                inner.memory_snapshots.retain(|node, _| !matches(node));
+                // Invalidate frozen and pending copies even if the key is recreated
+                // before the next tick. Deletion does not restart take counters.
+                let ids = inner
+                    .policies
+                    .iter()
+                    .filter_map(|(id, policy)| match &policy.target {
+                        ReplicationTarget::MemoryNode(node) if matches(node) => Some(id),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                for id in ids {
+                    if let Some(publication) = inner.memory_publications.get_mut(&id) {
+                        publication.observed = None;
+                        publication.published = None;
+                        publication.pending = None;
+                    }
+                }
             }
         }
     }
@@ -226,6 +344,7 @@ impl NetworkReplicator {
 
     pub fn revoke_policy_by_id(&self, revoked_id: PolicyId) {
         let mut inner = self.inner.borrow_mut();
+        inner.memory_publications.remove(&revoked_id);
         if let Some(policy) = inner.policies.remove(revoked_id) {
             let target = policy.target;
             inner
@@ -251,11 +370,13 @@ impl NetworkReplicator {
             by_target,
             sentries,
             room_to_policies,
+            memory_publications,
             ..
         } = &mut *inner_guard;
 
         if let Some(policy_ids) = by_target.get_mut(target) {
             for &policy_id in policy_ids.iter() {
+                memory_publications.remove(&policy_id);
                 if let Some(policy) = policies.remove(policy_id)
                     && let PolicyRouting::Pinned(room_id) = policy.routing
                 {
@@ -329,6 +450,22 @@ impl NetworkReplicator {
         updated_id: PolicyId,
         field: PolicyFieldUpdate,
     ) -> eyre::Result<()> {
+        if let PolicyFieldUpdate::Room { id: room } = &field {
+            let inner = self.inner.borrow();
+            if let Some(policy) = inner.policies.get(updated_id) {
+                if matches!(policy.target, ReplicationTarget::MemoryNode(_))
+                    && inner.policies.iter().any(|(id, other)| {
+                        id != updated_id
+                            && other.target == policy.target
+                            && other.routing == PolicyRouting::Pinned(*room)
+                    })
+                {
+                    return Err(eyre::eyre!(
+                        "Cannot route memory policy: this node already has a policy in the target room"
+                    ));
+                }
+            }
+        }
         let NetworkReplicatorInner {
             policies,
             room_to_policies,
@@ -1049,145 +1186,151 @@ impl NetworkReplicator {
 
         Ok(policies_to_remove)
     }
+    fn memory_viewers(
+        &self,
+        lua: &mlua::Lua,
+        policy: &ReplicationPolicy,
+    ) -> eyre::Result<HashSet<PlayerKey>> {
+        let PolicyRouting::Pinned(room) = policy.routing else {
+            return Ok(HashSet::new());
+        };
+        let inner = self.inner.borrow();
+        let world = get_app_data::<app_data::World>(lua).wrap_err("World is not initialized")?;
+        Ok(inner
+            .room_to_anchors
+            .get(&room)
+            .into_iter()
+            .flatten()
+            .filter(|anchor| {
+                if !world
+                    .0
+                    .get::<&Room>(anchor.entity)
+                    .is_ok_and(|actual| actual.0 == room)
+                {
+                    return false;
+                }
+                match policy.spatial {
+                    SpatialFilter::Global => true,
+                    SpatialFilter::Area(area) => {
+                        self.visible_to_anchor(room, area, anchor.entity, &world.0)
+                    }
+                    SpatialFilter::Radius(_) => false,
+                }
+            })
+            .map(|anchor| anchor.pk)
+            .collect())
+    }
+
     fn process_memory_nodes(
         &self,
         lua: &mlua::Lua,
         snapshots: &mut HashMap<PlayerKey, WorldSnapshot>,
-        base_snapshot: &WorldSnapshot,
-    ) -> eyre::Result<HashSet<PolicyId>> {
-        let mut inner_guard = self.inner.borrow_mut();
-        let NetworkReplicatorInner {
-            memory_snapshots,
-            policies,
-            by_target,
-            sentries,
-            room_to_anchors,
-            known_memory,
-            ..
-        } = &mut *inner_guard;
-
-        let world = get_app_data::<app_data::World>(lua).wrap_err("App data is not initialized")?;
-
-        let mut policies_to_remove: HashSet<PolicyId> = HashSet::new();
-        for (key, snapshot_value) in memory_snapshots.iter() {
-            let target = ReplicationTarget::MemoryNode(key.clone());
-            let Some(policy_ids) = by_target.get(&target) else {
+        base: &WorldSnapshot,
+    ) -> eyre::Result<()> {
+        // No world or replicator borrow is held while running Lua operators.
+        let jobs = self.inner.borrow().policies.keys().collect::<Vec<_>>();
+        for id in jobs {
+            let Some((policy, value)) = ({
+                let inner = self.inner.borrow();
+                inner.policies.get(id).and_then(|policy| {
+                    let ReplicationTarget::MemoryNode(key) = &policy.target else {
+                        return None;
+                    };
+                    Some((policy.clone(), inner.memory_snapshots.get(key).cloned()))
+                })
+            }) else {
                 continue;
             };
-
-            if policy_ids.is_empty() {
-                continue;
+            let mut publication = self
+                .inner
+                .borrow_mut()
+                .memory_publications
+                .remove(&id)
+                .unwrap_or_else(|| MemoryPublication::new(&policy));
+            let result = if value.is_none() || !self.memory_viewers(lua, &policy)?.is_empty() {
+                publication.update(lua, value, std::time::Instant::now())
+            } else {
+                Ok(())
+            };
+            {
+                let mut inner = self.inner.borrow_mut();
+                if inner.policies.contains_key(id) {
+                    inner.memory_publications.insert(id, publication);
+                }
             }
+            result?;
+        }
 
-            let node_sentries = sentries.entry(target).or_default();
-
-            let lua_snapshot_value = lua.to_value(snapshot_value).wrap_err(&format!(
-                "Failed to convert JSON value for memory node '{}' to Lua value",
-                key
-            ))?;
-            let node_args = mlua::MultiValue::from_vec(vec![lua_snapshot_value]);
-
-            for &policy_id in policy_ids {
-                let Some(policy) = policies.get(policy_id) else {
-                    continue;
-                };
-
-                let policy_room_id = match policy.routing {
-                    PolicyRouting::DynamicFollow => {
-                        // Ignore a memory node policy with a dynamic follow routing rule (this is normally unreachable, but anyway)
-                        continue;
-                    }
-                    PolicyRouting::Pinned(pinned_room_id) => pinned_room_id,
-                };
-                let policy_room_name = room_id_to_name(lua, policy_room_id).wrap_err(&format!(
-                    "Failed to build a memory snapshot for room ID '{}'",
-                    policy_room_id
-                ))?;
-
-                let Some(anchors) = room_to_anchors.get(&policy_room_id) else {
-                    continue;
-                };
-
-                // List of affected anchors without a boolean indicator (memory nodes don't need an update, or a state diff)
-                let mut affected_anchors: Vec<&PlayerAnchor> = Vec::new();
-                for anchor in anchors {
-                    let known_nodes = known_memory.entry(anchor.pk).or_default();
-                    if known_nodes.contains(key) {
-                        continue;
-                    }
-
-                    let affected = match policy.spatial {
-                        SpatialFilter::Global => true,
-                        SpatialFilter::Radius { .. } => {
-                            // Ignore a memory node policy with a radius-based spatial filter (this is normally unreachable, but anyway)
-                            false
-                        }
-                        SpatialFilter::Area(area) => {
-                            self.visible_to_anchor(policy_room_id, area, anchor.entity, &world.0)
-                        }
+        let publications = {
+            let inner = self.inner.borrow();
+            inner
+                .policies
+                .iter()
+                .filter_map(|(id, policy)| {
+                    let ReplicationTarget::MemoryNode(key) = &policy.target else {
+                        return None;
                     };
-
-                    if !affected {
-                        continue;
-                    }
-
-                    affected_anchors.push(anchor);
-                }
-
-                if affected_anchors.is_empty() {
-                    continue;
-                }
-
-                let sentry = node_sentries
-                    .entry(policy_id)
-                    .or_insert_with(|| RxSentry::new(policy.pipeline.clone()));
-                match sentry.process(node_args.clone()) {
-                    Ok(args) => {
-                        let Some(args) = args else { continue };
-                        let json_str = multivalue_to_json(lua, args).wrap_err(&format!(
-                            "Failed to convert processed sentry args to JSON for memory node, key '{}'",
-                            key
-                        ))?;
-
-                        for anchor in affected_anchors {
-                            snapshots
-                                .entry(anchor.pk)
-                                .or_insert_with(|| base_snapshot.clone())
-                                .rooms
-                                .entry(policy_room_name.clone())
-                                .or_default()
-                                .state
-                                .insert(key.clone(), json_str.clone());
-
-                            // TODO: known memory is independent of spatial filters (not garbage collected by the client if out of visibility range)
-                            known_memory
-                                .entry(anchor.pk)
-                                .or_default()
-                                .insert(key.clone());
-                        }
-                    }
-                    Err(err) => {
-                        match err {
-                            RxSentryError::Core(CoreSentryError::LimitReached(_)) => {
-                                policies_to_remove.insert(policy_id);
-                            }
-                            RxSentryError::Op(err) => {
-                                return Err(eyre::eyre!(
-                                    "Failed to process Rx sentry for memory node with key '{}': operator error ({})",
-                                    key,
-                                    err.to_string()
-                                ));
-                            }
-                        }
-
-                        continue;
-                    }
+                    let published = inner.memory_publications.get(&id)?.published.clone()?;
+                    Some((key.clone(), policy.clone(), published))
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut desired: FxHashMap<PlayerKey, HashMap<(RoomId, String), Arc<str>>> =
+            FxHashMap::default();
+        for (key, policy, value) in publications {
+            let PolicyRouting::Pinned(room) = policy.routing else {
+                continue;
+            };
+            for player in self.memory_viewers(lua, &policy)? {
+                desired
+                    .entry(player)
+                    .or_default()
+                    .insert((room, key.clone()), value.clone());
+            }
+        }
+        let mut inner = self.inner.borrow_mut();
+        for (player, known) in &inner.known_memory {
+            for ((room, key), _) in known {
+                if !desired
+                    .get(player)
+                    .is_some_and(|nodes| nodes.contains_key(&(*room, key.clone())))
+                {
+                    let name = room_id_to_name(lua, *room).wrap_err("Unknown memory room")?;
+                    snapshots
+                        .entry(*player)
+                        .or_insert_with(|| base.clone())
+                        .rooms
+                        .entry(name)
+                        .or_default()
+                        .state_remove
+                        .push(key.clone());
                 }
             }
         }
-
-        Ok(policies_to_remove)
+        for (player, nodes) in &desired {
+            for ((room, key), value) in nodes {
+                if inner
+                    .known_memory
+                    .get(player)
+                    .and_then(|known| known.get(&(*room, key.clone())))
+                    .is_none_or(|old| old.as_ref() != value.as_ref())
+                {
+                    let name = room_id_to_name(lua, *room).wrap_err("Unknown memory room")?;
+                    snapshots
+                        .entry(*player)
+                        .or_insert_with(|| base.clone())
+                        .rooms
+                        .entry(name)
+                        .or_default()
+                        .state
+                        .insert(key.clone(), value.to_string());
+                }
+            }
+        }
+        inner.known_memory = desired;
+        Ok(())
     }
+
     fn build_snapshots(
         &self,
         lua: &mlua::Lua,
@@ -1200,11 +1343,7 @@ impl NetworkReplicator {
 
         let mut policies_to_remove = HashSet::new();
         policies_to_remove.extend(self.process_entities(lua, &mut snapshots, &base_snapshot)?);
-        policies_to_remove.extend(self.process_memory_nodes(
-            lua,
-            &mut snapshots,
-            &base_snapshot,
-        )?);
+        self.process_memory_nodes(lua, &mut snapshots, &base_snapshot)?;
 
         // Remove taken policies
         for policy_id in policies_to_remove {

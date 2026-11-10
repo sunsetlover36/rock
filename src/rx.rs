@@ -42,6 +42,28 @@ pub(crate) enum RxSentryError {
     Op(mlua::Error),
 }
 
+// Drop reasons matter for snapshot replication: filtering withdraws a value,
+// while rate/count gates retain the last published snapshot.
+pub(crate) enum RxOutcome {
+    Passed(mlua::MultiValue),
+    Filtered,
+    Skipped,
+    Throttled {
+        position: usize,
+        args: mlua::MultiValue,
+    },
+    Unchanged,
+    Cancelled,
+}
+impl RxOutcome {
+    fn into_args(self) -> Option<mlua::MultiValue> {
+        match self {
+            Self::Passed(args) => Some(args),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum OperatorState {
     Take {
@@ -132,26 +154,59 @@ impl RxSentry {
         self.process_at_while(args, now, || true)
     }
 
+    pub(crate) fn process_detailed(
+        &mut self,
+        args: mlua::MultiValue,
+        now: Instant,
+    ) -> Result<RxOutcome, RxSentryError> {
+        self.evaluate(args, now, || true, 0, true)
+    }
+
+    // Continue a coalesced memory snapshot at the blocked throttle, without
+    // re-running upstream operators or consuming take/skip counters twice.
+    pub(crate) fn resume_throttled(
+        &mut self,
+        position: usize,
+        args: mlua::MultiValue,
+        now: Instant,
+    ) -> Result<RxOutcome, RxSentryError> {
+        self.evaluate(args, now, || true, position, false)
+    }
+
     fn process_at_while(
+        &mut self,
+        args: mlua::MultiValue,
+        now: Instant,
+        active: impl FnMut() -> bool,
+    ) -> Result<Option<mlua::MultiValue>, RxSentryError> {
+        self.evaluate(args, now, active, 0, true)
+            .map(RxOutcome::into_args)
+    }
+
+    fn evaluate(
         &mut self,
         mut args: mlua::MultiValue,
         now: Instant,
         mut active: impl FnMut() -> bool,
-    ) -> Result<Option<mlua::MultiValue>, RxSentryError> {
-        if let Some(limit) = self.exhausted_limit() {
-            return Err(RxSentryError::Core(CoreSentryError::LimitReached(limit)));
+        start: usize,
+        check_exhausted: bool,
+    ) -> Result<RxOutcome, RxSentryError> {
+        if check_exhausted {
+            if let Some(limit) = self.exhausted_limit() {
+                return Err(RxSentryError::Core(CoreSentryError::LimitReached(limit)));
+            }
         }
 
-        for op in &mut self.operators {
+        for (position, op) in self.operators.iter_mut().enumerate().skip(start) {
             if !active() {
-                return Ok(None);
+                return Ok(RxOutcome::Cancelled);
             }
             match op {
                 OperatorState::Take { remaining, .. } => *remaining -= 1,
                 OperatorState::Skip { remaining } => {
                     if *remaining > 0 {
                         *remaining -= 1;
-                        return Ok(None);
+                        return Ok(RxOutcome::Skipped);
                     }
                 }
                 OperatorState::Throttle {
@@ -159,7 +214,7 @@ impl RxSentry {
                     last_call_at,
                 } => {
                     if last_call_at.is_some_and(|last| now.duration_since(last) < *duration) {
-                        return Ok(None);
+                        return Ok(RxOutcome::Throttled { position, args });
                     }
                     *last_call_at = Some(now);
                 }
@@ -168,7 +223,7 @@ impl RxSentry {
                         .call::<bool>(args.clone())
                         .map_err(RxSentryError::Op)?
                     {
-                        return Ok(None);
+                        return Ok(RxOutcome::Filtered);
                     }
                 }
                 OperatorState::Map(mapper) => {
@@ -180,14 +235,18 @@ impl RxSentry {
                         .as_ref()
                         .is_some_and(|last| last.iter().eq(args.iter()))
                     {
-                        return Ok(None);
+                        return Ok(RxOutcome::Unchanged);
                     }
                     *last_value = Some(args.clone());
                 }
             }
         }
 
-        Ok(active().then_some(args))
+        Ok(if active() {
+            RxOutcome::Passed(args)
+        } else {
+            RxOutcome::Cancelled
+        })
     }
 }
 

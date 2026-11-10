@@ -70,6 +70,8 @@ From the repository root:
 cargo build --release
 ```
 
+Development uses the sibling `../rock-wire` checkout through a Cargo path dependency so local protocol edits are applied immediately. Clone `rock-wire` next to this repository before building.
+
 ### Prepare a server directory
 
 ROCK reads `config.toml`, `gamemodes/`, `geodes/`, `assets/`, and `db/` from the current working directory. In practice, build the binary and run it from the directory that contains your server files.

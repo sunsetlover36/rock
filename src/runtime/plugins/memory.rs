@@ -30,6 +30,51 @@ pub(crate) enum MemoryOp {
 pub(crate) struct MemoryPlugin {
     pub meta_db: Arc<MetaDb>,
 }
+// Read related materialized nodes after a mutation, including prefix views.
+async fn read_node(
+    meta_db: &MetaDb,
+    key: &str,
+    cached: bool,
+) -> eyre::Result<Option<serde_json::Value>> {
+    if key.ends_with('/') {
+        let (value, _) = if cached {
+            meta_db.get_or_ensure_prefix(key).await?
+        } else {
+            meta_db.ensure_prefix(key).await?
+        };
+        Ok((!value.is_null()).then_some(value))
+    } else {
+        let (value, _) = if cached {
+            meta_db.get_or_ensure_key_value(key).await?
+        } else {
+            meta_db.ensure_key(key).await?
+        };
+        Ok(value)
+    }
+}
+async fn publish_nodes(
+    meta_db: &MetaDb,
+    tx: &flume::Sender<ReplicationMark>,
+    keys: Vec<String>,
+) -> eyre::Result<()> {
+    for key in keys {
+        let value = read_node(meta_db, &key, false).await?;
+        publish_value(tx, key, value);
+    }
+    Ok(())
+}
+fn publish_value(
+    tx: &flume::Sender<ReplicationMark>,
+    key: String,
+    value: Option<serde_json::Value>,
+) {
+    let mark = match value {
+        Some(value) => ReplicationMark::Memory { key, value },
+        None => ReplicationMark::MemoryDelete { key },
+    };
+    let _ = tx.send(mark);
+}
+
 impl GameModePlugin for MemoryPlugin {
     fn name(&self) -> PluginName {
         PluginName::Memory
@@ -132,50 +177,23 @@ impl GameModePlugin for MemoryPlugin {
         let op = MemoryOp::from_str(op)
             .wrap_err_with(|| format!("{plugin_name}: unknown plugin op `{op}`"))?;
         match op {
-            MemoryOp::Recall => {
+            MemoryOp::Recall | MemoryOp::Fetch => {
+                let method = if matches!(op, MemoryOp::Recall) {
+                    "recall"
+                } else {
+                    "fetch"
+                };
                 let key: String = args
                     .get(1)
-                    .wrap_err(&format!("{}.recall: missing argument `key`", plugin_name))?;
+                    .wrap_err(&format!("{plugin_name}.{method}: missing argument `key`"))?;
                 let future = Box::pin(async move {
-                    let (value, changed) = if key.ends_with("/") {
-                        meta_db.get_or_ensure_prefix(&key).await?
-                    } else {
-                        meta_db.get_or_ensure_key(&key).await?
-                    };
-
-                    if changed {
-                        let _ = replicator_tx.send(ReplicationMark::Memory {
-                            key,
-                            value: value.clone(),
-                        });
-                    }
-
-                    Ok(AsyncTaskResult::JsonValue(value))
+                    let value = read_node(&meta_db, &key, matches!(op, MemoryOp::Recall)).await?;
+                    // Hydrate replication even when the DB cache is already fresh.
+                    publish_value(&replicator_tx, key, value.clone());
+                    Ok(AsyncTaskResult::JsonValue(
+                        value.unwrap_or(serde_json::Value::Null),
+                    ))
                 });
-
-                Ok(Some(future))
-            }
-            MemoryOp::Fetch => {
-                let key: String = args
-                    .get(1)
-                    .wrap_err(&format!("{}.fetch: missing argument `key`", plugin_name))?;
-                let future = Box::pin(async move {
-                    let (value, changed) = if key.ends_with("/") {
-                        meta_db.ensure_prefix(&key).await?
-                    } else {
-                        meta_db.ensure_key(&key).await?
-                    };
-
-                    if changed {
-                        let _ = replicator_tx.send(ReplicationMark::Memory {
-                            key,
-                            value: value.clone(),
-                        });
-                    }
-
-                    Ok(AsyncTaskResult::JsonValue(value))
-                });
-
                 Ok(Some(future))
             }
             MemoryOp::Store => {
@@ -198,6 +216,10 @@ impl GameModePlugin for MemoryPlugin {
                     plugin_name
                 ))?;
 
+                let nodes = get_app_data::<app_data::NetworkReplicator>(lua)
+                    .wrap_err("Network replicator is not initialized")?
+                    .0
+                    .affected_memory_nodes(&key);
                 let future = Box::pin(async move {
                     if key.ends_with("/") {
                         meta_db.update_prefix(&key, value.clone()).await?;
@@ -205,7 +227,7 @@ impl GameModePlugin for MemoryPlugin {
                         meta_db.update_key(&key, Some(value.clone())).await?;
                     }
 
-                    let _ = replicator_tx.send(ReplicationMark::Memory { key, value });
+                    publish_nodes(&meta_db, &replicator_tx, nodes).await?;
 
                     Ok(AsyncTaskResult::Nil)
                 });
@@ -217,6 +239,10 @@ impl GameModePlugin for MemoryPlugin {
                     .get(1)
                     .wrap_err(&format!("{}.delete: missing argument `key`", plugin_name))?;
 
+                let nodes = get_app_data::<app_data::NetworkReplicator>(lua)
+                    .wrap_err("Network replicator is not initialized")?
+                    .0
+                    .affected_memory_nodes(&key);
                 let future = Box::pin(async move {
                     if key.ends_with("/") {
                         meta_db.delete_prefix(&key).await?;
@@ -224,10 +250,9 @@ impl GameModePlugin for MemoryPlugin {
                         meta_db.delete_key(&key).await?;
                     }
 
-                    let _ = replicator_tx.send(ReplicationMark::Memory {
-                        key,
-                        value: serde_json::Value::Null,
-                    });
+                    // A prefix deletion also invalidates cached descendant snapshots.
+                    let _ = replicator_tx.send(ReplicationMark::MemoryDelete { key });
+                    publish_nodes(&meta_db, &replicator_tx, nodes).await?;
 
                     Ok(AsyncTaskResult::Nil)
                 });
@@ -235,5 +260,78 @@ impl GameModePlugin for MemoryPlugin {
                 Ok(Some(future))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn stored_null_remains_present_and_missing_key_produces_removal() {
+        let db = MetaDb::test_db().await;
+        let (tx, rx) = flume::unbounded();
+        db.update_key("nullable", Some(serde_json::Value::Null))
+            .await
+            .unwrap();
+        for cached in [false, true] {
+            let value = read_node(&db, "nullable", cached).await.unwrap();
+            assert_eq!(value, Some(serde_json::Value::Null));
+            publish_value(&tx, "nullable".into(), value);
+            assert!(matches!(
+                rx.recv().unwrap(),
+                ReplicationMark::Memory {
+                    value: serde_json::Value::Null,
+                    ..
+                }
+            ));
+        }
+        db.delete_key("nullable").await.unwrap();
+        publish_nodes(&db, &tx, vec!["nullable".into()])
+            .await
+            .unwrap();
+        assert!(
+            matches!(rx.recv().unwrap(), ReplicationMark::MemoryDelete { key } if key == "nullable")
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_updates_prefix_views_and_withdraws_leaves_removed_by_prefix_replace() {
+        let db = MetaDb::test_db().await;
+        let (tx, rx) = flume::unbounded();
+        db.update_key("profile/name", Some(json!("Alice")))
+            .await
+            .unwrap();
+        db.update_key("profile/hp", Some(json!(100))).await.unwrap();
+        let nodes = vec![
+            "profile/".into(),
+            "profile/name".into(),
+            "profile/hp".into(),
+        ];
+        publish_nodes(&db, &tx, nodes.clone()).await.unwrap();
+        assert!(
+            matches!(rx.recv().unwrap(), ReplicationMark::Memory { value, .. } if value == json!({ "name": "Alice", "hp": 100 }))
+        );
+        rx.drain().for_each(drop);
+        db.update_prefix("profile/", json!({ "name": "Bob" }))
+            .await
+            .unwrap();
+        publish_nodes(&db, &tx, nodes.clone()).await.unwrap();
+        assert!(
+            matches!(rx.recv().unwrap(), ReplicationMark::Memory { value, .. } if value == json!({ "name": "Bob" }))
+        );
+        assert!(
+            matches!(rx.recv().unwrap(), ReplicationMark::Memory { value, .. } if value == json!("Bob"))
+        );
+        assert!(
+            matches!(rx.recv().unwrap(), ReplicationMark::MemoryDelete { key } if key == "profile/hp")
+        );
+        db.delete_prefix("profile/").await.unwrap();
+        publish_nodes(&db, &tx, nodes).await.unwrap();
+        assert!(
+            rx.drain()
+                .all(|mark| matches!(mark, ReplicationMark::MemoryDelete { .. }))
+        );
     }
 }

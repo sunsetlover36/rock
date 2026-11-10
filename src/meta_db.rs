@@ -210,7 +210,11 @@ impl MetaDb {
         }
     }
 
-    pub async fn ensure_key(&self, key: &str) -> Result<(JsonValue, bool), MetaDbError> {
+    // Preserve presence separately from JSON null for replication.
+    pub(crate) async fn ensure_key(
+        &self,
+        key: &str,
+    ) -> Result<(Option<JsonValue>, bool), MetaDbError> {
         self.validate_key(key)?;
 
         let raw_str: Option<String> =
@@ -227,11 +231,11 @@ impl MetaDb {
                     serde_json::from_str(&raw_str).map_err(MetaDbError::InvalidJson)?;
 
                 let changed = self.update_cache(key, Some(json_value.clone()));
-                Ok((json_value.clone(), changed))
+                Ok((Some(json_value), changed))
             }
             None => {
                 let changed = self.update_cache(key, None);
-                Ok((serde_json::Value::Null, changed))
+                Ok((None, changed))
             }
         }
     }
@@ -287,13 +291,21 @@ impl MetaDb {
     }
 
     pub async fn get_or_ensure_key(&self, key: &str) -> Result<(JsonValue, bool), MetaDbError> {
-        self.validate_key(key)?;
+        let (value, changed) = self.get_or_ensure_key_value(key).await?;
+        Ok((value.unwrap_or(JsonValue::Null), changed))
+    }
 
+    pub(crate) async fn get_or_ensure_key_value(
+        &self,
+        key: &str,
+    ) -> Result<(Option<JsonValue>, bool), MetaDbError> {
+        self.validate_key(key)?;
         match self.get(key)? {
             MetaValue::Missing | MetaValue::Stale(_) => self.ensure_key(key).await,
-            MetaValue::Fresh(v) => Ok((v, false)),
+            MetaValue::Fresh(value) => Ok((Some(value), false)),
         }
     }
+
     pub async fn get_or_ensure_prefix(
         &self,
         prefix: &str,
@@ -401,5 +413,25 @@ impl MetaDb {
         self.cache.retain(|key, _| !key.starts_with(prefix));
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl MetaDb {
+    pub(crate) async fn test_db() -> Self {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE meta_kv (mode_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at INTEGER DEFAULT (unixepoch()), PRIMARY KEY (mode_id, key))").execute(&pool).await.unwrap();
+        Self {
+            config: MetaDbConfig {
+                mode_id: "test".into(),
+                default_ttl: Duration::from_secs(60),
+            },
+            pool,
+            cache: DashMap::new(),
+        }
     }
 }

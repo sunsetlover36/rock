@@ -100,6 +100,9 @@ pub(crate) enum ReplicationMark {
         key: String,
         value: serde_json::Value,
     },
+    MemoryDelete {
+        key: String,
+    },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
